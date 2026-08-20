@@ -1,0 +1,2 @@
+# Windows-only dependencies. Do not install these on macOS.
+pywin32>=306; sys_platform == "win32"

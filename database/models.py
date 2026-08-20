@@ -1,0 +1,63 @@
+"""SQLAlchemy ORM models shared identically across Windows and macOS."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    """Declarative base for all ORM models."""
+
+
+class ActivitySession(Base):
+    """A contiguous span of time spent in one application.
+
+    A new row is created whenever the focused application changes. A row's
+    ``ended_at``/``duration_seconds`` are updated as the session continues,
+    and finalized when the session closes (application changes, tracking
+    stops, or the user goes idle).
+    """
+
+    __tablename__ = "activity_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    process_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    window_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging helper
+        return (
+            f"<ActivitySession id={self.id} app={self.application_name!r} "
+            f"duration={self.duration_seconds}s>"
+        )
+
+
+class Settings(Base):
+    """User-editable application preferences. Expected to hold a single row."""
+
+    __tablename__ = "settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idle_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    start_with_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tracking_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    track_window_titles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging helper
+        return (
+            f"<Settings idle_threshold={self.idle_threshold} "
+            f"start_with_system={self.start_with_system}>"
+        )

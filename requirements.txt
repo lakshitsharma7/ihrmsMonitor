@@ -1,0 +1,8 @@
+# Shared, cross-platform dependencies.
+# Install platform-specific extras separately:
+#   Windows: pip install -r requirements.txt -r requirements-windows.txt
+#   macOS:   pip install -r requirements.txt -r requirements-macos.txt
+PySide6>=6.6,<7
+SQLAlchemy>=2.0,<3
+psutil>=5.9,<6
+pyinstaller>=6.0,<7
