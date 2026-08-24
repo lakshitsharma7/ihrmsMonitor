@@ -34,6 +34,7 @@ class ActivitySession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    screenshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

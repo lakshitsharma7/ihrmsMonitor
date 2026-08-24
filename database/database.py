@@ -44,6 +44,13 @@ def init_database(db_path: Path | str | None = None) -> None:
 
     try:
         Base.metadata.create_all(_engine)
+        # Migrate schema dynamically for SQLite
+        with _engine.begin() as conn:
+            from sqlalchemy import text
+            columns = conn.execute(text("PRAGMA table_info(activity_sessions)")).fetchall()
+            column_names = [col[1] for col in columns]
+            if "screenshot_path" not in column_names:
+                conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN screenshot_path VARCHAR(512)"))
         _create_default_admin_if_needed()
     except Exception:  # noqa: BLE001 - we must never crash the app on DB init
         logger.exception("Failed to create database tables")

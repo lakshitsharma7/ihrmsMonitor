@@ -181,6 +181,43 @@ class ActivityRepository:
             )
 
     # ==========================================================
+    # UPDATE SCREENSHOT PATH
+    # ==========================================================
+
+    def update_session_screenshot_path(
+        self,
+        session_id: int,
+        screenshot_path: str | None,
+    ) -> None:
+        """Update the screenshot path of a session."""
+
+        try:
+            record = self._session.get(
+                ActivitySession,
+                session_id,
+            )
+
+            if record is None:
+                logger.warning(
+                    "Attempted to update screenshot path for missing session id=%s",
+                    session_id,
+                )
+                return
+
+            record.screenshot_path = screenshot_path
+
+            self._session.commit()
+
+        except Exception:  # noqa: BLE001
+
+            self._session.rollback()
+
+            logger.exception(
+                "Failed to update screenshot path for session id=%s",
+                session_id,
+            )
+
+    # ==========================================================
     # CLOSE SESSION
     # ==========================================================
 
