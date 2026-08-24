@@ -52,6 +52,10 @@ SCREENSHOT_PATTERN = re.compile(
 )
 
 
+# Prevent duplicate activity submissions
+_received_session_ids: set[int] = set()
+
+
 # ==============================================================
 # POST /activity/sync
 # ==============================================================
@@ -66,6 +70,8 @@ async def sync_activity(
 
     print("=" * 60)
     print("ACTIVITY SYNC RECEIVED")
+    if payload.page is not None:
+        print(f"Page     : {payload.page} / Page Size: {payload.page_size}")
     print("=" * 60)
 
     print(
@@ -82,7 +88,16 @@ async def sync_activity(
 
     print("-" * 60)
 
+    new_activities = []
+    duplicate_count = 0
+
     for activity in payload.activities:
+        if activity.activity_session_id in _received_session_ids:
+            duplicate_count += 1
+            continue
+
+        _received_session_ids.add(activity.activity_session_id)
+        new_activities.append(activity)
 
         print(
             f"APP       : "
@@ -117,15 +132,17 @@ async def sync_activity(
         print("-" * 60)
 
     print("=" * 60)
+    if duplicate_count > 0:
+        print(f"Duplicates Filtered: {duplicate_count}")
+        print("=" * 60)
 
     return {
         "success": True,
         "message": (
             "Activity data received successfully"
         ),
-        "activities_received": len(
-            payload.activities
-        ),
+        "activities_received": len(new_activities),
+        "duplicates_filtered": duplicate_count,
     }
 
 

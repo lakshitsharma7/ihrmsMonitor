@@ -80,22 +80,62 @@ def capture_screenshot(
         # Capture screen
         # ------------------------------------------------------
 
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
         image = ImageGrab.grab()
 
         # ------------------------------------------------------
-        # Save
+        # Save and compress using background worker thread
         # ------------------------------------------------------
 
-        image.save(
-            filepath,
-            "PNG",
-        )
+        import io
+        import base64
+        import threading
 
-        print(
-            "SCREENSHOT SAVED | "
-            f"session={activity_session_id} | "
-            f"{filepath}"
-        )
+        def _save_and_compress_worker():
+            try:
+                # Check size in memory buffer
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='PNG')
+                size_in_bytes = img_byte_arr.tell()
+
+                if size_in_bytes < 102400: # < 100KB
+                    image.save(filepath, "PNG")
+                    img_byte_arr.seek(0)
+                    base64_data = base64.b64encode(img_byte_arr.read()).decode("utf-8")
+                    print(f"SCREENSHOT WORKER | Saved uncompressed (<100KB, size={size_in_bytes}B)")
+                else:
+                    from PIL import Image
+                    compressed = image.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+                    compressed.save(filepath, "PNG", optimize=True)
+                    
+                    compressed_byte_arr = io.BytesIO()
+                    compressed.save(compressed_byte_arr, format='PNG', optimize=True)
+                    compressed_byte_arr.seek(0)
+                    base64_data = base64.b64encode(compressed_byte_arr.read()).decode("utf-8")
+                    print(f"SCREENSHOT WORKER | Saved compressed (>=100KB, size={size_in_bytes}B -> {compressed_byte_arr.tell()}B)")
+
+                print(
+                    "SCREENSHOT SAVED | "
+                    f"session={activity_session_id} | "
+                    f"{filepath}"
+                )
+            except Exception as e:
+                print(
+                    "SCREENSHOT WORKER ERROR | "
+                    f"session={activity_session_id} | "
+                    f"{e}"
+                )
+
+        worker_thread = threading.Thread(target=_save_and_compress_worker, daemon=True)
+        worker_thread.start()
 
         return str(filepath)
 

@@ -35,3 +35,5 @@ class ActivitySyncRequest(BaseModel):
     sync: SyncPeriod
     activities: list[ActivitySession]
     totals: list[ApplicationTotal]
+    page: int | None = None
+    page_size: int | None = None

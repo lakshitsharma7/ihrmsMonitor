@@ -48,10 +48,16 @@ class SyncService:
 
     def __init__(
         self,
-        api_url: str = "http://127.0.0.1:8000",
+        api_url: str | None = None,
     ) -> None:
 
+        import os
+        if api_url is None:
+            port = os.environ.get("API_PORT", "8002")
+            api_url = os.environ.get("API_URL", f"http://127.0.0.1:{port}")
+
         self._api_url = api_url.rstrip("/")
+        self._synced_session_ids = set()
 
         logger.info(
             "SyncService initialized: %s",
@@ -68,17 +74,10 @@ class SyncService:
 
         This is the background/incremental sync operation.
 
-        It intentionally does NOT send the entire activity history.
+        It processes records in batches of 100 max, divided into 4 requests of 25 records each.
         """
-
         sync_to = datetime.now(timezone.utc)
-
-        sync_from = (
-            sync_to
-            - timedelta(
-                minutes=self.ACTIVITY_WINDOW_MINUTES
-            )
-        )
+        sync_from = sync_to - timedelta(minutes=self.ACTIVITY_WINDOW_MINUTES)
 
         logger.info(
             "Activity sync window: %s -> %s",
@@ -86,49 +85,147 @@ class SyncService:
             sync_to,
         )
 
+        db_session = get_session()
         try:
+            repository = ActivityRepository(db_session)
+            sessions = repository.get_sessions_between(sync_from, sync_to)
 
-            payload = self._build_activity_payload(
-                sync_from=sync_from,
-                sync_to=sync_to,
-            )
+            # Filter out duplicate submissions (already synced session IDs)
+            unsynced_sessions = [s for s in sessions if s.id not in self._synced_session_ids]
 
-            logger.info(
-                "Sending activity data to %s/activity/sync",
-                self._api_url,
-            )
+            if not unsynced_sessions:
+                logger.info("No new/unsynced activities to sync in this window.")
+                return True
 
-            response = requests.post(
-                f"{self._api_url}/activity/sync",
-                json=payload,
-                timeout=10,
-            )
+            logger.info("Syncing %d new/unsynced sessions in batches", len(unsynced_sessions))
 
-            response.raise_for_status()
+            BATCH_SIZE = 100
+            for i in range(0, len(unsynced_sessions), BATCH_SIZE):
+                batch = unsynced_sessions[i:i + BATCH_SIZE]
+                
+                uploaded_count = 0
+                # Divide batch of 100 into 4 requests of 25 records each
+                PAGE_SIZE = 25
+                for page_num in range(1, 5): # page 1, 2, 3, 4
+                    start_idx = (page_num - 1) * PAGE_SIZE
+                    if start_idx >= len(batch):
+                        break
+                    
+                    page_sessions = batch[start_idx:start_idx + PAGE_SIZE]
+                    if not page_sessions:
+                        break
+                        
+                    payload = self._build_page_payload(
+                        sessions=page_sessions,
+                        sync_from=sync_from,
+                        sync_to=sync_to,
+                        page=page_num,
+                        page_size=PAGE_SIZE
+                    )
+                    
+                    success = self._send_request_with_retry(payload)
+                    if not success:
+                        logger.error("Activity sync batch page failed. Halting sync.")
+                        return False
+                        
+                    # Mark successful sessions as synced
+                    for s in page_sessions:
+                        self._synced_session_ids.add(s.id)
 
-            logger.info(
-                "Activity sync successful: HTTP %s",
-                response.status_code,
-            )
+                    uploaded_count += len(page_sessions)
+                    logger.info("%d/%d records uploaded", uploaded_count, len(batch))
 
             return True
 
-        except requests.RequestException as exc:
-
-            logger.error(
-                "Activity sync request failed: %s",
-                exc,
-            )
-
+        except Exception as exc:
+            logger.exception("Unexpected error during activity sync: %s", exc)
             return False
+        finally:
+            db_session.close()
 
-        except Exception:
+    def _send_request_with_retry(self, payload: dict, retries: int = 3) -> bool:
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.post(
+                    f"{self._api_url}/activity/sync",
+                    json=payload,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                logger.info(
+                    "Activity sync page %d successful: HTTP %s (attempt %d)",
+                    payload["page"],
+                    response.status_code,
+                    attempt,
+                )
+                return True
+            except requests.RequestException as exc:
+                logger.warning(
+                    "Activity sync page %d failed (attempt %d/%d): %s",
+                    payload["page"],
+                    attempt,
+                    retries,
+                    exc,
+                )
+                if attempt == retries:
+                    logger.error("Activity sync failed after maximum retries.")
+                    return False
+        return False
 
-            logger.exception(
-                "Unexpected error during activity sync"
-            )
+    def _build_page_payload(
+        self,
+        sessions: list,
+        sync_from: datetime,
+        sync_to: datetime,
+        page: int,
+        page_size: int,
+    ) -> dict:
+        activities = []
+        totals_map = {}
 
-            return False
+        for session in sessions:
+            started_at = self._to_utc(session.started_at)
+            ended_at = self._to_utc(session.ended_at) if session.ended_at else None
+
+            effective_start = max(started_at, sync_from)
+            effective_end = min(ended_at or sync_to, sync_to)
+            duration_seconds = max(0, int((effective_end - effective_start).total_seconds()))
+
+            activities.append({
+                "activity_session_id": session.id,
+                "application_name": session.application_name,
+                "process_id": session.process_id,
+                "started_at": started_at.isoformat(),
+                "ended_at": ended_at.isoformat() if ended_at else None,
+                "duration_seconds": duration_seconds,
+            })
+
+            totals_map[session.application_name] = totals_map.get(session.application_name, 0) + duration_seconds
+
+        totals = [
+            {
+                "application_name": app_name,
+                "total_duration_seconds": total_seconds,
+            }
+            for app_name, total_seconds in totals_map.items()
+        ]
+        totals.sort(key=lambda item: item["total_duration_seconds"], reverse=True)
+
+        return {
+            "device": {
+                "username": self._get_username(),
+                "hostname": socket.gethostname(),
+                "platform": platform.system(),
+            },
+            "sync": {
+                "from_": sync_from.isoformat(),
+                "to": sync_to.isoformat(),
+            },
+            "activities": activities,
+            "totals": totals,
+            "page": page,
+            "page_size": page_size,
+        }
 
     # ==============================================================
     # ACTIVITY HISTORY
@@ -493,6 +590,12 @@ class SyncService:
         screenshot_path = Path(
             screenshot_path
         )
+
+        import time
+        attempts = 0
+        while not screenshot_path.exists() and attempts < 50:
+            time.sleep(0.1)
+            attempts += 1
 
         if not screenshot_path.exists():
 
