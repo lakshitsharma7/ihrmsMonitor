@@ -90,7 +90,7 @@ def test_window_title_change_updates_same_session(session_factory):
 
     provider.active_application = ActiveApplication("Chrome", 1, "Tab A")
     tracker.poll()
-
+    
     clock.advance(5)
     provider.active_application = ActiveApplication("Chrome", 1, "Tab B")
     tracker.poll()
@@ -141,7 +141,8 @@ def test_stop_closes_open_session(session_factory):
     clock = FakeClock(datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc))
     tracker = _make_tracker(session_factory, provider, clock=clock)
     tracker.start()
-
+    
+    
     provider.active_application = ActiveApplication("Slack", 3, None)
     tracker.poll()
 
@@ -177,7 +178,7 @@ def test_start_stop_state_transitions(session_factory):
     assert tracker.is_tracking is False
     tracker.start()
     assert tracker.is_tracking is True
-    tracker.start()  # no-op, must not raise or duplicate state
+    tracker.start()  
     assert tracker.is_tracking is True
     tracker.stop()
     assert tracker.is_tracking is False
