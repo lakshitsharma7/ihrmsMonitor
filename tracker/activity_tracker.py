@@ -1,10 +1,4 @@
-"""The core, platform-independent activity-tracking state machine.
-
-This module contains ZERO operating-system-specific code and zero Qt code,
-which is what makes it independently unit-testable (see ``tests/``). It is
-driven by whatever calls ``poll()`` on a timer - in the real application
-that's ``tracker.tracker_worker.TrackerWorker`` running on a ``QThread``.
-"""
+"""Platform-independent activity tracking state machine."""
 
 from __future__ import annotations
 
@@ -13,22 +7,39 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from database.repository import ActivityRepository
-from platform_support.base import ActiveApplication, PlatformActivityProvider
+from platform_support.base import (
+    ActiveApplication,
+    PlatformActivityProvider,
+)
 from tracker.activity_session import CurrentSession
 from utils.logger import get_logger
 
+
 logger = get_logger(__name__)
 
-SessionFactory = Callable[[], "Session"]  # type: ignore[name-defined]  # sqlalchemy.orm.Session
+
+SessionFactory = Callable[[], "Session"]  # type: ignore[name-defined]
+
+
+# ==============================================================
+# CLOCK
+# ==============================================================
 
 
 def _default_clock() -> datetime:
+    """Return the current UTC time."""
+
     return datetime.now(timezone.utc)
+
+
+# ==============================================================
+# TRACKER STATE
+# ==============================================================
 
 
 @dataclass
 class TrackerState:
-    """A snapshot of the tracker's current state, consumed by the UI."""
+    """Current tracker state consumed by the UI."""
 
     is_tracking: bool
     is_idle: bool
@@ -37,16 +48,24 @@ class TrackerState:
     idle_seconds: float
 
 
-class ActivityTracker:
-    """Owns the session-creation/close logic described in the product spec.
+# ==============================================================
+# ACTIVITY TRACKER
+# ==============================================================
 
-    Rules implemented here:
-        * A new session is created when the focused application changes.
-        * If only the window title changes (same app), the existing open
-          session's title is updated in place (configurable).
-        * Idle time is never counted toward an application's active usage:
-          crossing the idle threshold closes the current session; activity
-          resuming starts a fresh one.
+
+class ActivityTracker:
+    """
+    Core activity-tracking state machine.
+
+    Rules:
+
+    1. Start a new session when the focused application changes.
+    2. Keep the same session when only the window title changes.
+    3. Close the current session when the user becomes idle.
+    4. Start a fresh session when the user becomes active again.
+    5. Close stale database sessions when the tracker starts.
+    6. Sync activity immediately when the application changes.
+    7. SyncService decides the actual API time window.
     """
 
     def __init__(
@@ -55,189 +74,685 @@ class ActivityTracker:
         session_factory,
         idle_threshold_seconds: float,
         track_window_titles: bool = True,
-        clock: Callable[[], datetime] = _default_clock,
+        clock: Callable[
+            [],
+            datetime,
+        ] = _default_clock,
+        sync_service=None,
     ) -> None:
+
         self._provider = provider
-        self._session_factory = session_factory
-        self._idle_threshold_seconds = idle_threshold_seconds
-        self._track_window_titles = track_window_titles
+
+        self._session_factory = (
+            session_factory
+        )
+
+        self._idle_threshold_seconds = (
+            idle_threshold_seconds
+        )
+
+        self._track_window_titles = (
+            track_window_titles
+        )
+
         self._clock = clock
 
+        # SyncService is optional so the tracker
+        # remains easy to test without HTTP.
+        self._sync_service = sync_service
+
         self._is_tracking = False
+
         self._is_idle = False
-        self._current: CurrentSession | None = None
+
+        self._current: (
+            CurrentSession | None
+        ) = None
+
         self._last_idle_seconds = 0.0
 
-    # -- public configuration -------------------------------------------------
+    # ==========================================================
+    # CONFIGURATION
+    # ==========================================================
 
-    def set_idle_threshold(self, seconds: float) -> None:
-        self._idle_threshold_seconds = seconds
+    def set_idle_threshold(
+        self,
+        seconds: float,
+    ) -> None:
+        """Change the idle threshold."""
 
-    def set_track_window_titles(self, enabled: bool) -> None:
-        self._track_window_titles = enabled
+        self._idle_threshold_seconds = (
+            seconds
+        )
+
+    def set_track_window_titles(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable window-title tracking."""
+
+        self._track_window_titles = (
+            enabled
+        )
 
     @property
     def is_tracking(self) -> bool:
+        """Return whether tracking is currently active."""
+
         return self._is_tracking
 
-    # -- lifecycle --------------------------------------------------------------
+    # ==========================================================
+    # START
+    # ==========================================================
 
     def start(self) -> None:
-        """Begin tracking. Safe to call if already tracking (no-op)."""
+        """
+        Start activity tracking.
+
+        Before starting, close any stale open database
+        session left behind by a previous application run.
+        """
+
         if self._is_tracking:
             return
-        logger.info("Tracker started")
+
+        logger.info(
+            "Starting activity tracker"
+        )
+
+        # ------------------------------------------------------
+        # IMPORTANT:
+        #
+        # Clean up stale sessions from an earlier run.
+        # ------------------------------------------------------
+
+        self._close_stale_database_session()
+
         self._is_tracking = True
+
         self._is_idle = False
+
         self._current = None
 
-    def stop(self) -> None:
-        """Stop tracking and safely close any open session.
+        self._last_idle_seconds = 0.0
 
-        Order of operations, per spec:
-            1. Stop polling (caller's responsibility - they just stop calling poll()).
-            2. Close current session.
-            3. Save final duration.
-            4. (Caller emits a tracking-stopped signal / updates UI.)
+        logger.info(
+            "Activity tracker started"
+        )
+
+    # ==========================================================
+    # STOP
+    # ==========================================================
+
+    def stop(self) -> None:
         """
+        Stop tracking and close the current session.
+        """
+
         if not self._is_tracking:
             return
-        logger.info("Tracker stopping")
+
+        logger.info(
+            "Stopping activity tracker"
+        )
+
         self._close_current_session()
+
         self._is_tracking = False
+
         self._is_idle = False
 
-    # -- main loop --------------------------------------------------------------
+        self._last_idle_seconds = 0.0
+
+        logger.info(
+            "Activity tracker stopped"
+        )
+
+    # ==========================================================
+    # MAIN POLLING LOOP
+    # ==========================================================
 
     def poll(self) -> TrackerState:
-        """Perform one tracking tick. Call this periodically (e.g. every 1s).
-
-        Never raises: any error from the platform provider or database is
-        caught, logged, and the tracker continues on the next tick.
         """
+        Perform one tracking tick.
+
+        The worker should call this periodically,
+        normally once per second.
+        """
+
         if not self._is_tracking:
             return self._state()
 
         try:
-            idle_seconds = self._safe_get_idle_seconds()
-            self._last_idle_seconds = idle_seconds
+
+            # --------------------------------------------------
+            # Get idle time.
+            # --------------------------------------------------
+
+            idle_seconds = (
+                self._safe_get_idle_seconds()
+            )
+
+            self._last_idle_seconds = (
+                idle_seconds
+            )
 
             was_idle = self._is_idle
-            now_idle = idle_seconds >= self._idle_threshold_seconds
 
-            if now_idle and not was_idle:
+            now_idle = (
+                idle_seconds
+                >= self._idle_threshold_seconds
+            )
+
+            # --------------------------------------------------
+            # User became idle.
+            # --------------------------------------------------
+
+            if (
+                now_idle
+                and not was_idle
+            ):
+
                 self._on_became_idle()
-            elif not now_idle and was_idle:
+
+            # --------------------------------------------------
+            # User became active again.
+            # --------------------------------------------------
+
+            elif (
+                not now_idle
+                and was_idle
+            ):
+
                 self._on_became_active()
 
             self._is_idle = now_idle
 
+            # --------------------------------------------------
+            # Only track applications while active.
+            # --------------------------------------------------
+
             if not self._is_idle:
+
                 self._poll_active_application()
 
-        except Exception:  # noqa: BLE001 - the tracker loop must never die
-            logger.exception("Unexpected error during tracker poll()")
+        except Exception:  # noqa: BLE001
+
+            logger.exception(
+                "Unexpected error during tracker poll()"
+            )
 
         return self._state()
 
-    # -- internal helpers ---------------------------------------------------
+    # ==========================================================
+    # ACTIVE APPLICATION
+    # ==========================================================
 
-    def _poll_active_application(self) -> None:
-        active = self._safe_get_active_application()
+    def _poll_active_application(
+        self,
+    ) -> None:
+        """
+        Check the currently focused application
+        and update the current activity session.
+        """
+
+        active = (
+            self._safe_get_active_application()
+        )
+
         if active is None:
             return
 
-        title = active.window_title if self._track_window_titles else None
+        # ------------------------------------------------------
+        # Window title.
+        # ------------------------------------------------------
+
+        title = (
+            active.window_title
+            if self._track_window_titles
+            else None
+        )
+
+        # ------------------------------------------------------
+        # No current session.
+        #
+        # This happens when:
+        #
+        # - tracker just started
+        # - user returned from idle
+        # - previous session was closed
+        # ------------------------------------------------------
 
         if self._current is None:
-            self._open_new_session(active, title)
-            return
 
-        if self._current.matches_application(active.application_name, active.process_id):
-            if title != self._current.window_title:
-                self._current.window_title = title
-                self._update_session_title(title)
-            return
-
-        # Application changed: close old, open new.
-        self._close_current_session()
-        self._open_new_session(active, title)
-
-    def _open_new_session(self, active: ActiveApplication, title: str | None) -> None:
-        now = self._clock()
-        db_session = self._session_factory()
-        try:
-            repo = ActivityRepository(db_session)
-            record = repo.create_session(
-                application_name=active.application_name,
-                process_id=active.process_id,
-                window_title=title,
-                started_at=now,
+            self._open_new_session(
+                active,
+                title,
             )
+
+            return
+
+        # ------------------------------------------------------
+        # Same application.
+        # ------------------------------------------------------
+
+        if self._current.matches_application(
+            active.application_name,
+            active.process_id,
+        ):
+
+            # Only update the title.
+            if (
+                title
+                != self._current.window_title
+            ):
+
+                self._current.window_title = (
+                    title
+                )
+
+                self._update_session_title(
+                    title
+                )
+
+            return
+
+        # ------------------------------------------------------
+        # Application changed.
+        # ------------------------------------------------------
+
+        previous_application = (
+            self._current.application_name
+        )
+
+        logger.info(
+            "Application changed: %s -> %s",
+            previous_application,
+            active.application_name,
+        )
+
+        # Close old session.
+        self._close_current_session()
+
+        # Open new session.
+        self._open_new_session(
+            active,
+            title,
+        )
+
+        # ------------------------------------------------------
+        # Immediately request sync.
+        #
+        # SyncService decides that it should retrieve
+        # the last 5 minutes.
+        # ------------------------------------------------------
+
+        self._sync_activity()
+
+    # ==========================================================
+    # OPEN NEW SESSION
+    # ==========================================================
+
+    def _open_new_session(
+        self,
+        active: ActiveApplication,
+        title: str | None,
+    ) -> None:
+        """Create a new database activity session."""
+
+        now = self._clock()
+
+        db_session = (
+            self._session_factory()
+        )
+
+        try:
+
+            repository = ActivityRepository(
+                db_session
+            )
+
+            record = (
+                repository.create_session(
+                    application_name=(
+                        active.application_name
+                    ),
+                    process_id=(
+                        active.process_id
+                    ),
+                    window_title=title,
+                    started_at=now,
+                )
+            )
+
             self._current = CurrentSession(
                 db_id=record.id,
-                application_name=active.application_name,
-                process_id=active.process_id,
+
+                application_name=(
+                    active.application_name
+                ),
+
+                process_id=(
+                    active.process_id
+                ),
+
                 window_title=title,
+
                 started_at=now,
             )
-            logger.info("Started new session for %s", active.application_name)
-        finally:
-            db_session.close()
 
-    def _update_session_title(self, title: str | None) -> None:
-        if self._current is None:
-            return
-        db_session = self._session_factory()
-        try:
-            repo = ActivityRepository(db_session)
-            repo.update_session_window_title(self._current.db_id, title)
-        finally:
-            db_session.close()
-
-    def _close_current_session(self) -> None:
-        if self._current is None:
-            return
-        now = self._clock()
-        db_session = self._session_factory()
-        try:
-            repo = ActivityRepository(db_session)
-            repo.close_session(self._current.db_id, now)
             logger.info(
-                "Closed session for %s (duration recorded)",
-                self._current.application_name,
+                "Started new session: "
+                "app=%s session_id=%s pid=%s",
+                active.application_name,
+                record.id,
+                active.process_id,
             )
+
         finally:
+
             db_session.close()
+
+    # ==========================================================
+    # UPDATE WINDOW TITLE
+    # ==========================================================
+
+    def _update_session_title(
+        self,
+        title: str | None,
+    ) -> None:
+        """Update the current session's window title."""
+
+        if self._current is None:
+            return
+
+        db_session = (
+            self._session_factory()
+        )
+
+        try:
+
+            repository = ActivityRepository(
+                db_session
+            )
+
+            repository.update_session_window_title(
+                self._current.db_id,
+                title,
+            )
+
+        finally:
+
+            db_session.close()
+
+    # ==========================================================
+    # CLOSE CURRENT SESSION
+    # ==========================================================
+
+    def _close_current_session(
+        self,
+    ) -> None:
+        """Close the currently tracked session."""
+
+        if self._current is None:
+            return
+
+        now = self._clock()
+
+        session_id = (
+            self._current.db_id
+        )
+
+        application_name = (
+            self._current.application_name
+        )
+
+        db_session = (
+            self._session_factory()
+        )
+
+        try:
+
+            repository = ActivityRepository(
+                db_session
+            )
+
+            repository.close_session(
+                session_id,
+                now,
+            )
+
+            logger.info(
+                "Closed session: "
+                "app=%s session_id=%s",
+                application_name,
+                session_id,
+            )
+
+        finally:
+
+            db_session.close()
+
             self._current = None
 
-    def _on_became_idle(self) -> None:
-        logger.info("User became idle; closing current session")
+    # ==========================================================
+    # CLOSE STALE DATABASE SESSION
+    # ==========================================================
+
+    def _close_stale_database_session(
+        self,
+    ) -> None:
+        """
+        Close an old open session from a previous tracker run.
+
+        This prevents old sessions with ended_at=NULL from
+        being treated as currently active.
+        """
+
+        db_session = (
+            self._session_factory()
+        )
+
+        try:
+
+            repository = ActivityRepository(
+                db_session
+            )
+
+            stale_session = (
+                repository.get_open_session()
+            )
+
+            if stale_session is None:
+
+                return
+
+            logger.warning(
+                "Found stale open session: "
+                "id=%s app=%s started_at=%s",
+                stale_session.id,
+                stale_session.application_name,
+                stale_session.started_at,
+            )
+
+            repository.close_session(
+                stale_session.id,
+                self._clock(),
+            )
+
+            logger.info(
+                "Stale session closed: id=%s",
+                stale_session.id,
+            )
+
+        except Exception:  # noqa: BLE001
+
+            logger.exception(
+                "Failed to close stale database session"
+            )
+
+        finally:
+
+            db_session.close()
+
+    # ==========================================================
+    # IDLE
+    # ==========================================================
+
+    def _on_became_idle(
+        self,
+    ) -> None:
+        """Handle the user becoming idle."""
+
+        logger.info(
+            "User became idle; "
+            "closing current session"
+        )
+
         self._close_current_session()
 
-    def _on_became_active(self) -> None:
-        logger.info("User activity resumed after idle")
-        # A fresh session will be opened on the next _poll_active_application call.
+    # ==========================================================
+    # ACTIVE AGAIN
+    # ==========================================================
 
-    def _safe_get_active_application(self) -> ActiveApplication | None:
+    def _on_became_active(
+        self,
+    ) -> None:
+        """
+        Handle activity resuming after idle.
+
+        A new session will be created by the next poll().
+        """
+
+        logger.info(
+            "User activity resumed after idle"
+        )
+
+    # ==========================================================
+    # ACTIVITY SYNC
+    # ==========================================================
+
+    def _sync_activity(
+        self,
+    ) -> None:
+        """
+        Request an immediate activity synchronization.
+
+        SyncService is responsible for determining the
+        last-5-minute window.
+        """
+
+        if self._sync_service is None:
+
+            logger.debug(
+                "SyncService not configured; "
+                "skipping activity sync"
+            )
+
+            return
+
         try:
-            return self._provider.get_active_application()
+
+            success = (
+                self._sync_service
+                .sync_activity_now()
+            )
+
+            if success:
+
+                logger.info(
+                    "Activity sync completed"
+                )
+
+            else:
+
+                logger.warning(
+                    "Activity sync failed"
+                )
+
         except Exception:  # noqa: BLE001
-            logger.exception("Platform provider failed to get active application")
+
+            logger.exception(
+                "Activity sync raised an exception"
+            )
+
+    # ==========================================================
+    # PLATFORM: ACTIVE APPLICATION
+    # ==========================================================
+
+    def _safe_get_active_application(
+        self,
+    ) -> ActiveApplication | None:
+        """Safely get the active application."""
+
+        try:
+
+            return (
+                self._provider
+                .get_active_application()
+            )
+
+        except Exception:  # noqa: BLE001
+
+            logger.exception(
+                "Platform provider failed "
+                "to get active application"
+            )
+
             return None
 
-    def _safe_get_idle_seconds(self) -> float:
+    # ==========================================================
+    # PLATFORM: IDLE TIME
+    # ==========================================================
+
+    def _safe_get_idle_seconds(
+        self,
+    ) -> float:
+        """Safely get system idle time."""
+
         try:
-            return self._provider.get_idle_seconds()
+
+            return (
+                self._provider
+                .get_idle_seconds()
+            )
+
         except Exception:  # noqa: BLE001
-            logger.exception("Platform provider failed to get idle seconds")
+
+            logger.exception(
+                "Platform provider failed "
+                "to get idle seconds"
+            )
+
             return 0.0
 
-    def _state(self) -> TrackerState:
+    # ==========================================================
+    # STATE
+    # ==========================================================
+
+    def _state(
+        self,
+    ) -> TrackerState:
+        """Return the current tracker state."""
+
         return TrackerState(
             is_tracking=self._is_tracking,
+
             is_idle=self._is_idle,
-            current_application=self._current.application_name if self._current else None,
-            current_window_title=self._current.window_title if self._current else None,
-            idle_seconds=self._last_idle_seconds,
+
+            current_application=(
+                self._current.application_name
+                if self._current
+                else None
+            ),
+
+            current_window_title=(
+                self._current.window_title
+                if self._current
+                else None
+            ),
+
+            idle_seconds=(
+                self._last_idle_seconds
+            ),
         )
