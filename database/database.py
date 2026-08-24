@@ -44,6 +44,7 @@ def init_database(db_path: Path | str | None = None) -> None:
 
     try:
         Base.metadata.create_all(_engine)
+        _create_default_admin_if_needed()
     except Exception:  # noqa: BLE001 - we must never crash the app on DB init
         logger.exception("Failed to create database tables")
         raise
@@ -62,3 +63,69 @@ def get_engine():
     if _engine is None:
         init_database()
     return _engine
+
+
+def _create_default_admin_if_needed() -> None:
+    """Create a default admin user if the users table is completely empty."""
+    session = get_session()
+    try:
+        from database.models import User
+        from sqlalchemy import select
+        from utils.security import hash_password
+        import os
+        from pathlib import Path
+
+        stmt = select(User).limit(1)
+        any_user = session.execute(stmt).scalars().first()
+        if any_user is None:
+            # Try to load from a local .env file in project root if it exists
+            env_vars = {}
+            try:
+                root_path = Path(__file__).resolve().parents[2]
+                env_path = root_path / ".env"
+                if env_path.exists():
+                    for line in env_path.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            env_vars[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                logger.exception("Failed to parse .env file")
+
+            admin_username = env_vars.get("DEFAULT_ADMIN_EMAIL") or os.environ.get(
+                "DEFAULT_ADMIN_EMAIL", "admin@indovision.local"
+            )
+            temp_password = env_vars.get("DEFAULT_ADMIN_PASSWORD") or os.environ.get(
+                "DEFAULT_ADMIN_PASSWORD", "admin@123"
+            )
+
+            hashed = hash_password(temp_password)
+            admin_user = User(
+                username=admin_username,
+                password_hash=hashed,
+                role="Admin",
+                is_active=True,
+            )
+            session.add(admin_user)
+            session.commit()
+
+            # Log and print the credentials
+            logger.warning("==================================================")
+            logger.warning("CREATED DEFAULT ADMIN ACCOUNT:")
+            logger.warning("Username: %s", admin_username)
+            logger.warning("Password: %s", temp_password)
+            logger.warning("==================================================")
+
+            print("\n" + "=" * 50)
+            print("CREATED DEFAULT ADMIN ACCOUNT:")
+            print(f"Username: {admin_username}")
+            print(f"Password: {temp_password}")
+            print("=" * 50 + "\n")
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to create default admin user")
+    finally:
+        session.close()
+

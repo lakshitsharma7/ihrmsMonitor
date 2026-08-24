@@ -139,4 +139,35 @@ QListWidget {
 #CurrentWindowTitle {
     color: #5f6368;
 }
+
+QLineEdit {
+    background-color: #ffffff;
+    border: 1px solid #c7c7c7;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #202124;
+}
+
+QLineEdit:focus {
+    border: 2px solid #1a73e8;
+    padding: 7px 11px;
+}
+
+#LoginContainer {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+}
+
+#LoginTitle {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a73e8;
+}
+
+#LoginError {
+    color: #d93025;
+    font-weight: 600;
+}
 """
+

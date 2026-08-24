@@ -51,11 +51,12 @@ class MainWindow(QMainWindow):
     _request_stop = Signal()
     _request_apply_settings = Signal(float, bool)
 
-    def __init__(self) -> None:
+    def __init__(self, login_window=None) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(900, 700)
 
+        self._login_window = login_window
         self._activity_service = ActivityService(get_session)
         self._settings_service = SettingsService(get_session)
 
@@ -88,6 +89,14 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        display_name = session.full_name if (session and session.full_name) else "User"
+
+        self.user_label = QLabel(f"Welcome, {display_name}")
+        self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
+        header_layout.addWidget(self.user_label)
+
         self.status_badge = QLabel("Not Tracking")
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("tracking", "false")
@@ -102,6 +111,11 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_tracking)
         self.stop_button.setEnabled(False)
         header_layout.addWidget(self.stop_button)
+
+        self.logout_button = QPushButton("Logout")
+        self.logout_button.setObjectName("SecondaryButton")
+        self.logout_button.clicked.connect(self.logout)
+        header_layout.addWidget(self.logout_button)
 
         root.addWidget(header)
 
@@ -213,6 +227,26 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_settings_changed(self, settings: AppSettings) -> None:
         self._request_apply_settings.emit(float(settings.idle_threshold), settings.track_window_titles)
+
+    @Slot()
+    def logout(self) -> None:
+        logger.info("Logging out user")
+        self.stop_tracking()
+        self._shutdown()
+
+        from services.session_service import SessionService
+        SessionService().logout()
+
+        self.hide()
+        if hasattr(self, "tray") and self.tray.tray_icon:
+            self.tray.tray_icon.hide()
+
+        if self._login_window:
+            self._login_window.show_and_clear()
+        else:
+            from ui.login_window import LoginWindow
+            self._login_window = LoginWindow()
+            self._login_window.show()
 
     # -- tray actions -----------------------------------------------------------
 

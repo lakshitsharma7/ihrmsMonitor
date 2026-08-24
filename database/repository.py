@@ -20,7 +20,7 @@ from config.settings import (
     DEFAULT_TRACK_WINDOW_TITLES,
     DEFAULT_TRACKING_ENABLED,
 )
-from database.models import ActivitySession, Settings
+from database.models import ActivitySession, Settings, User
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -178,3 +178,34 @@ class SettingsRepository:
         self._session.commit()
         self._session.refresh(record)
         return record
+
+
+class UserRepository:
+    """CRUD for the ``User`` table."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_by_username(self, username: str) -> User | None:
+        """Find a user by username/email."""
+        stmt = select(User).where(User.username == username)
+        return self._session.execute(stmt).scalars().first()
+
+    def create_user(self, username: str, password_hash: str, role: str = "User") -> User:
+        """Create and return a new user."""
+        try:
+            user = User(
+                username=username,
+                password_hash=password_hash,
+                role=role,
+                is_active=True,
+            )
+            self._session.add(user)
+            self._session.commit()
+            self._session.refresh(user)
+            return user
+        except Exception:
+            self._session.rollback()
+            logger.exception("Failed to create user %s", username)
+            raise
+

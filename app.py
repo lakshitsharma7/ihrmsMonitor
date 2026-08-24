@@ -58,12 +58,13 @@ def main() -> int:
         return 1
 
     # Imported after QApplication exists, since it builds widgets.
-    from ui.main_window import MainWindow
+    from ui.login_window import LoginWindow
 
-    window = MainWindow()
-    window.show()
+    login_window = LoginWindow()
+    login_window.show()
 
     return app.exec()
+
 
 
 if __name__ == "__main__":
