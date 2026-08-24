@@ -51,6 +51,16 @@ def init_database(db_path: Path | str | None = None) -> None:
             column_names = [col[1] for col in columns]
             if "screenshot_path" not in column_names:
                 conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN screenshot_path VARCHAR(512)"))
+            
+            # Migrate settings table
+            settings_cols = conn.execute(text("PRAGMA table_info(settings)")).fetchall()
+            settings_col_names = [col[1] for col in settings_cols]
+            if "screenshot_interval_type" not in settings_col_names:
+                conn.execute(text("ALTER TABLE settings ADD COLUMN screenshot_interval_type VARCHAR(50) NOT NULL DEFAULT '3_min'"))
+            if "screenshot_custom_interval" not in settings_col_names:
+                conn.execute(text("ALTER TABLE settings ADD COLUMN screenshot_custom_interval INTEGER NOT NULL DEFAULT 180"))
+            if "capture_on_switch" not in settings_col_names:
+                conn.execute(text("ALTER TABLE settings ADD COLUMN capture_on_switch BOOLEAN NOT NULL DEFAULT 1"))
         _create_default_admin_if_needed()
     except Exception:  # noqa: BLE001 - we must never crash the app on DB init
         logger.exception("Failed to create database tables")

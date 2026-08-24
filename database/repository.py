@@ -759,6 +759,9 @@ class SettingsRepository:
             track_window_titles=(
                 DEFAULT_TRACK_WINDOW_TITLES
             ),
+            screenshot_interval_type="3_min",
+            screenshot_custom_interval=180,
+            capture_on_switch=True,
         )
 
         self._session.add(record)

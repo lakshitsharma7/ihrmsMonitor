@@ -79,6 +79,9 @@ class ActivityTracker:
         track_window_titles: bool = True,
         clock: Callable[[], datetime] = _default_clock,
         sync_service=None,
+        screenshot_interval_type: str = "3_min",
+        screenshot_custom_interval_seconds: int = 180,
+        capture_on_switch: bool = True,
     ) -> None:
 
         self._provider = provider
@@ -105,6 +108,14 @@ class ActivityTracker:
 
         self._last_idle_seconds = 0.0
 
+        self._screenshot_interval_type = screenshot_interval_type
+
+        self._screenshot_custom_interval_seconds = screenshot_custom_interval_seconds
+
+        self._capture_on_switch = capture_on_switch
+
+        self._last_screenshot_time = None
+
     # ==========================================================
     # CONFIGURATION
     # ==========================================================
@@ -124,6 +135,17 @@ class ActivityTracker:
         """Enable or disable window-title tracking."""
 
         self._track_window_titles = enabled
+
+    def set_screenshot_settings(
+        self,
+        interval_type: str,
+        custom_interval_seconds: int,
+        capture_on_switch: bool,
+    ) -> None:
+        """Update screenshot scheduling parameters."""
+        self._screenshot_interval_type = interval_type
+        self._screenshot_custom_interval_seconds = custom_interval_seconds
+        self._capture_on_switch = capture_on_switch
 
     @property
     def is_tracking(self) -> bool:
@@ -159,6 +181,8 @@ class ActivityTracker:
         self._current = None
 
         self._last_idle_seconds = 0.0
+
+        self._last_screenshot_time = self._clock()
 
         logger.info(
             "Activity tracker started"
@@ -251,6 +275,25 @@ class ActivityTracker:
 
                 self._poll_active_application()
 
+                # Check screenshot interval scheduler
+                now = self._clock()
+                interval_seconds = 180
+                if self._screenshot_interval_type == "3_min":
+                    interval_seconds = 3 * 60
+                elif self._screenshot_interval_type == "5_min":
+                    interval_seconds = 5 * 60
+                elif self._screenshot_interval_type == "10_min":
+                    interval_seconds = 10 * 60
+                elif self._screenshot_interval_type == "custom":
+                    interval_seconds = self._screenshot_custom_interval_seconds
+
+                if self._last_screenshot_time is None:
+                    self._last_screenshot_time = now
+                else:
+                    elapsed = (now - self._last_screenshot_time).total_seconds()
+                    if elapsed >= interval_seconds:
+                        self._capture_screenshot_for_current_session()
+
         except Exception:  # noqa: BLE001
 
             logger.exception(
@@ -302,11 +345,8 @@ class ActivityTracker:
                 title,
             )
 
-            # --------------------------------------------------
-            # Capture screenshot for the FIRST session too.
-            # --------------------------------------------------
-
-            self._capture_screenshot_for_current_session()
+            if self._capture_on_switch:
+                self._capture_screenshot_for_current_session()
 
             return
 
@@ -335,6 +375,9 @@ class ActivityTracker:
                 self._update_session_title(
                     title
                 )
+
+                if self._capture_on_switch:
+                    self._capture_screenshot_for_current_session()
 
             return
 
@@ -389,9 +432,11 @@ class ActivityTracker:
         # self._current.db_id now belongs to the NEW app.
         # ------------------------------------------------------
 
-        screenshot_path = (
-            self._capture_screenshot_for_current_session()
-        )
+        screenshot_path = None
+        if self._capture_on_switch:
+            screenshot_path = (
+                self._capture_screenshot_for_current_session()
+            )
 
         # ------------------------------------------------------
         # STEP 4:
@@ -459,6 +504,8 @@ class ActivityTracker:
             )
 
             return None
+
+        self._last_screenshot_time = self._clock()
 
         session_id = self._current.db_id
 

@@ -459,6 +459,9 @@ class MainWindow(QMainWindow):
     _request_apply_settings = Signal(
         float,
         bool,
+        str,
+        int,
+        bool,
     )
 
     def __init__(self, login_window=None) -> None:
@@ -638,6 +641,8 @@ class MainWindow(QMainWindow):
             "Settings",
         )
 
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         root.addWidget(
             self.tabs
         )
@@ -755,6 +760,9 @@ class MainWindow(QMainWindow):
             track_window_titles=(
                 settings.track_window_titles
             ),
+            screenshot_interval_type=settings.screenshot_interval_type,
+            screenshot_custom_interval_seconds=settings.screenshot_custom_interval,
+            capture_on_switch=settings.capture_on_switch,
         )
 
         (
@@ -861,6 +869,7 @@ class MainWindow(QMainWindow):
         self.tray.set_tracking_state(
             True
         )
+        self.settings_page.update_capture_status(True)
 
     @Slot()
     def _on_tracking_stopped(
@@ -890,6 +899,7 @@ class MainWindow(QMainWindow):
         self.tray.set_tracking_state(
             False
         )
+        self.settings_page.update_capture_status(False)
 
         self.dashboard_page.refresh()
 
@@ -957,7 +967,18 @@ class MainWindow(QMainWindow):
         self._request_apply_settings.emit(
             float(settings.idle_threshold),
             bool(settings.track_window_titles),
+            str(settings.screenshot_interval_type),
+            int(settings.screenshot_custom_interval),
+            bool(settings.capture_on_switch),
         )
+
+    @Slot(int)
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 1:  # Settings tab
+            self.settings_page.reload()
+            if hasattr(self, "_tracker") and self._tracker:
+                self.settings_page.update_capture_status(self._tracker.is_tracking)
+
     @Slot()
     def logout(self) -> None:
         logger.info("Logging out user")

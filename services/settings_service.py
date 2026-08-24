@@ -15,6 +15,9 @@ class AppSettings:
     start_with_system: bool
     tracking_enabled: bool
     track_window_titles: bool
+    screenshot_interval_type: str
+    screenshot_custom_interval: int
+    capture_on_switch: bool
 
 
 class SettingsService:
@@ -32,6 +35,9 @@ class SettingsService:
                 start_with_system=record.start_with_system,
                 tracking_enabled=record.tracking_enabled,
                 track_window_titles=record.track_window_titles,
+                screenshot_interval_type=record.screenshot_interval_type,
+                screenshot_custom_interval=record.screenshot_custom_interval,
+                capture_on_switch=record.capture_on_switch,
             )
         finally:
             db_session.close()
@@ -49,6 +55,9 @@ class SettingsService:
                 start_with_system=record.start_with_system,
                 tracking_enabled=record.tracking_enabled,
                 track_window_titles=record.track_window_titles,
+                screenshot_interval_type=record.screenshot_interval_type,
+                screenshot_custom_interval=record.screenshot_custom_interval,
+                capture_on_switch=record.capture_on_switch,
             )
         finally:
             db_session.close()

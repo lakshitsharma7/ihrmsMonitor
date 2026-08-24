@@ -56,6 +56,9 @@ class Settings(Base):
     start_with_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     tracking_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     track_window_titles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    screenshot_interval_type: Mapped[str] = mapped_column(String(50), nullable=False, default="3_min")
+    screenshot_custom_interval: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
+    capture_on_switch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return (

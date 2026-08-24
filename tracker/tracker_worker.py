@@ -70,10 +70,17 @@ class TrackerWorker(QObject):
         except Exception:  # noqa: BLE001
             logger.exception("TrackerWorker failed to stop tracking cleanly")
 
-    @Slot(float, bool)
-    def apply_settings(self, idle_threshold_seconds: float, track_window_titles: bool) -> None:
+    @Slot(float, bool, str, int, bool)
+    def apply_settings(self, idle_threshold_seconds: float, track_window_titles: bool,
+                       screenshot_interval_type: str, screenshot_custom_interval_seconds: int,
+                       capture_on_switch: bool) -> None:
         self._tracker.set_idle_threshold(idle_threshold_seconds)
         self._tracker.set_track_window_titles(track_window_titles)
+        self._tracker.set_screenshot_settings(
+            screenshot_interval_type,
+            screenshot_custom_interval_seconds,
+            capture_on_switch
+        )
 
     # -- internal ---------------------------------------------------------------
 
