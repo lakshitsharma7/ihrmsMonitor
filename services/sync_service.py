@@ -20,8 +20,12 @@ class SyncService:
     """
     Sends Activity Tracker data to the FastAPI server.
 
-    Activity sync:
-        Sends only the activity sessions from the last 5 minutes.
+    Background activity sync:
+        Sends only activity sessions from the last 5 minutes.
+
+    Activity history:
+        Retrieves all locally stored activity sessions using
+        pagination.
 
     Screenshot sync:
         Uploads a screenshot immediately when requested by the tracker.
@@ -29,7 +33,18 @@ class SyncService:
     This service does not run its own timer.
     """
 
+    # ----------------------------------------------------------
+    # Background sync window.
+    #
+    # DO NOT remove this.
+    #
+    # This is intentionally used for incremental syncing.
+    # ----------------------------------------------------------
+
     ACTIVITY_WINDOW_MINUTES = 5
+
+    # Maximum number of records returned in one history page.
+    MAX_PAGE_SIZE = 500
 
     def __init__(
         self,
@@ -51,14 +66,9 @@ class SyncService:
         """
         Immediately send activity data for the last 5 minutes.
 
-        Example:
+        This is the background/incremental sync operation.
 
-            Current time = 10:30
-
-            Sync window:
-                10:25 -> 10:30
-
-        Only sessions overlapping this period are included.
+        It intentionally does NOT send the entire activity history.
         """
 
         sync_to = datetime.now(timezone.utc)
@@ -121,6 +131,161 @@ class SyncService:
             return False
 
     # ==============================================================
+    # ACTIVITY HISTORY
+    # ==============================================================
+
+    def get_activity_history(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        newest_first: bool = True,
+    ) -> dict:
+        """
+        Return all locally stored activity sessions page by page.
+
+        Example:
+
+            get_activity_history(
+                page=1,
+                page_size=50,
+            )
+
+        returns records 1-50.
+
+            get_activity_history(
+                page=2,
+                page_size=50,
+            )
+
+        returns records 51-100.
+
+        This method is NOT limited to the last 5 minutes.
+        """
+
+        page = max(1, int(page))
+
+        page_size = max(
+            1,
+            min(
+                int(page_size),
+                self.MAX_PAGE_SIZE,
+            ),
+        )
+
+        db_session = get_session()
+
+        try:
+
+            repository = ActivityRepository(
+                db_session
+            )
+
+            result = (
+                repository.get_sessions_paginated(
+                    page=page,
+                    page_size=page_size,
+                    newest_first=newest_first,
+                )
+            )
+
+            activities = []
+
+            for session in result.items:
+
+                started_at = self._to_utc(
+                    session.started_at
+                )
+
+                ended_at = (
+                    self._to_utc(
+                        session.ended_at
+                    )
+                    if session.ended_at
+                    else None
+                )
+
+                activities.append(
+                    {
+                        "activity_session_id": session.id,
+                        "application_name": (
+                            session.application_name
+                        ),
+                        "process_id": (
+                            session.process_id
+                        ),
+                        "window_title": (
+                            session.window_title
+                        ),
+                        "started_at": (
+                            started_at.isoformat()
+                        ),
+                        "ended_at": (
+                            ended_at.isoformat()
+                            if ended_at
+                            else None
+                        ),
+                        "duration_seconds": (
+                            session.duration_seconds
+                        ),
+                        "screenshot": None,
+                    }
+                )
+
+            return {
+                "page": result.page,
+                "page_size": result.page_size,
+                "total": result.total,
+                "total_pages": result.total_pages,
+                "has_next": result.has_next,
+                "has_previous": result.has_previous,
+                "activities": activities,
+            }
+
+        finally:
+
+            db_session.close()
+
+    # ==============================================================
+    # GET ALL LOCAL ACTIVITY
+    # ==============================================================
+
+    def get_all_activity_pages(
+        self,
+        page_size: int = 50,
+        newest_first: bool = True,
+    ) -> list[dict]:
+        """
+        Retrieve every locally stored activity session.
+
+        This repeatedly loads pages until all records are retrieved.
+
+        Use get_activity_history() when the UI itself handles
+        pagination. Use this method only when the entire history
+        is actually required.
+        """
+
+        page = 1
+
+        all_pages: list[dict] = []
+
+        while True:
+
+            result = self.get_activity_history(
+                page=page,
+                page_size=page_size,
+                newest_first=newest_first,
+            )
+
+            all_pages.append(result)
+
+            if not result["has_next"]:
+                break
+
+            page += 1
+
+        return all_pages
+
+    # ==============================================================
     # BUILD ACTIVITY PAYLOAD
     # ==============================================================
 
@@ -132,8 +297,9 @@ class SyncService:
         """
         Build the payload for POST /activity/sync.
 
-        Only sessions overlapping the last 5-minute window
-        are included.
+        IMPORTANT:
+        This method intentionally uses the requested sync window.
+        Background synchronization remains incremental.
         """
 
         db_session = get_session()
@@ -144,14 +310,18 @@ class SyncService:
                 db_session
             )
 
-            sessions = repository.get_sessions_between(
-                sync_from,
-                sync_to,
+            sessions = (
+                repository.get_sessions_between(
+                    sync_from,
+                    sync_to,
+                )
             )
 
-            usage = repository.get_application_usage(
-                sync_from,
-                sync_to,
+            usage = (
+                repository.get_application_usage(
+                    sync_from,
+                    sync_to,
+                )
             )
 
             activities = []
@@ -171,7 +341,7 @@ class SyncService:
                 )
 
                 # --------------------------------------------------
-                # Calculate duration inside the 5-minute window
+                # Calculate duration inside the sync window.
                 # --------------------------------------------------
 
                 effective_start = max(
@@ -202,25 +372,20 @@ class SyncService:
                 activities.append(
                     {
                         "activity_session_id": session.id,
-
                         "application_name": (
                             session.application_name
                         ),
-
                         "process_id": (
                             session.process_id
                         ),
-
                         "started_at": (
                             started_at.isoformat()
                         ),
-
                         "ended_at": (
                             ended_at.isoformat()
                             if ended_at
                             else None
                         ),
-
                         "duration_seconds": (
                             duration_seconds
                         ),
@@ -228,10 +393,7 @@ class SyncService:
                 )
 
             # ------------------------------------------------------
-            # Calculate totals from the activities actually sent.
-            #
-            # This prevents totals from including old sessions
-            # outside the 5-minute window.
+            # Calculate totals.
             # ------------------------------------------------------
 
             totals_map: dict[str, int] = {}
@@ -246,9 +408,7 @@ class SyncService:
                     activity["duration_seconds"]
                 )
 
-                totals_map[
-                    application_name
-                ] = (
+                totals_map[application_name] = (
                     totals_map.get(
                         application_name,
                         0,
@@ -258,11 +418,17 @@ class SyncService:
 
             totals = [
                 {
-                    "application_name": application_name,
-                    "total_duration_seconds": total_seconds,
+                    "application_name": (
+                        application_name
+                    ),
+                    "total_duration_seconds": (
+                        total_seconds
+                    ),
                 }
-                for application_name, total_seconds
-                in totals_map.items()
+                for (
+                    application_name,
+                    total_seconds,
+                ) in totals_map.items()
             ]
 
             totals.sort(
@@ -273,30 +439,19 @@ class SyncService:
             )
 
             # ------------------------------------------------------
-            # Final payload
+            # Final payload.
             # ------------------------------------------------------
 
             payload = {
                 "device": {
                     "username": self._get_username(),
-
-                    "hostname": (
-                        socket.gethostname()
-                    ),
-
-                    "platform": (
-                        platform.system()
-                    ),
+                    "hostname": socket.gethostname(),
+                    "platform": platform.system(),
                 },
 
                 "sync": {
-                    "from_": (
-                        sync_from.isoformat()
-                    ),
-
-                    "to": (
-                        sync_to.isoformat()
-                    ),
+                    "from": sync_from.isoformat(),
+                    "to": sync_to.isoformat(),
                 },
 
                 "activities": activities,
@@ -438,11 +593,9 @@ class SyncService:
     def _get_username() -> str:
 
         try:
-
             return getpass.getuser()
 
         except Exception:
-
             return "unknown"
 
     @staticmethod
@@ -451,7 +604,6 @@ class SyncService:
     ) -> datetime:
 
         if value.tzinfo is None:
-
             return value.replace(
                 tzinfo=timezone.utc
             )

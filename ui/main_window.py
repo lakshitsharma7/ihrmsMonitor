@@ -480,6 +480,11 @@ class MainWindow(QMainWindow):
 
         self._build_tray()
 
+        # Initial UI state: tracking is stopped until the worker
+        # confirms that tracking has actually started.
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+
         # ------------------------------------------------------
         # Initial settings
         # ------------------------------------------------------
@@ -571,6 +576,21 @@ class MainWindow(QMainWindow):
         self.status_badge.setProperty("tracking", "false")
         header_layout.addWidget(self.status_badge)
 
+        # ------------------------------------------------------
+        # Tracking controls
+        # ------------------------------------------------------
+
+        self.start_button = QPushButton("Start Tracking")
+        self.start_button.setObjectName("PrimaryButton")
+        self.start_button.clicked.connect(self.start_tracking)
+        header_layout.addWidget(self.start_button)
+
+        self.stop_button = QPushButton("Stop Tracking")
+        self.stop_button.setObjectName("SecondaryButton")
+        self.stop_button.clicked.connect(self.stop_tracking)
+        self.stop_button.setEnabled(False)
+        header_layout.addWidget(self.stop_button)
+
         self.user_button = QPushButton(
             "User / Device"
         )
@@ -578,6 +598,10 @@ class MainWindow(QMainWindow):
         self.user_button.setObjectName(
             "SecondaryButton"
         )
+        self.user_button.clicked.connect(
+            self._show_user_device_info
+        )
+        header_layout.addWidget(self.user_button)
 
         self.logout_button = QPushButton("Logout")
         self.logout_button.setObjectName("SecondaryButton")
@@ -930,6 +954,10 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Apply changed settings to tracker."""
 
+        self._request_apply_settings.emit(
+            float(settings.idle_threshold),
+            bool(settings.track_window_titles),
+        )
     @Slot()
     def logout(self) -> None:
         logger.info("Logging out user")
@@ -956,6 +984,13 @@ class MainWindow(QMainWindow):
 
         self.raise_()
 
+        self.activateWindow()
+
+    def _show_and_raise(self) -> None:
+        """Show the main window and bring it to the foreground."""
+
+        self.showNormal()
+        self.raise_()
         self.activateWindow()
 
     def _show_today_activity(

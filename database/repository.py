@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from config.settings import (
@@ -29,6 +29,27 @@ logger = get_logger(__name__)
 
 
 # ==============================================================
+# UTC HELPER
+# ==============================================================
+
+
+def _to_utc(value: datetime) -> datetime:
+    """
+    Normalize a datetime to UTC.
+
+    SQLite can return naive datetime values even when the model
+    uses DateTime(timezone=True).
+
+    Naive values are treated as UTC.
+    """
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
+# ==============================================================
 # APPLICATION USAGE
 # ==============================================================
 
@@ -39,6 +60,24 @@ class ApplicationUsage:
 
     application_name: str
     total_seconds: int
+
+
+# ==============================================================
+# PAGINATED RESULT
+# ==============================================================
+
+
+@dataclass
+class PaginatedSessions:
+    """Paginated activity-session result."""
+
+    items: list[ActivitySession]
+    page: int
+    page_size: int
+    total: int
+    has_next: bool
+    has_previous: bool
+    total_pages: int
 
 
 # ==============================================================
@@ -69,6 +108,8 @@ class ActivityRepository:
         """Create a new open activity session."""
 
         try:
+            started_at = _to_utc(started_at)
+
             record = ActivitySession(
                 application_name=application_name,
                 process_id=process_id,
@@ -82,10 +123,18 @@ class ActivityRepository:
             self._session.commit()
             self._session.refresh(record)
 
+            logger.info(
+                "Created activity session: "
+                "id=%s app=%s pid=%s started_at=%s",
+                record.id,
+                record.application_name,
+                record.process_id,
+                record.started_at,
+            )
+
             return record
 
         except Exception:  # noqa: BLE001
-
             self._session.rollback()
 
             logger.exception(
@@ -104,7 +153,7 @@ class ActivityRepository:
         session_id: int,
         window_title: str | None,
     ) -> None:
-        """Update the window title of an active session."""
+        """Update the window title of an activity session."""
 
         try:
             record = self._session.get(
@@ -124,7 +173,6 @@ class ActivityRepository:
             self._session.commit()
 
         except Exception:  # noqa: BLE001
-
             self._session.rollback()
 
             logger.exception(
@@ -156,38 +204,38 @@ class ActivityRepository:
                 )
                 return None
 
+            ended_at = _to_utc(ended_at)
+            started_at = _to_utc(record.started_at)
+
+            if ended_at < started_at:
+                ended_at = started_at
+
             record.ended_at = ended_at
 
-            started = record.started_at
-
-            if started.tzinfo is None:
-                started = started.replace(
-                    tzinfo=timezone.utc
-                )
-
-            if ended_at.tzinfo is None:
-                ended_at = ended_at.replace(
-                    tzinfo=timezone.utc
-                )
-
-            duration = max(
+            record.duration_seconds = max(
                 0,
                 int(
                     (
-                        ended_at - started
+                        ended_at - started_at
                     ).total_seconds()
                 ),
             )
 
-            record.duration_seconds = duration
-
             self._session.commit()
             self._session.refresh(record)
+
+            logger.info(
+                "Closed activity session: "
+                "id=%s app=%s ended_at=%s duration=%ss",
+                record.id,
+                record.application_name,
+                record.ended_at,
+                record.duration_seconds,
+            )
 
             return record
 
         except Exception:  # noqa: BLE001
-
             self._session.rollback()
 
             logger.exception(
@@ -196,6 +244,91 @@ class ActivityRepository:
             )
 
             return None
+
+    # ==========================================================
+    # CLOSE ALL STALE OPEN SESSIONS
+    # ==========================================================
+
+    def close_stale_sessions(
+        self,
+        ended_at: datetime,
+    ) -> int:
+        """Close every ActivitySession whose ended_at is NULL."""
+
+        try:
+            ended_at = _to_utc(ended_at)
+
+            stmt = (
+                select(ActivitySession)
+                .where(
+                    ActivitySession.ended_at.is_(None)
+                )
+            )
+
+            stale_sessions = list(
+                self._session
+                .execute(stmt)
+                .scalars()
+                .all()
+            )
+
+            if not stale_sessions:
+                logger.info(
+                    "No stale open activity sessions found"
+                )
+                return 0
+
+            closed_count = 0
+
+            for record in stale_sessions:
+
+                started_at = _to_utc(
+                    record.started_at
+                )
+
+                effective_end = max(
+                    ended_at,
+                    started_at,
+                )
+
+                record.ended_at = effective_end
+
+                record.duration_seconds = max(
+                    0,
+                    int(
+                        (
+                            effective_end - started_at
+                        ).total_seconds()
+                    ),
+                )
+
+                closed_count += 1
+
+                logger.warning(
+                    "Closing stale activity session: "
+                    "id=%s app=%s started_at=%s",
+                    record.id,
+                    record.application_name,
+                    record.started_at,
+                )
+
+            self._session.commit()
+
+            logger.info(
+                "Closed %s stale open activity sessions",
+                closed_count,
+            )
+
+            return closed_count
+
+        except Exception:  # noqa: BLE001
+            self._session.rollback()
+
+            logger.exception(
+                "Failed to close stale activity sessions"
+            )
+
+            return 0
 
     # ==========================================================
     # GET SESSIONS BETWEEN
@@ -207,48 +340,14 @@ class ActivityRepository:
         end: datetime,
     ) -> list[ActivitySession]:
         """
-        Return activity sessions belonging to the requested
-        time window.
-
-        Closed sessions are returned only when they overlap
-        the requested window.
-
-        For open sessions, only the latest open session is
-        considered active. This prevents stale sessions from
-        previous tracker runs from appearing in the API.
+        Return activity sessions overlapping the requested interval.
         """
 
-        # ------------------------------------------------------
-        # Find the newest open session.
-        # ------------------------------------------------------
+        start = _to_utc(start)
+        end = _to_utc(end)
 
-        latest_open_stmt = (
-            select(ActivitySession.id)
-            .where(
-                ActivitySession.ended_at.is_(None)
-            )
-            .order_by(
-                ActivitySession.started_at.desc()
-            )
-            .limit(1)
-        )
-
-        latest_open_session_id = (
-            self._session
-            .execute(latest_open_stmt)
-            .scalar_one_or_none()
-        )
-
-        # ------------------------------------------------------
-        # Closed sessions:
-        #
-        # started_at < end
-        # ended_at > start
-        #
-        # OR
-        #
-        # Latest open session.
-        # ------------------------------------------------------
+        if start >= end:
+            return []
 
         stmt = (
             select(ActivitySession)
@@ -257,22 +356,11 @@ class ActivityRepository:
             )
             .where(
                 (
-                    (
-                        ActivitySession.ended_at.is_not(None)
-                    )
-                    & (
-                        ActivitySession.ended_at > start
-                    )
+                    ActivitySession.ended_at.is_(None)
                 )
                 |
                 (
-                    (
-                        ActivitySession.ended_at.is_(None)
-                    )
-                    & (
-                        ActivitySession.id
-                        == latest_open_session_id
-                    )
+                    ActivitySession.ended_at > start
                 )
             )
             .order_by(
@@ -288,6 +376,173 @@ class ActivityRepository:
         )
 
     # ==========================================================
+    # GET ALL SESSIONS
+    # ==========================================================
+
+    def get_all_sessions(
+        self,
+    ) -> list[ActivitySession]:
+        """
+        Return ALL activity sessions stored in the database.
+
+        No time filtering is applied.
+
+        This is used by:
+
+            GET /activity/all
+        """
+
+        stmt = (
+            select(ActivitySession)
+            .order_by(
+                ActivitySession.started_at.desc()
+            )
+        )
+
+        sessions = list(
+            self._session
+            .execute(stmt)
+            .scalars()
+            .all()
+        )
+
+        logger.info(
+            "Fetched all activity sessions: %d",
+            len(sessions),
+        )
+
+        return sessions
+
+    # ==========================================================
+    # GET ALL SESSIONS - PAGINATED
+    # ==========================================================
+
+    def get_sessions_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        newest_first: bool = True,
+    ) -> PaginatedSessions:
+        """
+        Return all activity sessions using pagination.
+
+        This method does NOT apply the 5-minute sync window.
+        """
+
+        page = max(
+            1,
+            int(page),
+        )
+
+        page_size = max(
+            1,
+            min(
+                int(page_size),
+                500,
+            ),
+        )
+
+        # ------------------------------------------------------
+        # Count total records.
+        # ------------------------------------------------------
+
+        count_stmt = select(
+            func.count(ActivitySession.id)
+        )
+
+        total = (
+            self._session
+            .execute(count_stmt)
+            .scalar_one()
+        )
+
+        # ------------------------------------------------------
+        # Calculate pagination.
+        # ------------------------------------------------------
+
+        total_pages = (
+            (total + page_size - 1) // page_size
+            if total > 0
+            else 0
+        )
+
+        offset = (
+            (page - 1) * page_size
+        )
+
+        # ------------------------------------------------------
+        # Ordering.
+        # ------------------------------------------------------
+
+        if newest_first:
+            order_clause = (
+                ActivitySession.started_at.desc()
+            )
+        else:
+            order_clause = (
+                ActivitySession.started_at.asc()
+            )
+
+        # ------------------------------------------------------
+        # Query.
+        # ------------------------------------------------------
+
+        stmt = (
+            select(ActivitySession)
+            .order_by(order_clause)
+            .offset(offset)
+            .limit(page_size)
+        )
+
+        items = list(
+            self._session
+            .execute(stmt)
+            .scalars()
+            .all()
+        )
+
+        has_previous = page > 1
+        has_next = page < total_pages
+
+        logger.info(
+            "Fetched activity page: "
+            "page=%s page_size=%s total=%s items=%s",
+            page,
+            page_size,
+            total,
+            len(items),
+        )
+
+        return PaginatedSessions(
+            items=items,
+            page=page,
+            page_size=page_size,
+            total=total,
+            has_next=has_next,
+            has_previous=has_previous,
+            total_pages=total_pages,
+        )
+
+    # ==========================================================
+    # COUNT SESSIONS
+    # ==========================================================
+
+    def count_sessions(
+        self,
+    ) -> int:
+        """Return the total number of activity sessions."""
+
+        stmt = select(
+            func.count(ActivitySession.id)
+        )
+
+        return int(
+            self._session
+            .execute(stmt)
+            .scalar_one()
+        )
+
+    # ==========================================================
     # GET SESSIONS FOR DAY
     # ==========================================================
 
@@ -295,18 +550,20 @@ class ActivityRepository:
         self,
         day: datetime,
     ) -> list[ActivitySession]:
-        """Return sessions for a given calendar day."""
+        """Return sessions for a given UTC calendar day."""
+
+        day = _to_utc(day)
 
         start = datetime.combine(
             day.date(),
             time.min,
-            tzinfo=day.tzinfo,
+            tzinfo=timezone.utc,
         )
 
         end = datetime.combine(
             day.date(),
             time.max,
-            tzinfo=day.tzinfo,
+            tzinfo=timezone.utc,
         )
 
         return self.get_sessions_between(
@@ -393,7 +650,7 @@ class ActivityRepository:
     def get_open_session(
         self,
     ) -> ActivitySession | None:
-        """Return the newest currently open session."""
+        """Return the newest currently-open session."""
 
         stmt = (
             select(ActivitySession)

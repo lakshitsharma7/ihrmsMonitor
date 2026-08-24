@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 from database.repository import ActivityRepository
@@ -14,11 +15,10 @@ from platform_support.base import (
 from tracker.activity_session import CurrentSession
 from utils.logger import get_logger
 
+from services.screenshot import capture_screenshot
+
 
 logger = get_logger(__name__)
-
-
-SessionFactory = Callable[[], "Session"]  # type: ignore[name-defined]
 
 
 # ==============================================================
@@ -28,7 +28,6 @@ SessionFactory = Callable[[], "Session"]  # type: ignore[name-defined]
 
 def _default_clock() -> datetime:
     """Return the current UTC time."""
-
     return datetime.now(timezone.utc)
 
 
@@ -57,15 +56,19 @@ class ActivityTracker:
     """
     Core activity-tracking state machine.
 
-    Rules:
+    Behaviour:
 
-    1. Start a new session when the focused application changes.
-    2. Keep the same session when only the window title changes.
-    3. Close the current session when the user becomes idle.
-    4. Start a fresh session when the user becomes active again.
-    5. Close stale database sessions when the tracker starts.
-    6. Sync activity immediately when the application changes.
-    7. SyncService decides the actual API time window.
+    1. Create a session when tracking starts.
+    2. Keep the same session while the same application/process
+       remains active.
+    3. Create a new session when the application changes.
+    4. Capture a screenshot for the NEW session after the session
+       has been created.
+    5. Screenshot filename contains the session ID.
+    6. Close the current session when the user becomes idle.
+    7. Create a new session when the user becomes active again.
+    8. Close stale sessions when the tracker starts.
+    9. Trigger activity synchronization after an application change.
     """
 
     def __init__(
@@ -74,18 +77,13 @@ class ActivityTracker:
         session_factory,
         idle_threshold_seconds: float,
         track_window_titles: bool = True,
-        clock: Callable[
-            [],
-            datetime,
-        ] = _default_clock,
+        clock: Callable[[], datetime] = _default_clock,
         sync_service=None,
     ) -> None:
 
         self._provider = provider
 
-        self._session_factory = (
-            session_factory
-        )
+        self._session_factory = session_factory
 
         self._idle_threshold_seconds = (
             idle_threshold_seconds
@@ -97,17 +95,13 @@ class ActivityTracker:
 
         self._clock = clock
 
-        # SyncService is optional so the tracker
-        # remains easy to test without HTTP.
         self._sync_service = sync_service
 
         self._is_tracking = False
 
         self._is_idle = False
 
-        self._current: (
-            CurrentSession | None
-        ) = None
+        self._current: CurrentSession | None = None
 
         self._last_idle_seconds = 0.0
 
@@ -121,9 +115,7 @@ class ActivityTracker:
     ) -> None:
         """Change the idle threshold."""
 
-        self._idle_threshold_seconds = (
-            seconds
-        )
+        self._idle_threshold_seconds = seconds
 
     def set_track_window_titles(
         self,
@@ -131,9 +123,7 @@ class ActivityTracker:
     ) -> None:
         """Enable or disable window-title tracking."""
 
-        self._track_window_titles = (
-            enabled
-        )
+        self._track_window_titles = enabled
 
     @property
     def is_tracking(self) -> bool:
@@ -149,8 +139,8 @@ class ActivityTracker:
         """
         Start activity tracking.
 
-        Before starting, close any stale open database
-        session left behind by a previous application run.
+        Any stale open database session from a previous
+        application run is closed first.
         """
 
         if self._is_tracking:
@@ -159,12 +149,6 @@ class ActivityTracker:
         logger.info(
             "Starting activity tracker"
         )
-
-        # ------------------------------------------------------
-        # IMPORTANT:
-        #
-        # Clean up stale sessions from an earlier run.
-        # ------------------------------------------------------
 
         self._close_stale_database_session()
 
@@ -185,9 +169,7 @@ class ActivityTracker:
     # ==========================================================
 
     def stop(self) -> None:
-        """
-        Stop tracking and close the current session.
-        """
+        """Stop tracking and close the current session."""
 
         if not self._is_tracking:
             return
@@ -216,8 +198,7 @@ class ActivityTracker:
         """
         Perform one tracking tick.
 
-        The worker should call this periodically,
-        normally once per second.
+        The worker should normally call this once per second.
         """
 
         if not self._is_tracking:
@@ -248,10 +229,7 @@ class ActivityTracker:
             # User became idle.
             # --------------------------------------------------
 
-            if (
-                now_idle
-                and not was_idle
-            ):
+            if now_idle and not was_idle:
 
                 self._on_became_idle()
 
@@ -259,17 +237,14 @@ class ActivityTracker:
             # User became active again.
             # --------------------------------------------------
 
-            elif (
-                not now_idle
-                and was_idle
-            ):
+            elif not now_idle and was_idle:
 
                 self._on_became_active()
 
             self._is_idle = now_idle
 
             # --------------------------------------------------
-            # Only track applications while active.
+            # Track active application.
             # --------------------------------------------------
 
             if not self._is_idle:
@@ -291,10 +266,7 @@ class ActivityTracker:
     def _poll_active_application(
         self,
     ) -> None:
-        """
-        Check the currently focused application
-        and update the current activity session.
-        """
+        """Check and update the active application session."""
 
         active = (
             self._safe_get_active_application()
@@ -316,11 +288,11 @@ class ActivityTracker:
         # ------------------------------------------------------
         # No current session.
         #
-        # This happens when:
+        # This happens:
         #
-        # - tracker just started
+        # - tracker started
         # - user returned from idle
-        # - previous session was closed
+        # - previous session closed
         # ------------------------------------------------------
 
         if self._current is None:
@@ -330,10 +302,16 @@ class ActivityTracker:
                 title,
             )
 
+            # --------------------------------------------------
+            # Capture screenshot for the FIRST session too.
+            # --------------------------------------------------
+
+            self._capture_screenshot_for_current_session()
+
             return
 
         # ------------------------------------------------------
-        # Same application.
+        # Same application + same process.
         # ------------------------------------------------------
 
         if self._current.matches_application(
@@ -341,7 +319,10 @@ class ActivityTracker:
             active.process_id,
         ):
 
-            # Only update the title.
+            # --------------------------------------------------
+            # Only update window title.
+            # --------------------------------------------------
+
             if (
                 title
                 != self._current.window_title
@@ -357,37 +338,208 @@ class ActivityTracker:
 
             return
 
-        # ------------------------------------------------------
-        # Application changed.
-        # ------------------------------------------------------
+        # ======================================================
+        # APPLICATION CHANGED
+        # ======================================================
 
         previous_application = (
             self._current.application_name
         )
 
+        previous_session_id = (
+            self._current.db_id
+        )
+
         logger.info(
-            "Application changed: %s -> %s",
+            "Application changed: "
+            "%s -> %s",
             previous_application,
             active.application_name,
         )
 
-        # Close old session.
+        logger.info(
+            "Closing previous session: "
+            "id=%s app=%s",
+            previous_session_id,
+            previous_application,
+        )
+
+        # ------------------------------------------------------
+        # STEP 1:
+        # Close OLD session.
+        # ------------------------------------------------------
+
         self._close_current_session()
 
-        # Open new session.
+        # ------------------------------------------------------
+        # STEP 2:
+        # Create NEW session.
+        # ------------------------------------------------------
+
         self._open_new_session(
             active,
             title,
         )
 
         # ------------------------------------------------------
-        # Immediately request sync.
+        # STEP 3:
+        # Capture screenshot for NEW session.
         #
-        # SyncService decides that it should retrieve
-        # the last 5 minutes.
+        # IMPORTANT:
+        # self._current.db_id now belongs to the NEW app.
+        # ------------------------------------------------------
+
+        screenshot_path = (
+            self._capture_screenshot_for_current_session()
+        )
+
+        # ------------------------------------------------------
+        # STEP 4:
+        # Log screenshot.
+        # ------------------------------------------------------
+
+        if screenshot_path:
+
+            logger.info(
+                "Screenshot associated with "
+                "session=%s app=%s path=%s",
+                self._current.db_id
+                if self._current
+                else None,
+                active.application_name,
+                screenshot_path,
+            )
+
+        else:
+
+            logger.warning(
+                "No screenshot captured for "
+                "session=%s app=%s",
+                self._current.db_id
+                if self._current
+                else None,
+                active.application_name,
+            )
+
+        # ------------------------------------------------------
+        # STEP 5:
+        # Sync activity.
         # ------------------------------------------------------
 
         self._sync_activity()
+
+    # ==========================================================
+    # SCREENSHOT
+    # ==========================================================
+
+    def _capture_screenshot_for_current_session(
+        self,
+    ) -> str | None:
+        """
+        Capture a screenshot for the current activity session.
+
+        The existing capture_screenshot() function creates the
+        screenshot first. We then rename it so the filename
+        contains the ActivitySession ID.
+
+        Final filename:
+
+            session_<ID>_<timestamp>.png
+
+        Example:
+
+            session_42_2026-08-24_07-35-12-123456.png
+        """
+
+        if self._current is None:
+
+            logger.warning(
+                "Cannot capture screenshot: "
+                "there is no current session"
+            )
+
+            return None
+
+        session_id = self._current.db_id
+
+        try:
+
+            # --------------------------------------------------
+            # Capture using existing screenshot service.
+            # --------------------------------------------------
+
+            original_path = capture_screenshot()
+
+            if not original_path:
+
+                logger.warning(
+                    "capture_screenshot() returned None "
+                    "for session=%s",
+                    session_id,
+                )
+
+                return None
+
+            original_path = Path(
+                original_path
+            )
+
+            if not original_path.exists():
+
+                logger.warning(
+                    "Screenshot path does not exist: %s",
+                    original_path,
+                )
+
+                return None
+
+            # --------------------------------------------------
+            # Create session-specific filename.
+            # --------------------------------------------------
+
+            timestamp = (
+                datetime.now().strftime(
+                    "%Y-%m-%d_%H-%M-%S-%f"
+                )
+            )
+
+            new_filename = (
+                f"session_{session_id}_"
+                f"{timestamp}"
+                f"{original_path.suffix or '.png'}"
+            )
+
+            new_path = (
+                original_path.parent
+                / new_filename
+            )
+
+            # --------------------------------------------------
+            # Rename the screenshot.
+            # --------------------------------------------------
+
+            original_path.rename(
+                new_path
+            )
+
+            logger.info(
+                "Screenshot saved: "
+                "session=%s path=%s",
+                session_id,
+                new_path,
+            )
+
+            return str(new_path)
+
+        except Exception:  # noqa: BLE001
+
+            logger.exception(
+                "Failed to capture screenshot "
+                "for session=%s",
+                session_id,
+            )
+
+            return None
 
     # ==========================================================
     # OPEN NEW SESSION
@@ -408,8 +560,10 @@ class ActivityTracker:
 
         try:
 
-            repository = ActivityRepository(
-                db_session
+            repository = (
+                ActivityRepository(
+                    db_session
+                )
             )
 
             record = (
@@ -425,19 +579,21 @@ class ActivityTracker:
                 )
             )
 
+            # --------------------------------------------------
+            # IMPORTANT:
+            # Set _current immediately after DB creation so
+            # screenshot capture can use record.id.
+            # --------------------------------------------------
+
             self._current = CurrentSession(
                 db_id=record.id,
-
                 application_name=(
                     active.application_name
                 ),
-
                 process_id=(
                     active.process_id
                 ),
-
                 window_title=title,
-
                 started_at=now,
             )
 
@@ -472,8 +628,10 @@ class ActivityTracker:
 
         try:
 
-            repository = ActivityRepository(
-                db_session
+            repository = (
+                ActivityRepository(
+                    db_session
+                )
             )
 
             repository.update_session_window_title(
@@ -513,8 +671,10 @@ class ActivityTracker:
 
         try:
 
-            repository = ActivityRepository(
-                db_session
+            repository = (
+                ActivityRepository(
+                    db_session
+                )
             )
 
             repository.close_session(
@@ -544,9 +704,6 @@ class ActivityTracker:
     ) -> None:
         """
         Close an old open session from a previous tracker run.
-
-        This prevents old sessions with ended_at=NULL from
-        being treated as currently active.
         """
 
         db_session = (
@@ -555,8 +712,10 @@ class ActivityTracker:
 
         try:
 
-            repository = ActivityRepository(
-                db_session
+            repository = (
+                ActivityRepository(
+                    db_session
+                )
             )
 
             stale_session = (
@@ -564,7 +723,6 @@ class ActivityTracker:
             )
 
             if stale_session is None:
-
                 return
 
             logger.warning(
@@ -588,7 +746,8 @@ class ActivityTracker:
         except Exception:  # noqa: BLE001
 
             logger.exception(
-                "Failed to close stale database session"
+                "Failed to close stale "
+                "database session"
             )
 
         finally:
@@ -621,7 +780,8 @@ class ActivityTracker:
         """
         Handle activity resuming after idle.
 
-        A new session will be created by the next poll().
+        The next poll creates a new session and captures
+        its screenshot.
         """
 
         logger.info(
@@ -638,8 +798,7 @@ class ActivityTracker:
         """
         Request an immediate activity synchronization.
 
-        SyncService is responsible for determining the
-        last-5-minute window.
+        SyncService controls the actual sync window.
         """
 
         if self._sync_service is None:
