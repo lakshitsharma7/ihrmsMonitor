@@ -75,6 +75,43 @@ class SyncService:
 
         It processes records in batches of 100 max, divided into 4 requests of 25 records each.
         """
+        # Call tracking/get_settings at the start of every sync cycle
+        from services.session_service import SessionService
+        device_token = SessionService().device_token
+        if device_token:
+            try:
+                response = requests.post(
+                    f"{self._api_url}/tracking/get_settings",
+                    json={"device_token": device_token},
+                    timeout=5,
+                )
+                response.raise_for_status()
+                res_data = response.json()
+                if res_data.get("status") == 1:
+                    settings_data = res_data.get("settings", {})
+                    # Update local database settings
+                    db_session = get_session()
+                    try:
+                        from database.repository import SettingsRepository
+                        repo = SettingsRepository(db_session)
+                        
+                        capture_interval = settings_data.get("capture_interval", 180)
+                        capture_mode = settings_data.get("capture_mode", "activity_with_screenshots")
+                        tracking_enabled = settings_data.get("tracking_enabled", True)
+                        
+                        repo.update(
+                            screenshot_custom_interval=capture_interval,
+                            screenshot_interval_type="custom",
+                            capture_on_switch=(capture_mode == "activity_with_screenshots"),
+                            tracking_enabled=tracking_enabled
+                        )
+                    except Exception as err:
+                        logger.error("Failed to update database settings from get_settings response: %s", err)
+                    finally:
+                        db_session.close()
+            except Exception as err:
+                logger.error("Failed to retrieve settings from tracking/get_settings: %s", err)
+
         sync_to = datetime.now(timezone.utc)
         sync_from = sync_to - timedelta(minutes=self.ACTIVITY_WINDOW_MINUTES)
 
@@ -121,8 +158,13 @@ class SyncService:
                         page=page_num,
                         page_size=PAGE_SIZE
                     )
+
+                    new_payload = {
+                        "device_token": device_token or "mock_device_token",
+                        "sessions": payload["activities"]
+                    }
                     
-                    success = self._send_request_with_retry(payload)
+                    success = self._send_request_with_retry(new_payload, page=page_num)
                     if not success:
                         logger.error("Activity sync batch page failed. Halting sync.")
                         return False
@@ -142,18 +184,18 @@ class SyncService:
         finally:
             db_session.close()
 
-    def _send_request_with_retry(self, payload: dict, retries: int = 3) -> bool:
+    def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> bool:
         for attempt in range(1, retries + 1):
             try:
                 response = requests.post(
-                    f"{self._api_url}/activity/sync",
+                    f"{self._api_url}/tracking/save_activity_batch",
                     json=payload,
                     timeout=10,
                 )
                 response.raise_for_status()
                 logger.info(
                     "Activity sync page %d successful: HTTP %s (attempt %d)",
-                    payload["page"],
+                    page,
                     response.status_code,
                     attempt,
                 )
@@ -161,7 +203,7 @@ class SyncService:
             except requests.RequestException as exc:
                 logger.warning(
                     "Activity sync page %d failed (attempt %d/%d): %s",
-                    payload["page"],
+                    page,
                     attempt,
                     retries,
                     exc,
@@ -583,8 +625,21 @@ class SyncService:
         """
         Immediately upload a screenshot to:
 
-            POST /screenshots
+            POST /tracking/upload_screenshot
         """
+        # Only call this API when capture_mode is activity_with_screenshots
+        db_session = get_session()
+        try:
+            from database.repository import SettingsRepository
+            repo = SettingsRepository(db_session)
+            settings_record = repo.get_settings()
+            if settings_record and not settings_record.capture_on_switch:
+                logger.info("Screenshot upload skipped (capture_mode is not activity_with_screenshots)")
+                return True
+        except Exception as err:
+            logger.error("Failed to check capture_mode in settings db: %s", err)
+        finally:
+            db_session.close()
 
         screenshot_path = Path(
             screenshot_path
@@ -618,7 +673,7 @@ class SyncService:
             ) as screenshot_file:
 
                 files = {
-                    "file": (
+                    "screenshot": (
                         screenshot_path.name,
                         screenshot_file,
                         self._get_content_type(
@@ -627,25 +682,17 @@ class SyncService:
                     )
                 }
 
+                from services.session_service import SessionService
+                device_token = SessionService().device_token
                 data = {
+                    "device_token": device_token or "mock_device_token",
                     "activity_session_id": str(
                         activity_session_id
                     ),
-
                     "captured_at": (
                         self._to_utc(
                             captured_at
                         ).isoformat()
-                    ),
-
-                    "application_name": (
-                        application_name
-                    ),
-
-                    "process_id": (
-                        str(process_id)
-                        if process_id is not None
-                        else ""
                     ),
                 }
 
@@ -655,7 +702,7 @@ class SyncService:
                 )
 
                 response = requests.post(
-                    f"{self._api_url}/screenshots",
+                    f"{self._api_url}/tracking/upload_screenshot",
                     files=files,
                     data=data,
                     timeout=30,
