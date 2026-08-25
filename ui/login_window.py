@@ -15,10 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from database.database import get_session
-from database.repository import UserRepository
 from services.session_service import SessionService
 from utils.logger import get_logger
-from utils.security import verify_password
 
 logger = get_logger(__name__)
 

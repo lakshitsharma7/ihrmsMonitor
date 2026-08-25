@@ -82,7 +82,7 @@ class SyncService:
             try:
                 response = requests.post(
                     f"{self._api_url}/tracking/get_settings",
-                    json={"device_token": device_token},
+                    data={"device_token": device_token},
                     timeout=5,
                 )
                 response.raise_for_status()
@@ -159,9 +159,10 @@ class SyncService:
                         page_size=PAGE_SIZE
                     )
 
+                    import json
                     new_payload = {
                         "device_token": device_token or "mock_device_token",
-                        "sessions": payload["activities"]
+                        "sessions": json.dumps(payload["activities"])
                     }
                     
                     success = self._send_request_with_retry(new_payload, page=page_num)
@@ -189,7 +190,7 @@ class SyncService:
             try:
                 response = requests.post(
                     f"{self._api_url}/tracking/save_activity_batch",
-                    json=payload,
+                    data=payload,
                     timeout=10,
                 )
                 response.raise_for_status()
