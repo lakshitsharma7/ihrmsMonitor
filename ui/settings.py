@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
+    QComboBox,
+    QLabel,
 )
 
 from services.settings_service import AppSettings, SettingsService

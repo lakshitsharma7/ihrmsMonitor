@@ -53,8 +53,7 @@ class SyncService:
 
         import os
         if api_url is None:
-            port = os.environ.get("API_PORT", "8002")
-            api_url = os.environ.get("API_URL", f"http://127.0.0.1:{port}")
+            api_url = os.environ.get("API_URL", "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api")
 
         self._api_url = api_url.rstrip("/")
         self._synced_session_ids = set()

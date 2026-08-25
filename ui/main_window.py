@@ -28,6 +28,7 @@ from services.settings_service import AppSettings, SettingsService
 from system.tray import TrayController
 from tracker.activity_tracker import ActivityTracker, TrackerState
 from tracker.tracker_worker import build_tracker_thread
+from services.sync_service import SyncService
 from ui.dashboard import DashboardPage
 from ui.settings import SettingsPage
 from utils.logger import get_logger
@@ -760,6 +761,7 @@ class MainWindow(QMainWindow):
             track_window_titles=(
                 settings.track_window_titles
             ),
+            sync_service=SyncService(),
             screenshot_interval_type=settings.screenshot_interval_type,
             screenshot_custom_interval_seconds=settings.screenshot_custom_interval,
             capture_on_switch=settings.capture_on_switch,
