@@ -1,8 +1,12 @@
-"""Login screen for the Activity Tracker application."""
+"""Login screen for the IHRMS Monitor application."""
 
 from __future__ import annotations
 
+import os
+import sys
+
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -21,13 +25,27 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _asset_path(relative: str) -> str:
+    """Return the absolute path to a bundled asset.
+
+    Works both when running from source (``python app.py``) and from a
+    PyInstaller single-file executable (where files are extracted to a
+    temporary ``_MEIXXXXXX`` directory).
+    """
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS  # type: ignore[attr-defined]
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
 class LoginWindow(QMainWindow):
-    """Secure, offline login screen for Activity Tracker."""
+    """Secure, offline login screen for IHRMS Monitor."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("IHRMS Monitor - Login")
-        self.resize(400, 350)
+        self.resize(400, 480)
         self.main_window = None
 
         self._build_ui()
@@ -40,10 +58,30 @@ class LoginWindow(QMainWindow):
         # Card container
         container = QWidget()
         container.setObjectName("LoginContainer")
-        container.setFixedWidth(320)
+        container.setFixedWidth(340)
         container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(20, 20, 20, 20)
+        container_layout.setContentsMargins(24, 24, 24, 20)
         container_layout.setSpacing(12)
+
+        # ── Logo ──────────────────────────────────────────────────
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_path = _asset_path(os.path.join("assets", "logo.png"))
+        if os.path.isfile(logo_path):
+            pixmap = QPixmap(logo_path)
+            # Scale to fit nicely inside the card (max width 220, keep ratio)
+            scaled = pixmap.scaledToWidth(
+                220, Qt.TransformationMode.SmoothTransformation
+            )
+            logo_label.setPixmap(scaled)
+        else:
+            logo_label.setText("IndoVision")
+            logo_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #00a0c6;")
+        logo_label.setStyleSheet("background: transparent;")
+        container_layout.addWidget(logo_label)
+
+        # Small spacer after logo
+        container_layout.addSpacing(4)
 
         # Title
         title_label = QLabel("Welcome Back")
@@ -82,6 +120,20 @@ class LoginWindow(QMainWindow):
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self._handle_login)
         container_layout.addWidget(self.login_button)
+
+        # ── Copyright / acknowledgment text ───────────────────────
+        container_layout.addSpacing(8)
+        copyright_label = QLabel(
+            "By using IHMS, you acknowledge that you are\n"
+            "sharing your information with IHMS."
+        )
+        copyright_label.setObjectName("LoginCopyright")
+        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        copyright_label.setWordWrap(True)
+        copyright_label.setStyleSheet(
+            "color: #888888; font-size: 10px; background: transparent;"
+        )
+        container_layout.addWidget(copyright_label)
 
         layout.addWidget(container)
         self.setCentralWidget(central)
@@ -230,7 +282,18 @@ class LoginWindow(QMainWindow):
                     return
 
                 full_name = res_json.get("fullName") or res_json.get("username") or username
-                SessionService().login(username, "User", full_name=full_name)
+                user_type = res_json.get("user_type") or "User"
+                role_lower = str(user_type).strip().lower()
+                tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
+
+                SessionService().login(
+                    username,
+                    role=user_type,
+                    full_name=full_name,
+                    user_type=user_type,
+                    tracking_permitted=tracking_permitted,
+                    raw_login_data=res_json,
+                )
 
                 # Open existing main window
                 from ui.main_window import MainWindow

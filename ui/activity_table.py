@@ -5,11 +5,14 @@ from __future__ import annotations
 from datetime import timezone
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QTableWidget,
     QTableWidgetItem,
+    QApplication,
+    QStyle,
 )
 
 from services.activity_service import ActivityService, TimelineEntry
@@ -30,6 +33,49 @@ def format_local_time(dt) -> str:
     return dt.astimezone().strftime("%H:%M")
 
 
+def create_shield_pulse_icon(is_active: bool, size: int = 16) -> QPixmap:
+    """Draw a professional Shield + Pulse tracking state icon next to/in table entries."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    
+    # Color active (green) vs inactive/neutral (gray)
+    if is_active:
+        color = QColor("#137333")  # Positive green
+    else:
+        color = QColor("#5f6368")  # Neutral gray
+        
+    scale = size / 24.0
+    
+    # Shield Path
+    path = QPainterPath()
+    path.moveTo(4 * scale, 5 * scale)
+    path.quadTo(12 * scale, 3 * scale, 20 * scale, 5 * scale)
+    path.quadTo(20 * scale, 14 * scale, 12 * scale, 21 * scale)
+    path.quadTo(4 * scale, 14 * scale, 4 * scale, 5 * scale)
+    
+    painter.setPen(QPen(color, 2 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPath(path)
+    
+    # Pulse Path
+    pulse_path = QPainterPath()
+    pulse_path.moveTo(7 * scale, 12 * scale)
+    pulse_path.lineTo(9 * scale, 12 * scale)
+    pulse_path.lineTo(11 * scale, 8 * scale)
+    pulse_path.lineTo(13 * scale, 16 * scale)
+    pulse_path.lineTo(15 * scale, 12 * scale)
+    pulse_path.lineTo(17 * scale, 12 * scale)
+    
+    painter.setPen(QPen(color, 1.5 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.drawPath(pulse_path)
+    
+    painter.end()
+    return pixmap
+
+
 class ApplicationUsageTable(QTableWidget):
     """
     Applications summary table.
@@ -39,6 +85,7 @@ class ApplicationUsageTable(QTableWidget):
     Columns:
         Time
         App
+        Monitor
         Duration
         Subprocess
     """
@@ -46,12 +93,13 @@ class ApplicationUsageTable(QTableWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self.setColumnCount(4)
+        self.setColumnCount(5)
 
         self.setHorizontalHeaderLabels(
             [
                 "Time",
                 "App",
+                "Monitor",
                 "Duration",
                 "Subprocess",
             ]
@@ -76,6 +124,11 @@ class ApplicationUsageTable(QTableWidget):
 
         header.setSectionResizeMode(
             3,
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+
+        header.setSectionResizeMode(
+            4,
             QHeaderView.ResizeMode.Stretch,
         )
 
@@ -111,6 +164,14 @@ class ApplicationUsageTable(QTableWidget):
         """Aggregate sessions and display one row per application."""
 
         self.setRowCount(0)
+
+        # Respect RBAC permissions: hide Monitor column if tracking is not permitted
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            self.setColumnHidden(2, True)
+        else:
+            self.setColumnHidden(2, False)
 
         if not entries:
             return
@@ -152,6 +213,14 @@ class ApplicationUsageTable(QTableWidget):
             reverse=True,
         )
 
+        # Retrieve main window state to check if tracking is active
+        main_win = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.inherits("QMainWindow"):
+                main_win = widget
+                break
+        tracking_is_active = main_win and hasattr(main_win, "_tracker") and main_win._tracker and main_win._tracker.is_tracking
+
         for row, (app_name, data) in enumerate(grouped):
             self.insertRow(row)
 
@@ -161,9 +230,19 @@ class ApplicationUsageTable(QTableWidget):
                 )
             )
 
-            app_item = QTableWidgetItem(
-                app_name
-            )
+            # Keep existing application icons (e.g. Desktop/Monitor and Python) unchanged
+            app_item = QTableWidgetItem(app_name)
+            style = self.style()
+            if "python" in app_name.lower():
+                app_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            else:
+                app_icon = style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+            app_item.setIcon(app_icon)
+
+            # Track/Monitor state icon (Active for first row if tracking is running, otherwise Inactive)
+            is_active = (row == 0) and tracking_is_active
+            monitor_item = QTableWidgetItem()
+            monitor_item.setIcon(QIcon(create_shield_pulse_icon(is_active, 16)))
 
             duration_item = QTableWidgetItem(
                 ActivityService.format_duration(
@@ -180,34 +259,21 @@ class ApplicationUsageTable(QTableWidget):
                 | Qt.AlignmentFlag.AlignVCenter
             )
 
+            monitor_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter
+                | Qt.AlignmentFlag.AlignVCenter
+            )
+
             duration_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter
                 | Qt.AlignmentFlag.AlignVCenter
             )
 
-            self.setItem(
-                row,
-                0,
-                time_item,
-            )
-
-            self.setItem(
-                row,
-                1,
-                app_item,
-            )
-
-            self.setItem(
-                row,
-                2,
-                duration_item,
-            )
-
-            self.setItem(
-                row,
-                3,
-                subprocess_item,
-            )
+            self.setItem(row, 0, time_item)
+            self.setItem(row, 1, app_item)
+            self.setItem(row, 2, monitor_item)
+            self.setItem(row, 3, duration_item)
+            self.setItem(row, 4, subprocess_item)
 
         self.resizeRowsToContents()
 
@@ -221,6 +287,7 @@ class ActivityTimelineTable(QTableWidget):
     Columns:
         Time
         App
+        Monitor
         Duration
         Subprocess
         PID
@@ -229,12 +296,13 @@ class ActivityTimelineTable(QTableWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self.setColumnCount(5)
+        self.setColumnCount(6)
 
         self.setHorizontalHeaderLabels(
             [
                 "Time",
                 "App",
+                "Monitor",
                 "Duration",
                 "Subprocess",
                 "PID",
@@ -260,11 +328,16 @@ class ActivityTimelineTable(QTableWidget):
 
         header.setSectionResizeMode(
             3,
-            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.ResizeToContents,
         )
 
         header.setSectionResizeMode(
             4,
+            QHeaderView.ResizeMode.Stretch,
+        )
+
+        header.setSectionResizeMode(
+            5,
             QHeaderView.ResizeMode.ResizeToContents,
         )
 
@@ -305,6 +378,14 @@ class ActivityTimelineTable(QTableWidget):
 
         self.setRowCount(0)
 
+        # Respect RBAC permissions: hide Monitor column if tracking is not permitted
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            self.setColumnHidden(2, True)
+        else:
+            self.setColumnHidden(2, False)
+
         if not entries:
             return
 
@@ -315,12 +396,16 @@ class ActivityTimelineTable(QTableWidget):
             reverse=True,
         )
 
+        # Retrieve main window state to check if tracking is active
+        main_win = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.inherits("QMainWindow"):
+                main_win = widget
+                break
+        tracking_is_active = main_win and hasattr(main_win, "_tracker") and main_win._tracker and main_win._tracker.is_tracking
+
         for row, entry in enumerate(entries):
             self.insertRow(row)
-
-            # ------------------------------------------------------
-            # Time
-            # ------------------------------------------------------
 
             time_item = QTableWidgetItem(
                 format_local_time(
@@ -328,17 +413,19 @@ class ActivityTimelineTable(QTableWidget):
                 )
             )
 
-            # ------------------------------------------------------
-            # Application
-            # ------------------------------------------------------
+            # Keep existing application icons (e.g. Desktop/Monitor and Python) unchanged
+            app_item = QTableWidgetItem(entry.application_name)
+            style = self.style()
+            if "python" in entry.application_name.lower():
+                app_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            else:
+                app_icon = style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+            app_item.setIcon(app_icon)
 
-            app_item = QTableWidgetItem(
-                entry.application_name
-            )
-
-            # ------------------------------------------------------
-            # Duration
-            # ------------------------------------------------------
+            # Track/Monitor state icon (Active for first row if tracking is running, otherwise Inactive)
+            is_active = (row == 0) and tracking_is_active
+            monitor_item = QTableWidgetItem()
+            monitor_item.setIcon(QIcon(create_shield_pulse_icon(is_active, 16)))
 
             duration_item = QTableWidgetItem(
                 ActivityService.format_duration(
@@ -346,17 +433,9 @@ class ActivityTimelineTable(QTableWidget):
                 )
             )
 
-            # ------------------------------------------------------
-            # Subprocess / Window title
-            # ------------------------------------------------------
-
             subprocess_item = QTableWidgetItem(
                 entry.window_title or "-"
             )
-
-            # ------------------------------------------------------
-            # PID
-            # ------------------------------------------------------
 
             pid_item = QTableWidgetItem(
                 str(entry.process_id)
@@ -364,11 +443,12 @@ class ActivityTimelineTable(QTableWidget):
                 else "-"
             )
 
-            # ------------------------------------------------------
-            # Alignment
-            # ------------------------------------------------------
-
             time_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter
+                | Qt.AlignmentFlag.AlignVCenter
+            )
+
+            monitor_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter
                 | Qt.AlignmentFlag.AlignVCenter
             )
@@ -383,38 +463,11 @@ class ActivityTimelineTable(QTableWidget):
                 | Qt.AlignmentFlag.AlignVCenter
             )
 
-            # ------------------------------------------------------
-            # Add cells
-            # ------------------------------------------------------
-
-            self.setItem(
-                row,
-                0,
-                time_item,
-            )
-
-            self.setItem(
-                row,
-                1,
-                app_item,
-            )
-
-            self.setItem(
-                row,
-                2,
-                duration_item,
-            )
-
-            self.setItem(
-                row,
-                3,
-                subprocess_item,
-            )
-
-            self.setItem(
-                row,
-                4,
-                pid_item,
-            )
+            self.setItem(row, 0, time_item)
+            self.setItem(row, 1, app_item)
+            self.setItem(row, 2, monitor_item)
+            self.setItem(row, 3, duration_item)
+            self.setItem(row, 4, subprocess_item)
+            self.setItem(row, 5, pid_item)
 
         self.resizeRowsToContents()

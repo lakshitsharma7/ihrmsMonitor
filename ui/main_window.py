@@ -489,16 +489,23 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
-        # ------------------------------------------------------
-        # Initial settings
-        # ------------------------------------------------------
+        # Apply RBAC permissions on UI controls first
+        self._apply_rbac_permissions()
 
-        initial_settings = (
-            self._settings_service.get_settings()
-        )
+        # Ensure startup registration matches settings
+        initial_settings = self._settings_service.get_settings()
+        from system import startup
+        if initial_settings.start_with_system:
+            startup.set_enabled(True)
 
-        if initial_settings.tracking_enabled:
+        # Start tracking automatically if permitted by RBAC
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and session.tracking_permitted:
+            logger.info("Auto-starting tracking on login based on RBAC permissions.")
             self.start_tracking()
+        else:
+            logger.info("Auto-starting tracking skipped due to RBAC permissions.")
 
     # ==========================================================
     # BUILD UI
@@ -574,6 +581,12 @@ class MainWindow(QMainWindow):
         self.user_label = QLabel(f"Welcome, {display_name}")
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
         header_layout.addWidget(self.user_label)
+
+        # Tracking status icon next to status badge
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(24, 24)
+        self.status_icon.setStyleSheet("margin-right: 4px; background: transparent;")
+        header_layout.addWidget(self.status_icon)
 
         self.status_badge = QLabel("Not Tracking")
         self.status_badge.setObjectName("StatusBadge")
@@ -823,6 +836,98 @@ class MainWindow(QMainWindow):
 
         self.tray.show()
 
+    def _apply_rbac_permissions(self) -> None:
+        """Enforce RBAC permissions on Start/Stop tracking buttons and tray menu."""
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            logger.info("Enforcing RBAC tracking restrictions: hiding start/stop tracking controls")
+            self.start_button.hide()
+            self.stop_button.hide()
+            if hasattr(self, "status_icon") and self.status_icon:
+                self.status_icon.hide()
+            self.status_badge.hide()
+            if hasattr(self, "tray") and self.tray:
+                self.tray.start_action.setVisible(False)
+                self.tray.stop_action.setVisible(False)
+        else:
+            self.start_button.show()
+            self.stop_button.show()
+            if hasattr(self, "status_icon") and self.status_icon:
+                self.status_icon.show()
+            self.status_badge.show()
+            if hasattr(self, "tray") and self.tray:
+                self.tray.start_action.setVisible(True)
+                self.tray.stop_action.setVisible(True)
+
+    def _update_status_icon(self) -> None:
+        """Update the Shield+Pulse icon based on the current tracking/idle state."""
+        if not hasattr(self, "status_icon") or not self.status_icon:
+            return
+            
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            self.status_icon.hide()
+            return
+
+        is_active = False
+        is_idle = False
+        
+        # Check current state from status badge property
+        tracking_prop = self.status_badge.property("tracking")
+        if tracking_prop == "true":
+            is_active = True
+        elif tracking_prop == "idle":
+            is_active = True
+            is_idle = True
+            
+        from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+        from PySide6.QtCore import Qt
+        
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Set color based on state
+        if is_active:
+            if is_idle:
+                color = QColor("#b06000") # Idle (amber)
+            else:
+                color = QColor("#137333") # Active (green)
+        else:
+            color = QColor("#a50e0e") # Inactive (red)
+            
+        # Draw Shield Path
+        path = QPainterPath()
+        path.moveTo(4, 5)
+        path.quadTo(12, 3, 20, 5)
+        path.quadTo(20, 14, 12, 21)
+        path.quadTo(4, 14, 4, 5)
+        
+        painter.setPen(QPen(color, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        
+        # Draw Pulse/Activity Line inside the shield
+        pulse_path = QPainterPath()
+        pulse_path.moveTo(7, 12)
+        pulse_path.lineTo(9, 12)
+        pulse_path.lineTo(11, 8)
+        pulse_path.lineTo(13, 16)
+        pulse_path.lineTo(15, 12)
+        pulse_path.lineTo(17, 12)
+        
+        painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(pulse_path)
+        
+        painter.end()
+        
+        self.status_icon.setPixmap(pixmap)
+        self.status_icon.show()
+
     # ==========================================================
     # TRACKING CONTROL
     # ==========================================================
@@ -832,6 +937,22 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """Start tracking."""
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            logger.warning("Start tracking requested but blocked by RBAC permissions.")
+            return
+
+        # Update UI state immediately to show Active
+        self.status_badge.setText("Tracking")
+        self.status_badge.setProperty("tracking", "true")
+        self._refresh_badge_style()
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        if hasattr(self, "tray") and self.tray:
+            self.tray.set_tracking_state(True)
+        if hasattr(self, "settings_page") and self.settings_page:
+            self.settings_page.update_capture_status(True)
 
         self._request_start.emit()
 
@@ -840,6 +961,16 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """Stop tracking."""
+        # Update UI state immediately to show Inactive
+        self.status_badge.setText("Not Tracking")
+        self.status_badge.setProperty("tracking", "false")
+        self._refresh_badge_style()
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        if hasattr(self, "tray") and self.tray:
+            self.tray.set_tracking_state(False)
+        if hasattr(self, "settings_page") and self.settings_page:
+            self.settings_page.update_capture_status(False)
 
         self._request_stop.emit()
 
@@ -872,6 +1003,7 @@ class MainWindow(QMainWindow):
             True
         )
         self.settings_page.update_capture_status(True)
+        self._apply_rbac_permissions()
 
     @Slot()
     def _on_tracking_stopped(
@@ -904,6 +1036,7 @@ class MainWindow(QMainWindow):
         self.settings_page.update_capture_status(False)
 
         self.dashboard_page.refresh()
+        self._apply_rbac_permissions()
 
     @Slot(object)
     def _on_tracker_state_changed(
@@ -941,6 +1074,7 @@ class MainWindow(QMainWindow):
             self._refresh_badge_style()
 
         self.dashboard_page.refresh()
+        self._apply_rbac_permissions()
 
     # ==========================================================
     # SETTINGS
@@ -958,6 +1092,8 @@ class MainWindow(QMainWindow):
         self.status_badge.style().polish(
             self.status_badge
         )
+
+        self._update_status_icon()
 
     @Slot(object)
     def _on_settings_changed(
