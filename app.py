@@ -29,7 +29,47 @@ from utils.paths import is_supported_platform
 logger = get_logger(__name__)
 
 
+# Identifies this process to the Windows shell. Any stable, unique string
+# works; it must not change between releases or Windows treats each build as
+# a different application when pinning to the taskbar.
+WINDOWS_APP_ID = "IndovisionServices.iHRMSMonitor.Desktop"
+
+
+def _set_windows_app_identity() -> None:
+    """
+    Give Windows an explicit application identity.
+
+    Without this, Windows attributes the taskbar button to the process that
+    hosts the script - python.exe - and shows the Python icon instead of the
+    application icon, no matter what is passed to setWindowIcon(). Must run
+    before any window is created.
+
+    Frozen builds get their icon from the executable itself, so this is
+    mainly what makes ``python app.py`` show the right icon; it also keeps
+    taskbar pinning stable for the packaged build.
+    """
+
+    if not sys.platform.startswith("win"):
+        return
+
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            WINDOWS_APP_ID
+        )
+
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Could not set the Windows application id; the taskbar may show "
+            "the interpreter icon.",
+            exc_info=True,
+        )
+
+
 def main() -> int:
+    _set_windows_app_identity()
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)

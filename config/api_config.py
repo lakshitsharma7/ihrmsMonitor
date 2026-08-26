@@ -58,6 +58,46 @@ APP_CONTROLLER_URL = (
 APP_CONTROLLER_TIMEOUT_SECONDS = 15
 
 
+# ==================================================================
+# DEVICE PROVISIONING
+#
+# The backend treats ``imei_number`` as the device identity and binds an
+# account to it. Logging in with a value it has not enrolled is rejected
+# with "Either Duplicate Device Or Invalid Device", so this is a
+# provisioning value that must match the backend - not a value the client
+# is free to generate.
+#
+# Set IHRMS_DEVICE_ID to give a machine its own identity once that machine
+# has been enrolled on the backend. utils.device.get_device_identifier()
+# returns the machine's own stable id, which is what should be enrolled.
+# ==================================================================
+
+ENROLLED_DEVICE_ID = "357327072154830"
+
+DEVICE_ID_ENV_VAR = "IHRMS_DEVICE_ID"
+
+
+def get_device_id() -> str:
+    """
+    Return the device identity to send as ``imei_number``.
+
+    Uses the per-machine override when one is configured, otherwise the
+    device id this deployment has enrolled.
+    """
+
+    override = os.environ.get(DEVICE_ID_ENV_VAR, "").strip()
+
+    if override:
+        logger.info(
+            "Using device id from %s",
+            DEVICE_ID_ENV_VAR,
+        )
+
+        return override
+
+    return ENROLLED_DEVICE_ID
+
+
 class ApiConfigError(RuntimeError):
     """Raised when the API configuration could not be resolved."""
 

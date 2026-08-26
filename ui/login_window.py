@@ -331,7 +331,7 @@ class LoginWindow(QMainWindow):
         # ROT13 encode the user-entered password immediately before API processing
         password = codecs.encode(password, "rot_13")
 
-        from config.api_config import ApiConfig, ApiConfigError
+        from config.api_config import ApiConfig, ApiConfigError, get_device_id
         from utils.device import get_device_info
 
         # The API base URL is resolved from the fixed Company Code, so it is
@@ -354,7 +354,7 @@ class LoginWindow(QMainWindow):
         data = {
             "uname": username,
             "pass": password,
-            "imei_number": device_info["device_identifier"],
+            "imei_number": get_device_id(),
             "device_detail": device_info["device_detail"],
         }
 
@@ -457,10 +457,11 @@ class LoginWindow(QMainWindow):
                 role_lower = str(user_type).strip().lower()
                 tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
 
+                # The login API identifies the employee with emp_code.
                 employee_id = (
-                    res_json.get("employee_id")
+                    res_json.get("emp_code")
+                    or res_json.get("employee_id")
                     or res_json.get("emp_id")
-                    or res_json.get("fk_employee_id")
                 )
 
                 SessionService().login(
