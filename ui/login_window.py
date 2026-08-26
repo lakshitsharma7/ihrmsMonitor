@@ -331,12 +331,31 @@ class LoginWindow(QMainWindow):
         # ROT13 encode the user-entered password immediately before API processing
         password = codecs.encode(password, "rot_13")
 
-        url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/login/login"
+        from config.api_config import ApiConfig, ApiConfigError
+        from utils.device import get_device_info
+
+        # The API base URL is resolved from the fixed Company Code, so it is
+        # never hardcoded here.
+        api_config = ApiConfig()
+
+        try:
+            api_url = api_config.base_url
+        except ApiConfigError as config_err:
+            logger.error("Could not resolve API configuration: %s", config_err)
+            self._show_login_error(
+                "Could not reach the configuration service. "
+                "Please check your connection and try again."
+            )
+            return
+
+        device_info = get_device_info()
+
+        url = f"{api_url}/login/login"
         data = {
             "uname": username,
             "pass": password,
-            "imei_number": "357327072154830",
-            "device_detail": "Samsung"
+            "imei_number": device_info["device_identifier"],
+            "device_detail": device_info["device_detail"],
         }
 
         try:
@@ -354,17 +373,29 @@ class LoginWindow(QMainWindow):
                 # ----------------------------------------------
                 # Check New Version API
                 # ----------------------------------------------
-                import os
                 import platform
-                api_url = os.environ.get("API_URL", "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api")
+
+                # Auth values come from the login response, not from the
+                # credentials the user typed. The encoded-password fallback
+                # is the pre-existing behaviour for responses that omit
+                # api_key; it is never a hardcoded value.
+                indo_code = res_json.get("indo_code") or username
+                api_key = res_json.get("api_key")
+
+                if not api_key:
+                    logger.warning(
+                        "Login response contained no api_key; "
+                        "falling back to the encoded password as key."
+                    )
+                    api_key = password
                 
                 try:
                     os_name = platform.system().upper()
                     os_type = "MACOS" if os_name == "DARWIN" else "WINDOWS"
-                    version_url = f"{api_url.rstrip('/')}/punch/check_new_version"
+                    version_url = f"{api_url}/punch/check_new_version"
                     version_data = {
-                        "indo_code": res_json.get("indo_code") or username,
-                        "key": res_json.get("api_key") or password,
+                        "indo_code": indo_code,
+                        "key": api_key,
                         "os_type": os_type
                     }
                     encoded_version_data = urllib.parse.urlencode(version_data).encode("utf-8")
@@ -388,21 +419,14 @@ class LoginWindow(QMainWindow):
                 # ----------------------------------------------
                 # Device Enrollment
                 # ----------------------------------------------
-                import socket
-                import getpass
-
-                hostname = socket.gethostname()
-                platform_name = platform.system()
-                os_username = getpass.getuser()
-
-                enroll_url = f"{api_url.rstrip('/')}/tracking/enroll_device"
+                enroll_url = f"{api_url}/tracking/enroll_device"
 
                 enroll_data = {
-                    "indo_code": res_json.get("indo_code") or username,
-                    "key": res_json.get("api_key") or password,
-                    "hostname": hostname,
-                    "platform": platform_name,
-                    "os_username": os_username,
+                    "indo_code": indo_code,
+                    "key": api_key,
+                    "hostname": device_info["hostname"],
+                    "platform": device_info["platform"],
+                    "os_username": device_info["os_username"],
                 }
 
                 try:
@@ -433,12 +457,25 @@ class LoginWindow(QMainWindow):
                 role_lower = str(user_type).strip().lower()
                 tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
 
+                employee_id = (
+                    res_json.get("employee_id")
+                    or res_json.get("emp_id")
+                    or res_json.get("fk_employee_id")
+                )
+
                 SessionService().login(
                     username,
                     role=user_type,
                     full_name=full_name,
                     user_type=user_type,
                     tracking_permitted=tracking_permitted,
+                    indo_code=indo_code,
+                    api_key=api_key,
+                    employee_id=(
+                        str(employee_id)
+                        if employee_id is not None
+                        else None
+                    ),
                     raw_login_data=res_json,
                 )
 

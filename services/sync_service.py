@@ -56,9 +56,12 @@ class SyncService:
         api_url: str | None = None,
     ) -> None:
 
-        import os
+        # Resolved from the fixed Company Code by ApiConfig, so the base URL
+        # is defined in exactly one place for the whole application.
         if api_url is None:
-            api_url = os.environ.get("API_URL", "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api")
+            from config.api_config import ApiConfig
+
+            api_url = ApiConfig().base_url
 
         self._api_url = api_url.rstrip("/")
         self._synced_session_ids = set()
@@ -67,6 +70,29 @@ class SyncService:
             "SyncService initialized: %s",
             self._api_url,
         )
+
+    @staticmethod
+    def _require_device_token() -> str | None:
+        """
+        Return the device token issued by enroll_device at login.
+
+        Returns None when the device is not enrolled; callers must skip the
+        request rather than sending a placeholder token.
+        """
+
+        from services.session_service import SessionService
+
+        device_token = SessionService().device_token
+
+        if not device_token:
+            logger.error(
+                "No device token available - device is not enrolled. "
+                "Skipping request."
+            )
+
+            return None
+
+        return device_token
 
     # ==============================================================
     # ACTIVITY SYNC
@@ -81,41 +107,45 @@ class SyncService:
         It processes records in batches of 100 max, divided into 4 requests of 25 records each.
         """
         # Call tracking/get_settings at the start of every sync cycle
-        from services.session_service import SessionService
-        device_token = SessionService().device_token
-        if device_token:
-            try:
-                response = requests.post(
-                    f"{self._api_url}/tracking/get_settings",
-                    data={"device_token": device_token},
-                    timeout=5,
-                )
-                response.raise_for_status()
-                res_data = response.json()
-                if res_data.get("status") == 1:
-                    settings_data = res_data.get("settings", {})
-                    # Update local database settings
-                    db_session = get_session()
-                    try:
-                        from database.repository import SettingsRepository
-                        repo = SettingsRepository(db_session)
-                        
-                        capture_interval = settings_data.get("capture_interval", 180)
-                        capture_mode = settings_data.get("capture_mode", "activity_with_screenshots")
-                        tracking_enabled = settings_data.get("tracking_enabled", True)
-                        
-                        repo.update(
-                            screenshot_custom_interval=capture_interval,
-                            screenshot_interval_type="custom",
-                            capture_on_switch=(capture_mode == "activity_with_screenshots"),
-                            tracking_enabled=tracking_enabled
-                        )
-                    except Exception as err:
-                        logger.error("Failed to update database settings from get_settings response: %s", err)
-                    finally:
-                        db_session.close()
-            except Exception as err:
-                logger.error("Failed to retrieve settings from tracking/get_settings: %s", err)
+        device_token = self._require_device_token()
+
+        if not device_token:
+            SyncService.last_sync_status = "Failed"
+            SyncService.records_currently_sending = 0
+            return False
+
+        try:
+            response = requests.post(
+                f"{self._api_url}/tracking/get_settings",
+                data={"device_token": device_token},
+                timeout=5,
+            )
+            response.raise_for_status()
+            res_data = response.json()
+            if res_data.get("status") == 1:
+                settings_data = res_data.get("settings", {})
+                # Update local database settings
+                db_session = get_session()
+                try:
+                    from database.repository import SettingsRepository
+                    repo = SettingsRepository(db_session)
+
+                    capture_interval = settings_data.get("capture_interval", 180)
+                    capture_mode = settings_data.get("capture_mode", "activity_with_screenshots")
+                    tracking_enabled = settings_data.get("tracking_enabled", True)
+
+                    repo.update(
+                        screenshot_custom_interval=capture_interval,
+                        screenshot_interval_type="custom",
+                        capture_on_switch=(capture_mode == "activity_with_screenshots"),
+                        tracking_enabled=tracking_enabled
+                    )
+                except Exception as err:
+                    logger.error("Failed to update database settings from get_settings response: %s", err)
+                finally:
+                    db_session.close()
+        except Exception as err:
+            logger.error("Failed to retrieve settings from tracking/get_settings: %s", err)
 
         db_session = get_session()
         try:
@@ -158,7 +188,7 @@ class SyncService:
 
                         import json
                         new_payload = {
-                            "device_token": device_token or "mock_device_token",
+                            "device_token": device_token,
                             "sessions": json.dumps(payload["activities"])
                         }
                         
@@ -730,10 +760,13 @@ class SyncService:
                     )
                 }
 
-                from services.session_service import SessionService
-                device_token = SessionService().device_token
+                device_token = self._require_device_token()
+
+                if not device_token:
+                    return False
+
                 data = {
-                    "device_token": device_token or "mock_device_token",
+                    "device_token": device_token,
                     "activity_session_id": str(
                         activity_session_id
                     ),
