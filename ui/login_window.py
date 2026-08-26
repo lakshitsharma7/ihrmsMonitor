@@ -153,18 +153,49 @@ class LoginWindow(QMainWindow):
                 logger.info("User %s logged in successfully via API", username)
 
                 # ----------------------------------------------
+                # Check New Version API
+                # ----------------------------------------------
+                import os
+                import platform
+                api_url = os.environ.get("API_URL", "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api")
+                
+                try:
+                    os_name = platform.system().upper()
+                    os_type = "MACOS" if os_name == "DARWIN" else "WINDOWS"
+                    version_url = f"{api_url.rstrip('/')}/punch/check_new_version"
+                    version_data = {
+                        "indo_code": res_json.get("indo_code") or username,
+                        "key": res_json.get("api_key") or password,
+                        "os_type": os_type
+                    }
+                    encoded_version_data = urllib.parse.urlencode(version_data).encode("utf-8")
+                    version_req = urllib.request.Request(
+                        version_url,
+                        data=encoded_version_data,
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(version_req, timeout=10) as version_response:
+                        version_body = version_response.read().decode("utf-8")
+                    version_json = json.loads(version_body)
+                    logger.info(
+                        "Check version response: status=%s, version_code=%s, force_update=%s",
+                        version_json.get("status"),
+                        version_json.get("version_code"),
+                        version_json.get("force_update")
+                    )
+                except Exception as version_err:
+                    logger.warning("Check version API call failed: %s", version_err)
+
+                # ----------------------------------------------
                 # Device Enrollment
                 # ----------------------------------------------
                 import socket
-                import platform
                 import getpass
-                import os
 
                 hostname = socket.gethostname()
                 platform_name = platform.system()
                 os_username = getpass.getuser()
 
-                api_url = os.environ.get("API_URL", "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api")
                 enroll_url = f"{api_url.rstrip('/')}/tracking/enroll_device"
 
                 enroll_data = {
