@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -37,7 +39,35 @@ class DashboardPage(QWidget):
     def _build_ui(self) -> None:
         """Build the dashboard interface."""
 
-        root = QVBoxLayout(self)
+        # The dashboard lives inside a scroll area so that a short window
+        # scrolls instead of clipping the Activity Timeline off the bottom.
+        page_layout = QVBoxLayout(self)
+
+        page_layout.setContentsMargins(0, 0, 0, 0)
+
+        page_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+
+        scroll.setWidgetResizable(True)
+
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+        content = QWidget()
+
+        root = QVBoxLayout(content)
+
+        root.setContentsMargins(12, 4, 12, 12)
+
+        root.setSpacing(12)
+
+        scroll.setWidget(content)
+
+        page_layout.addWidget(scroll)
 
         # Top Row containing Current Application and Tracking & Sync Status
         top_row = QHBoxLayout()
@@ -78,7 +108,14 @@ class DashboardPage(QWidget):
             self.current_window_label
         )
 
-        current_layout.addStretch()
+        self.current_window_label.setWordWrap(True)
+
+        # These cards only hold a few labels, so they should claim the height
+        # they need and leave the rest of the window to the tables.
+        current_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
 
         top_row.addWidget(
             current_group,
@@ -90,7 +127,7 @@ class DashboardPage(QWidget):
         # ==============================================================
 
         status_group = QGroupBox(
-            "Tracking & Sync Status"
+            "Tracking && Sync Status"
         )
 
         status_layout = QVBoxLayout(
@@ -135,7 +172,11 @@ class DashboardPage(QWidget):
         status_layout.addWidget(self.unsynced_records_label)
         status_layout.addWidget(self.idle_time_label)
         status_layout.addWidget(self.version_label)
-        status_layout.addStretch()
+
+        status_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
 
         top_row.addWidget(
             status_group,
@@ -183,6 +224,8 @@ class DashboardPage(QWidget):
             stretch=1,
         )
 
+        today_group.setMinimumWidth(220)
+
         # --------------------------------------------------------------
         # Applications
         # --------------------------------------------------------------
@@ -214,7 +257,8 @@ class DashboardPage(QWidget):
         )
 
         root.addLayout(
-            middle_row
+            middle_row,
+            stretch=2,
         )
 
         # ==============================================================
@@ -247,7 +291,8 @@ class DashboardPage(QWidget):
         )
 
         root.addWidget(
-            timeline_group
+            timeline_group,
+            stretch=3,
         )
 
     def update_tracker_state(

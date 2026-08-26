@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon, QPixmap, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QApplication,
@@ -76,6 +77,96 @@ def create_shield_pulse_icon(is_active: bool, size: int = 16) -> QPixmap:
     return pixmap
 
 
+# Every dashboard row is a single line of this height. Window titles can be
+# hundreds of characters long, so they are elided rather than wrapped: wrapped
+# titles made rows grow to several lines, which pushed the rest of the
+# dashboard out of view.
+ROW_HEIGHT = 32
+
+
+def configure_activity_table(
+    table: QTableWidget,
+    *,
+    stretch_column: int,
+    minimum_height: int,
+) -> None:
+    """Apply the shared look and behaviour of the dashboard tables."""
+
+    header = table.horizontalHeader()
+
+    for column in range(table.columnCount()):
+        header.setSectionResizeMode(
+            column,
+            QHeaderView.ResizeMode.Stretch
+            if column == stretch_column
+            else QHeaderView.ResizeMode.ResizeToContents,
+        )
+
+    header.setHighlightSections(False)
+
+    table.setWordWrap(False)
+
+    table.setTextElideMode(
+        Qt.TextElideMode.ElideRight
+    )
+
+    # Fixed row heights keep every row aligned with the header and make
+    # repainting cheap on tables that are refreshed every few seconds.
+    vertical_header = table.verticalHeader()
+
+    vertical_header.setVisible(False)
+
+    vertical_header.setSectionResizeMode(
+        QHeaderView.ResizeMode.Fixed
+    )
+
+    vertical_header.setDefaultSectionSize(ROW_HEIGHT)
+
+    table.setEditTriggers(
+        QAbstractItemView.EditTrigger.NoEditTriggers
+    )
+
+    table.setSelectionMode(
+        QAbstractItemView.SelectionMode.NoSelection
+    )
+
+    table.setFocusPolicy(
+        Qt.FocusPolicy.NoFocus
+    )
+
+    table.setAlternatingRowColors(True)
+
+    table.setCornerButtonEnabled(False)
+
+    table.setVerticalScrollMode(
+        QAbstractItemView.ScrollMode.ScrollPerPixel
+    )
+
+    table.setHorizontalScrollMode(
+        QAbstractItemView.ScrollMode.ScrollPerPixel
+    )
+
+    table.verticalScrollBar().setSingleStep(ROW_HEIGHT // 2)
+    table.horizontalScrollBar().setSingleStep(ROW_HEIGHT // 2)
+
+    table.setVerticalScrollBarPolicy(
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    )
+
+    table.setHorizontalScrollBarPolicy(
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    )
+
+    # No maximum height: the table grows with the window instead of clipping
+    # its last row halfway.
+    table.setMinimumHeight(minimum_height)
+
+    table.setSizePolicy(
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Expanding,
+    )
+
+
 class ApplicationUsageTable(QTableWidget):
     """
     Applications summary table.
@@ -105,65 +196,11 @@ class ApplicationUsageTable(QTableWidget):
             ]
         )
 
-        header = self.horizontalHeader()
-
-        header.setSectionResizeMode(
-            0,
-            QHeaderView.ResizeMode.ResizeToContents,
+        configure_activity_table(
+            self,
+            stretch_column=4,
+            minimum_height=150,
         )
-
-        header.setSectionResizeMode(
-            1,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            2,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            3,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            4,
-            QHeaderView.ResizeMode.Stretch,
-        )
-
-        self.verticalHeader().setVisible(False)
-
-        self.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-
-        self.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection
-        )
-
-        self.setFocusPolicy(
-            Qt.FocusPolicy.NoFocus
-        )
-
-        self.setAlternatingRowColors(True)
-
-        self.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.verticalScrollBar().setSingleStep(12)
-        self.horizontalScrollBar().setSingleStep(12)
-
-        self.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
-        self.viewport().setAttribute(Qt.WidgetAttribute.WA_StaticContents, True)
-
-        self.verticalHeader().setDefaultSectionSize(32)
-
-        self.setMinimumHeight(120)
-        self.setMaximumHeight(220)
 
     def set_entries(
         self,
@@ -262,6 +299,12 @@ class ApplicationUsageTable(QTableWidget):
                 data["window_title"] or "-"
             )
 
+            subprocess_item.setToolTip(
+                data["window_title"] or ""
+            )
+
+            app_item.setToolTip(app_name)
+
             time_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter
                 | Qt.AlignmentFlag.AlignVCenter
@@ -282,8 +325,6 @@ class ApplicationUsageTable(QTableWidget):
             self.setItem(row, 2, monitor_item)
             self.setItem(row, 3, duration_item)
             self.setItem(row, 4, subprocess_item)
-
-        self.resizeRowsToContents()
 
 
 class ActivityTimelineTable(QTableWidget):
@@ -317,74 +358,11 @@ class ActivityTimelineTable(QTableWidget):
             ]
         )
 
-        header = self.horizontalHeader()
-
-        header.setSectionResizeMode(
-            0,
-            QHeaderView.ResizeMode.ResizeToContents,
+        configure_activity_table(
+            self,
+            stretch_column=4,
+            minimum_height=180,
         )
-
-        header.setSectionResizeMode(
-            1,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            2,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            3,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        header.setSectionResizeMode(
-            4,
-            QHeaderView.ResizeMode.Stretch,
-        )
-
-        header.setSectionResizeMode(
-            5,
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-
-        self.verticalHeader().setVisible(False)
-
-        self.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-
-        self.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection
-        )
-
-        self.setFocusPolicy(
-            Qt.FocusPolicy.NoFocus
-        )
-
-        self.setAlternatingRowColors(True)
-
-        self.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.verticalScrollBar().setSingleStep(12)
-        self.horizontalScrollBar().setSingleStep(12)
-
-        self.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
-        self.viewport().setAttribute(Qt.WidgetAttribute.WA_StaticContents, True)
-
-        self.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-
-        self.verticalHeader().setDefaultSectionSize(32)
-
-        self.setMinimumHeight(150)
-        self.setMaximumHeight(220)
 
     def set_entries(
         self,
@@ -453,6 +431,12 @@ class ActivityTimelineTable(QTableWidget):
                 entry.window_title or "-"
             )
 
+            subprocess_item.setToolTip(
+                entry.window_title or ""
+            )
+
+            app_item.setToolTip(entry.application_name)
+
             pid_item = QTableWidgetItem(
                 str(entry.process_id)
                 if entry.process_id is not None
@@ -485,5 +469,3 @@ class ActivityTimelineTable(QTableWidget):
             self.setItem(row, 3, duration_item)
             self.setItem(row, 4, subprocess_item)
             self.setItem(row, 5, pid_item)
-
-        self.resizeRowsToContents()

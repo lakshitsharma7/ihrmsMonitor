@@ -15,6 +15,10 @@ QWidget {
     font-size: 13px;
 }
 
+QLabel {
+    background: transparent;
+}
+
 QMainWindow {
     background-color: #f5f6fa;
 }
@@ -55,8 +59,8 @@ QGroupBox {
     background-color: #ffffff;
     border: 1px solid #e0e0e0;
     border-radius: 8px;
-    margin-top: 12px;
-    padding: 12px;
+    margin-top: 10px;
+    padding: 16px 12px 12px 12px;
     font-weight: 600;
 }
 
@@ -105,18 +109,99 @@ QPushButton#SecondaryButton:hover {
 
 QTableWidget {
     background-color: #ffffff;
+    alternate-background-color: #f8f9fb;
     border: 1px solid #e0e0e0;
     border-radius: 6px;
     gridline-color: #f0f0f0;
 }
 
+QTableWidget::item {
+    padding: 0 8px;
+    color: #202124;
+    border: none;
+}
+
+QHeaderView {
+    background-color: #fafafa;
+}
+
 QHeaderView::section {
     background-color: #fafafa;
     color: #5f6368;
-    padding: 6px;
+    padding: 6px 8px;
     border: none;
     border-bottom: 1px solid #e0e0e0;
     font-weight: 600;
+}
+
+QTableCornerButton::section {
+    background-color: #fafafa;
+    border: none;
+}
+
+QTabWidget::pane {
+    background-color: #f5f6fa;
+    border: none;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #5f6368;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+}
+
+QTabBar::tab:selected {
+    color: #1a73e8;
+    border-bottom: 2px solid #1a73e8;
+}
+
+QTabBar::tab:hover:!selected {
+    color: #202124;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #c9ced6;
+    border-radius: 5px;
+    min-height: 28px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #aeb5bf;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #c9ced6;
+    border-radius: 5px;
+    min-width: 28px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #aeb5bf;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+    width: 0;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
 }
 
 QListWidget {
