@@ -36,6 +36,12 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(APP_STYLESHEET)
 
+    from PySide6.QtGui import QIcon
+    import os
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+    if os.path.isfile(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     if not is_supported_platform():
         QMessageBox.critical(
             None,

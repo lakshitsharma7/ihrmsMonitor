@@ -152,6 +152,14 @@ class ApplicationUsageTable(QTableWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.verticalScrollBar().setSingleStep(12)
+        self.horizontalScrollBar().setSingleStep(12)
+
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_StaticContents, True)
+
         self.verticalHeader().setDefaultSectionSize(32)
 
         self.setMinimumHeight(120)
@@ -360,6 +368,14 @@ class ActivityTimelineTable(QTableWidget):
         self.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.verticalScrollBar().setSingleStep(12)
+        self.horizontalScrollBar().setSingleStep(12)
+
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_StaticContents, True)
 
         self.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded

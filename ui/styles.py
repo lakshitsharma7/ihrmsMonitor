@@ -140,6 +140,12 @@ QListWidget {
     color: #5f6368;
 }
 
+QLabel#StatusLabel {
+    font-size: 14px;
+    font-weight: 500;
+    color: #3c4043;
+}
+
 QLineEdit {
     background-color: #ffffff;
     border: 1px solid #c7c7c7;

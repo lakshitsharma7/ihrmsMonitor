@@ -650,10 +650,10 @@ class MainWindow(QMainWindow):
             "Dashboard",
         )
 
-        self.tabs.addTab(
-            self.settings_page,
-            "Settings",
-        )
+        # self.tabs.addTab(
+        #     self.settings_page,
+        #     "Settings",
+        # )
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 

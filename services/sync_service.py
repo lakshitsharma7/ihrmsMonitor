@@ -46,6 +46,11 @@ class SyncService:
     # Maximum number of records returned in one history page.
     MAX_PAGE_SIZE = 500
 
+    # Global tracking properties for UI dashboard display
+    last_sync_status: str = "Sent"  # Sending / Sent / Failed
+    last_successful_sync_time: str = "Never"
+    records_currently_sending: int = 0
+
     def __init__(
         self,
         api_url: str | None = None,
@@ -119,6 +124,8 @@ class SyncService:
             unsynced_sessions = repository.get_unsynced_closed_sessions()
 
             if unsynced_sessions:
+                SyncService.last_sync_status = "Sending"
+                SyncService.records_currently_sending = len(unsynced_sessions)
                 logger.info("Syncing %d unsynced closed sessions in batches", len(unsynced_sessions))
 
                 BATCH_SIZE = 100
@@ -158,6 +165,8 @@ class SyncService:
                         res_data = self._send_request_with_retry(new_payload, page=page_num)
                         if not res_data:
                             logger.error("Activity sync batch page failed. Halting sync.")
+                            SyncService.last_sync_status = "Failed"
+                            SyncService.records_currently_sending = 0
                             return False
                             
                         # Process mappings
@@ -175,6 +184,8 @@ class SyncService:
                                     logger.error("Failed to update server session ID for client ref %s: %s", client_ref, err)
 
                         uploaded_count += len(page_sessions)
+                        # Decrement remaining unsynced records
+                        SyncService.records_currently_sending = max(0, SyncService.records_currently_sending - len(page_sessions))
                         logger.info("%d/%d records processed", uploaded_count, len(batch))
             else:
                 logger.info("No new unsynced activities to sync.")
@@ -197,10 +208,16 @@ class SyncService:
                     else:
                         logger.error("Screenshot upload failed or deferred for local session ID %d", session.id)
 
+            from datetime import datetime
+            SyncService.last_sync_status = "Sent"
+            SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            SyncService.records_currently_sending = 0
             return True
 
         except Exception as exc:
             logger.exception("Unexpected error during activity sync: %s", exc)
+            SyncService.last_sync_status = "Failed"
+            SyncService.records_currently_sending = 0
             return False
         finally:
             db_session.close()

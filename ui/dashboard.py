@@ -39,6 +39,9 @@ class DashboardPage(QWidget):
 
         root = QVBoxLayout(self)
 
+        # Top Row containing Current Application and Tracking & Sync Status
+        top_row = QHBoxLayout()
+
         # ==============================================================
         # Current Application
         # ==============================================================
@@ -75,9 +78,71 @@ class DashboardPage(QWidget):
             self.current_window_label
         )
 
-        root.addWidget(
-            current_group
+        current_layout.addStretch()
+
+        top_row.addWidget(
+            current_group,
+            stretch=1,
         )
+
+        # ==============================================================
+        # Tracking & Sync Status
+        # ==============================================================
+
+        status_group = QGroupBox(
+            "Tracking & Sync Status"
+        )
+
+        status_layout = QVBoxLayout(
+            status_group
+        )
+
+        self.tracking_status_label = QLabel(
+            "Tracking: Inactive"
+        )
+
+        self.sync_status_label = QLabel(
+            "API Sync: Sent"
+        )
+
+        self.last_sync_label = QLabel(
+            "Last successful API sync: Never"
+        )
+
+        self.unsynced_records_label = QLabel(
+            "Records uploading: 0"
+        )
+
+        self.idle_time_label = QLabel(
+            "Idle Time: 0 seconds"
+        )
+
+        self.version_label = QLabel(
+            "Version: 1.0.0"
+        )
+
+        # Give them StatusLabel object names
+        self.tracking_status_label.setObjectName("StatusLabel")
+        self.sync_status_label.setObjectName("StatusLabel")
+        self.last_sync_label.setObjectName("StatusLabel")
+        self.unsynced_records_label.setObjectName("StatusLabel")
+        self.idle_time_label.setObjectName("StatusLabel")
+        self.version_label.setObjectName("StatusLabel")
+
+        status_layout.addWidget(self.tracking_status_label)
+        status_layout.addWidget(self.sync_status_label)
+        status_layout.addWidget(self.last_sync_label)
+        status_layout.addWidget(self.unsynced_records_label)
+        status_layout.addWidget(self.idle_time_label)
+        status_layout.addWidget(self.version_label)
+        status_layout.addStretch()
+
+        top_row.addWidget(
+            status_group,
+            stretch=1,
+        )
+
+        root.addLayout(top_row)
 
         # ==============================================================
         # Today's Time + Applications
@@ -185,39 +250,11 @@ class DashboardPage(QWidget):
             timeline_group
         )
 
-        # ==============================================================
-        # Refresh
-        # ==============================================================
-
-        actions_row = QHBoxLayout()
-
-        actions_row.addStretch()
-
-        self.refresh_button = QPushButton(
-            "Refresh"
-        )
-
-        self.refresh_button.setObjectName(
-            "SecondaryButton"
-        )
-
-        self.refresh_button.clicked.connect(
-            self.refresh
-        )
-
-        actions_row.addWidget(
-            self.refresh_button
-        )
-
-        root.addLayout(
-            actions_row
-        )
-
     def update_tracker_state(
         self,
         state: TrackerState,
     ) -> None:
-        """Update the Current Application section."""
+        """Update the Current Application section and the Tracking & Sync Status."""
 
         if not state.is_tracking:
             self.current_app_label.setText(
@@ -254,6 +291,23 @@ class DashboardPage(QWidget):
             self.current_window_label.setText(
                 ""
             )
+
+        # Update tracking status
+        tracking_text = "Active" if state.is_tracking else "Inactive"
+        self.tracking_status_label.setText(f"Tracking: {tracking_text}")
+
+        # Update idle time label (dynamic updates when idle resumes or resets)
+        idle_s = int(state.idle_seconds)
+        if idle_s < 60:
+            self.idle_time_label.setText(f"Idle Time: {idle_s} seconds")
+        else:
+            self.idle_time_label.setText(f"Idle Time: {idle_s // 60} minutes {idle_s % 60} seconds")
+
+        # Update sync info from SyncService
+        from services.sync_service import SyncService
+        self.sync_status_label.setText(f"API Sync: {SyncService.last_sync_status}")
+        self.last_sync_label.setText(f"Last successful API sync: {SyncService.last_successful_sync_time}")
+        self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
 
     def refresh(self) -> None:
         """Reload today's total, applications, and timeline."""

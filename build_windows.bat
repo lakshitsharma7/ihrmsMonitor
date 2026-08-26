@@ -10,7 +10,7 @@ pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
 echo Building "iHRMS Monitor.exe"...
-pyinstaller --noconfirm --clean --windowed --onefile --name "iHRMS Monitor" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets;assets" app.py
+pyinstaller --noconfirm --clean --windowed --onefile --name "iHRMS Monitor" --icon="assets/logo.png" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets;assets" app.py
 if errorlevel 1 goto :error
 
 echo.
