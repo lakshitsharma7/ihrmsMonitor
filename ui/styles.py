@@ -263,8 +263,12 @@ QLineEdit:focus {
 }
 
 #LoginCopyright {
-    color: #9aa0a6;
-    font-size: 12px;
+    color: #5f6368;
+    font-size: 11px;
+    background-color: #f8f9fa;
+    border: 1px solid #dadce0;
+    border-radius: 6px;
+    padding: 8px 12px;
 }
 """
 

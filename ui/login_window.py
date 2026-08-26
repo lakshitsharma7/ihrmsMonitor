@@ -129,7 +129,21 @@ class LoginWindow(QMainWindow):
         hero_layout.setContentsMargins(32, 40, 32, 32)
         hero_layout.setSpacing(0)
 
-        hero_layout.addWidget(_icon_label("monitor", 58))
+        # Hero illustration / App Icon (big iHRMS star logo)
+        icon_label = QLabel()
+        icon_label.setFixedSize(64, 64)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("background-color: #ffffff; border-radius: 8px; padding: 4px;")
+        logo_path = _asset_path(os.path.join("assets", "ihrms_icon.png"))
+        if os.path.isfile(logo_path):
+            pixmap = QPixmap(logo_path)
+            icon_label.setPixmap(
+                pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            )
+        else:
+            icon_label.setText("iHRMS")
+            icon_label.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        hero_layout.addWidget(icon_label)
         hero_layout.addSpacing(18)
 
         brand_name = QLabel("iHRMS Monitor")
@@ -173,11 +187,11 @@ class LoginWindow(QMainWindow):
         panel_layout.setContentsMargins(46, 40, 46, 26)
         panel_layout.setSpacing(0)
 
-        # ── Brand logo ────────────────────────────────────────────
+        # ── Brand logo (Centered) ──────────────────────────────────
         logo_label = QLabel()
         logo_label.setObjectName("LoginLogo")
         logo_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            Qt.AlignmentFlag.AlignCenter
         )
         logo_path = _asset_path(os.path.join("assets", "logo.png"))
         if os.path.isfile(logo_path):
@@ -210,7 +224,6 @@ class LoginWindow(QMainWindow):
         # ── Password (eye icon replaces the old "Show password" box) ──
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
-        self.password_input.setText("Secret123")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setMinimumHeight(42)
         self.password_input.addAction(
@@ -246,8 +259,8 @@ class LoginWindow(QMainWindow):
 
         # ── Copyright / acknowledgment text ───────────────────────
         copyright_label = QLabel(
-            "By using iHRMS, you acknowledge that you are\n"
-            "sharing your information with iHRMS."
+            "By logging in to iHRMS Monitor, you acknowledge that you are "
+            "sharing your activity information with iHRMS Monitor."
         )
         copyright_label.setObjectName("LoginCopyright")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -433,7 +446,12 @@ class LoginWindow(QMainWindow):
                 from ui.main_window import MainWindow
 
                 self.main_window = MainWindow(login_window=self)
-                self.main_window.show()
+                self.main_window.hide()
+                if hasattr(self.main_window, "tray") and self.main_window.tray:
+                    self.main_window.tray.show_message(
+                        "iHRMS Monitor",
+                        "iHRMS Monitor is running in the background."
+                    )
 
                 # Hide login window
                 self.hide()

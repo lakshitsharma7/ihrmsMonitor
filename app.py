@@ -38,7 +38,7 @@ def main() -> int:
 
     from PySide6.QtGui import QIcon
     import os
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "ihrms-logo-icon.ico")
     if os.path.isfile(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 

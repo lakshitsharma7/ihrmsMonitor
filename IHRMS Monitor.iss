@@ -9,8 +9,9 @@ DefaultGroupName=iHRMS Monitor
 UninstallDisplayIcon={app}\iHRMS Monitor.exe
 Compression=lzma2
 SolidCompression=yes
-OutputDir=dist
+OutputDir=dist\installer
 OutputBaseFilename=iHRMSMonitorSetup
+SetupIconFile=assets\ihrms-logo-icon.ico
 DisableProgramGroupPage=yes
 
 [Files]

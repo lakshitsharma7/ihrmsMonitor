@@ -840,25 +840,27 @@ class MainWindow(QMainWindow):
         """Enforce RBAC permissions on Start/Stop tracking buttons and tray menu."""
         from services.session_service import SessionService
         session = SessionService().current_user
+
+        # Unconditionally hide "Stop Tracking" button and tray menu stop action per request
+        self.stop_button.hide()
+        if hasattr(self, "tray") and self.tray:
+            self.tray.stop_action.setVisible(False)
+
         if session and not session.tracking_permitted:
             logger.info("Enforcing RBAC tracking restrictions: hiding start/stop tracking controls")
             self.start_button.hide()
-            self.stop_button.hide()
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.hide()
             self.status_badge.hide()
             if hasattr(self, "tray") and self.tray:
                 self.tray.start_action.setVisible(False)
-                self.tray.stop_action.setVisible(False)
         else:
             self.start_button.show()
-            self.stop_button.show()
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.show()
             self.status_badge.show()
             if hasattr(self, "tray") and self.tray:
                 self.tray.start_action.setVisible(True)
-                self.tray.stop_action.setVisible(True)
 
     def _update_status_icon(self) -> None:
         """Update the Shield+Pulse icon based on the current tracking/idle state."""
@@ -1193,83 +1195,20 @@ class MainWindow(QMainWindow):
         self,
         event,
     ) -> None:  # noqa: N802
-        """Handle application close."""
+        """Handle application close by hiding to tray instead of quitting."""
 
         if self._really_quit:
             self._shutdown()
-
             event.accept()
-
             return
 
-        box = QMessageBox(
-            self
-        )
-
-        box.setWindowTitle(
-            APP_NAME
-        )
-
-        box.setText(
-            "What would you like to do?"
-        )
-
-        stop_btn = box.addButton(
-            "Stop Tracking",
-            QMessageBox.ButtonRole.DestructiveRole,
-        )
-
-        continue_btn = box.addButton(
-            "Continue Tracking in Background",
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-
-        cancel_btn = box.addButton(
-            "Cancel",
-            QMessageBox.ButtonRole.RejectRole,
-        )
-
-        box.setDefaultButton(
-            continue_btn
-        )
-
-        box.exec()
-
-        clicked = (
-            box.clickedButton()
-        )
-
-        # ------------------------------------------------------
-        # Stop and exit
-        # ------------------------------------------------------
-
-        if clicked == stop_btn:
-            self.stop_tracking()
-
-            self._shutdown()
-
-            event.accept()
-
-        # ------------------------------------------------------
-        # Continue in background
-        # ------------------------------------------------------
-
-        elif clicked == continue_btn:
-            event.ignore()
-
-            self.hide()
-
+        event.ignore()
+        self.hide()
+        if hasattr(self, "tray") and self.tray:
             self.tray.show_message(
                 APP_NAME,
                 "Still tracking in the background.",
             )
-
-        # ------------------------------------------------------
-        # Cancel
-        # ------------------------------------------------------
-
-        elif clicked == cancel_btn:
-            event.ignore()
 
     def _shutdown(
         self,

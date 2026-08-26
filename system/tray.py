@@ -42,8 +42,18 @@ class TrayController:
         on_exit,
     ) -> None:
         self._parent = parent
-        style = parent.style()
-        icon = style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        import os
+        import sys
+        if getattr(sys, "frozen", False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base, "assets", "ihrms-logo-icon.ico")
+        if os.path.isfile(icon_path):
+            icon = QIcon(icon_path)
+        else:
+            style = parent.style()
+            icon = style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
 
         self.tray_icon = QSystemTrayIcon(icon, parent)
         self.tray_icon.setToolTip(APP_NAME)
