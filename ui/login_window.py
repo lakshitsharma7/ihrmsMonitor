@@ -1,15 +1,15 @@
-"""Login screen for the IHRMS Monitor application."""
+"""Login screen for the iHRMS Monitor application."""
 
 from __future__ import annotations
 
 import os
 import sys
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QFont
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QFormLayout,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -23,6 +23,13 @@ from services.session_service import SessionService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Selling points shown on the dark hero panel: (icon name, text).
+HERO_BULLETS = (
+    ("monitor", "Automatic app & window tracking"),
+    ("chart", "Live productivity and idle insights"),
+    ("shield", "Secure, role-based access"),
+)
 
 
 def _asset_path(relative: str) -> str:
@@ -39,90 +46,205 @@ def _asset_path(relative: str) -> str:
     return os.path.join(base, relative)
 
 
+def _load_icon(name: str) -> QIcon:
+    """Load an icon from ``assets/icons``.
+
+    The SVG is preferred; the pre-rendered PNG is a fallback for
+    environments where the Qt SVG image plugin is unavailable.
+    """
+    for extension in (".svg", ".png"):
+        path = _asset_path(os.path.join("assets", "icons", name + extension))
+        if os.path.isfile(path):
+            icon = QIcon(path)
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
+
+def _load_emoji_icon(emoji_text: str) -> QIcon:
+    """Create a QIcon from a unicode emoji character drawn on a transparent QPixmap."""
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    font = QFont("Segoe UI Emoji", 14)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji_text)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _icon_label(name: str, size: int) -> QLabel:
+    """Return a fixed-size ``QLabel`` displaying the named icon."""
+    label = QLabel()
+    label.setFixedSize(size, size)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    pixmap = _load_icon(name).pixmap(QSize(size, size))
+    if not pixmap.isNull():
+        label.setPixmap(pixmap)
+    return label
+
+
 class LoginWindow(QMainWindow):
-    """Secure, offline login screen for IHRMS Monitor."""
+    """Secure, offline login screen for iHRMS Monitor."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("iHRMS Monitor - Login")
-        self.resize(400, 480)
+        self.setMinimumSize(760, 520)
+        self.resize(860, 560)
         self.main_window = None
 
         self._build_ui()
 
+    # ── UI construction ───────────────────────────────────────────
     def _build_ui(self) -> None:
         central = QWidget()
-        layout = QVBoxLayout(central)
+        central.setObjectName("LoginBackground")
+        layout = QHBoxLayout(central)
+        layout.setContentsMargins(24, 24, 24, 24)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Card container
-        container = QWidget()
-        container.setObjectName("LoginContainer")
-        container.setFixedWidth(340)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(24, 24, 24, 20)
-        container_layout.setSpacing(12)
+        # Card split into a dark hero panel and the white form panel
+        card = QFrame()
+        card.setObjectName("LoginCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setFixedSize(780, 470)
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+        card_layout.addWidget(self._build_hero_panel())
+        card_layout.addWidget(self._build_form_panel())
 
-        # ── Logo ──────────────────────────────────────────────────
+        layout.addWidget(card)
+        self.setCentralWidget(central)
+
+    def _build_hero_panel(self) -> QWidget:
+        """Dark branded panel: app mark, tagline and three bullet points."""
+        hero = QFrame()
+        hero.setObjectName("LoginHero")
+        hero.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        hero.setFixedWidth(320)
+
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(32, 40, 32, 32)
+        hero_layout.setSpacing(0)
+
+        hero_layout.addWidget(_icon_label("monitor", 58))
+        hero_layout.addSpacing(18)
+
+        brand_name = QLabel("iHRMS Monitor")
+        brand_name.setObjectName("LoginBrandName")
+        hero_layout.addWidget(brand_name)
+
+        hero_layout.addSpacing(6)
+        tagline = QLabel("Smart workforce activity monitoring")
+        tagline.setObjectName("LoginTagline")
+        hero_layout.addWidget(tagline)
+
+        hero_layout.addSpacing(26)
+        rule = QFrame()
+        rule.setObjectName("LoginHeroRule")
+        rule.setFixedHeight(1)
+        hero_layout.addWidget(rule)
+        hero_layout.addSpacing(24)
+
+        for icon_name, text in HERO_BULLETS:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(12)
+            row.addWidget(_icon_label(icon_name, 18), 0, Qt.AlignmentFlag.AlignTop)
+            bullet = QLabel(text)
+            bullet.setObjectName("LoginBullet")
+            bullet.setWordWrap(True)
+            row.addWidget(bullet, 1)
+            hero_layout.addLayout(row)
+            hero_layout.addSpacing(18)
+
+        hero_layout.addStretch(1)
+        return hero
+
+    def _build_form_panel(self) -> QWidget:
+        """White panel holding the brand logo and the credential form."""
+        panel = QFrame()
+        panel.setObjectName("LoginFormPanel")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(46, 40, 46, 26)
+        panel_layout.setSpacing(0)
+
+        # ── Brand logo ────────────────────────────────────────────
         logo_label = QLabel()
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_label.setObjectName("LoginLogo")
+        logo_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         logo_path = _asset_path(os.path.join("assets", "logo.png"))
         if os.path.isfile(logo_path):
             pixmap = QPixmap(logo_path)
-            # Scale to fit nicely inside the card (max width 220, keep ratio)
-            scaled = pixmap.scaledToWidth(
-                220, Qt.TransformationMode.SmoothTransformation
+            logo_label.setPixmap(
+                pixmap.scaledToWidth(190, Qt.TransformationMode.SmoothTransformation)
             )
-            logo_label.setPixmap(scaled)
         else:
-            logo_label.setText("IndoVision")
-            logo_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #00a0c6;")
-        logo_label.setStyleSheet("background: transparent;")
-        container_layout.addWidget(logo_label)
+            logo_label.setText("indoVISION")
+        panel_layout.addWidget(logo_label)
 
-        # Small spacer after logo
-        container_layout.addSpacing(4)
+        panel_layout.addSpacing(12)
+        caption = QLabel("Sign in to continue")
+        caption.setObjectName("LoginCaption")
+        panel_layout.addWidget(caption)
 
-        # Title
-        title_label = QLabel("Welcome Back")
-        title_label.setObjectName("LoginTitle")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        container_layout.addWidget(title_label)
+        panel_layout.addSpacing(26)
 
-        # Form layout
-        form = QFormLayout()
-        form.setSpacing(8)
-
+        # ── Username ──────────────────────────────────────────────
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Username or Email")
-        form.addRow("Username:", self.username_input)
+        self.username_input.setMinimumHeight(42)
+        self.username_input.addAction(
+            _load_icon("user"), QLineEdit.ActionPosition.LeadingPosition
+        )
+        panel_layout.addWidget(self.username_input)
 
+        panel_layout.addSpacing(12)
+
+        # ── Password (eye icon replaces the old "Show password" box) ──
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
+        self.password_input.setText("Secret123")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Password:", self.password_input)
+        self.password_input.setMinimumHeight(42)
+        self.password_input.addAction(
+            _load_icon("lock"), QLineEdit.ActionPosition.LeadingPosition
+        )
 
-        container_layout.addLayout(form)
-
-        # Show/hide password option
-        self.show_password_checkbox = QCheckBox("Show password")
-        self.show_password_checkbox.stateChanged.connect(self._toggle_password_visibility)
-        container_layout.addWidget(self.show_password_checkbox)
+        self._eye_icon = _load_icon("eye")
+        self._eye_off_icon = _load_icon("eye-off")
+        self.toggle_password_action = self.password_input.addAction(
+            self._eye_icon, QLineEdit.ActionPosition.TrailingPosition
+        )
+        self.toggle_password_action.setToolTip("Show password")
+        self.toggle_password_action.triggered.connect(self._toggle_password_visibility)
+        panel_layout.addWidget(self.password_input)
 
         # Error label
+        panel_layout.addSpacing(12)
         self.error_label = QLabel("")
         self.error_label.setObjectName("LoginError")
-        self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_label.setWordWrap(True)
-        container_layout.addWidget(self.error_label)
+        panel_layout.addWidget(self.error_label)
 
         # Login button
+        panel_layout.addSpacing(10)
         self.login_button = QPushButton("Login")
+        self.login_button.setObjectName("LoginButton")
+        self.login_button.setMinimumHeight(44)
+        self.login_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_button.clicked.connect(self._handle_login)
-        container_layout.addWidget(self.login_button)
+        panel_layout.addWidget(self.login_button)
+
+        panel_layout.addStretch(1)
 
         # ── Copyright / acknowledgment text ───────────────────────
-        container_layout.addSpacing(8)
         copyright_label = QLabel(
             "By using iHRMS, you acknowledge that you are\n"
             "sharing your information with iHRMS."
@@ -130,13 +252,9 @@ class LoginWindow(QMainWindow):
         copyright_label.setObjectName("LoginCopyright")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         copyright_label.setWordWrap(True)
-        copyright_label.setStyleSheet(
-            "color: #888888; font-size: 10px; background: transparent;"
-        )
-        container_layout.addWidget(copyright_label)
+        panel_layout.addWidget(copyright_label)
 
-        layout.addWidget(container)
-        self.setCentralWidget(central)
+        return panel
 
     def show_and_clear(self) -> None:
         """Clear fields and show the window again (used for logout)."""
@@ -144,8 +262,8 @@ class LoginWindow(QMainWindow):
         self.password_input.clear()
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
-        self.show_password_checkbox.setChecked(False)
-        self.show_password_checkbox.setEnabled(True)
+        self._set_password_visible(False)
+        self.toggle_password_action.setEnabled(True)
         self.login_button.setText("Login")
         self.login_button.setEnabled(True)
         self.error_label.clear()
@@ -153,11 +271,23 @@ class LoginWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def _toggle_password_visibility(self, state: int) -> None:
-        if state == Qt.CheckState.Checked.value:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
-        else:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+    def _set_password_visible(self, visible: bool) -> None:
+        """Apply the masked/plain state and keep the eye icon in sync."""
+        self.password_input.setEchoMode(
+            QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        )
+        self.toggle_password_action.setIcon(
+            self._eye_off_icon if visible else self._eye_icon
+        )
+        self.toggle_password_action.setToolTip(
+            "Hide password" if visible else "Show password"
+        )
+
+    def _toggle_password_visibility(self, *_args: object) -> None:
+        """Flip the password field between masked and plain text."""
+        self._set_password_visible(
+            self.password_input.echoMode() == QLineEdit.EchoMode.Password
+        )
 
     def _handle_login(self) -> None:
         self.error_label.clear()
@@ -174,7 +304,7 @@ class LoginWindow(QMainWindow):
         self.login_button.setEnabled(False)
         self.username_input.setEnabled(False)
         self.password_input.setEnabled(False)
-        self.show_password_checkbox.setEnabled(False)
+        self.toggle_password_action.setEnabled(False)
 
         # Simulate brief latency for transition smoothness (like a native desktop processing check)
         QTimer.singleShot(400, lambda: self._process_login(username, password))
@@ -321,4 +451,4 @@ class LoginWindow(QMainWindow):
         self.login_button.setEnabled(True)
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
-        self.show_password_checkbox.setEnabled(True)
+        self.toggle_password_action.setEnabled(True)

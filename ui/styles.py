@@ -153,21 +153,112 @@ QLineEdit:focus {
     padding: 7px 11px;
 }
 
-#LoginContainer {
-    background-color: #ffffff;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
+#LoginBackground {
+    background-color: #eef1f6;
 }
 
-#LoginTitle {
-    font-size: 22px;
+#LoginCard {
+    background-color: #ffffff;
+    border: 1px solid #dfe4ec;
+    border-radius: 14px;
+}
+
+#LoginHero {
+    background-color: #0e2233;
+    border-top-left-radius: 14px;
+    border-bottom-left-radius: 14px;
+}
+
+#LoginHero QLabel {
+    background: transparent;
+    color: #e8eef5;
+}
+
+#LoginHero #LoginBrandName {
+    font-size: 21px;
     font-weight: 700;
-    color: #1a73e8;
+    color: #ffffff;
+}
+
+#LoginHero #LoginTagline {
+    font-size: 12px;
+    font-style: italic;
+    color: #00c8f0;
+}
+
+#LoginHeroRule {
+    background-color: #24394b;
+    border: none;
+}
+
+#LoginHero #LoginBullet {
+    font-size: 12px;
+    color: #aebdcb;
+}
+
+#LoginFormPanel {
+    background-color: #ffffff;
+    border-top-right-radius: 14px;
+    border-bottom-right-radius: 14px;
+}
+
+#LoginFormPanel QLabel {
+    background: transparent;
+}
+
+#LoginCaption {
+    font-size: 13px;
+    color: #5f6368;
+}
+
+#LoginCard QLineEdit {
+    background-color: #ffffff;
+    border: 1px solid #d6dce4;
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: #202124;
+}
+
+#LoginCard QLineEdit:focus {
+    border: 2px solid #00a0c6;
+    padding: 8px 11px;
+}
+
+#LoginCard QLineEdit:disabled {
+    background-color: #f5f6fa;
+    color: #9aa0a6;
+}
+
+#LoginButton {
+    background-color: #00a0c6;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#LoginButton:hover {
+    background-color: #0090b4;
+}
+
+#LoginButton:pressed {
+    background-color: #007e9e;
+}
+
+#LoginButton:disabled {
+    background-color: #c3ced7;
+    color: #ffffff;
 }
 
 #LoginError {
     color: #d93025;
     font-weight: 600;
+}
+
+#LoginCopyright {
+    color: #9aa0a6;
+    font-size: 12px;
 }
 """
 
