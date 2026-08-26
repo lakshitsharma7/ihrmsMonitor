@@ -8,9 +8,9 @@ accessed through ``services.settings_service.SettingsService``.
 
 from __future__ import annotations
 
-APP_NAME = "IHRMS Monitor"
+APP_NAME = "iHRMS Monitor"
 APP_VERSION = "1.0.0"
-ORG_NAME = "IHRMSMonitorApp"
+ORG_NAME = "iHRMSMonitorApp"
 
 # How often (in seconds) the tracker worker polls for the active application.
 POLL_INTERVAL_SECONDS = 1.0

@@ -44,7 +44,7 @@ class LoginWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("IHRMS Monitor - Login")
+        self.setWindowTitle("iHRMS Monitor - Login")
         self.resize(400, 480)
         self.main_window = None
 
@@ -124,8 +124,8 @@ class LoginWindow(QMainWindow):
         # ── Copyright / acknowledgment text ───────────────────────
         container_layout.addSpacing(8)
         copyright_label = QLabel(
-            "By using IHRMS, you acknowledge that you are\n"
-            "sharing your information with IHRMS."
+            "By using iHRMS, you acknowledge that you are\n"
+            "sharing your information with iHRMS."
         )
         copyright_label.setObjectName("LoginCopyright")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

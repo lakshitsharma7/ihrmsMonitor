@@ -40,7 +40,7 @@ def main() -> int:
         QMessageBox.critical(
             None,
             APP_NAME,
-            "This version of IHRMS Monitor supports Windows and macOS.",
+            "This version of iHRMS Monitor supports Windows and macOS.",
         )
         return 1
 

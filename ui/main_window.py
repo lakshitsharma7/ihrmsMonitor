@@ -755,7 +755,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 APP_NAME,
-                "This version of IHRMS Monitor "
+                "This version of iHRMS Monitor "
                 "supports Windows and macOS.",
             )
 

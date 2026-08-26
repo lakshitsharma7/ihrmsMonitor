@@ -1,24 +1,24 @@
-; Inno Setup script for IHRMS Monitor
+; Inno Setup script for iHRMS Monitor
 ; Use Inno Setup Compiler (https://jrsoftware.org/isinfo.php) to compile this into a Windows setup installer.
 
 [Setup]
-AppName=IHRMS Monitor
+AppName=iHRMS Monitor
 AppVersion=1.0.0
-DefaultDirName={autopf}\IHRMS Monitor
-DefaultGroupName=IHRMS Monitor
-UninstallDisplayIcon={app}\IHRMS Monitor.exe
+DefaultDirName={autopf}\iHRMS Monitor
+DefaultGroupName=iHRMS Monitor
+UninstallDisplayIcon={app}\iHRMS Monitor.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=dist
-OutputBaseFilename=IHRMSMonitorSetup
+OutputBaseFilename=iHRMSMonitorSetup
 DisableProgramGroupPage=yes
 
 [Files]
-Source: "dist\IHRMS Monitor.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\iHRMS Monitor.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\IHRMS Monitor"; Filename: "{app}\IHRMS Monitor.exe"
-Name: "{autodesktop}\IHRMS Monitor"; Filename: "{app}\IHRMS Monitor.exe"
+Name: "{group}\iHRMS Monitor"; Filename: "{app}\iHRMS Monitor.exe"
+Name: "{autodesktop}\iHRMS Monitor"; Filename: "{app}\iHRMS Monitor.exe"
 
 [Run]
-Filename: "{app}\IHRMS Monitor.exe"; Description: "Launch IHRMS Monitor"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\iHRMS Monitor.exe"; Description: "Launch iHRMS Monitor"; Flags: nowait postinstall skipifsilent

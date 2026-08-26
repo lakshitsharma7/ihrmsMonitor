@@ -61,7 +61,7 @@ def get_app_data_directory() -> Path:
         directory = Path.home() / "Library" / "Application Support" / APP_NAME
     else:
         raise RuntimeError(
-            "This version of IHRMS Monitor supports Windows and macOS."
+            "This version of iHRMS Monitor supports Windows and macOS."
         )
 
     directory.mkdir(parents=True, exist_ok=True)

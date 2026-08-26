@@ -9,12 +9,12 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
-echo Building "IHRMS Monitor.exe"...
-pyinstaller --noconfirm --clean --windowed --onefile --name "IHRMS Monitor" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets;assets" app.py
+echo Building "iHRMS Monitor.exe"...
+pyinstaller --noconfirm --clean --windowed --onefile --name "iHRMS Monitor" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets;assets" app.py
 if errorlevel 1 goto :error
 
 echo.
-echo Build succeeded: dist\"IHRMS Monitor.exe"
+echo Build succeeded: dist\"iHRMS Monitor.exe"
 goto :eof
 
 :error

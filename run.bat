@@ -18,7 +18,7 @@ if not exist "venv" (
     call .\venv\Scripts\activate
 )
 
-echo Starting IHRMS Monitor...
+echo Starting iHRMS Monitor...
 python app.py
 if %errorlevel% neq 0 (
     echo Application exited with an error.
