@@ -742,7 +742,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 APP_NAME,
-                "This version of Activity Tracker "
+                "This version of IHRMS Monitor "
                 "supports Windows and macOS.",
             )
 

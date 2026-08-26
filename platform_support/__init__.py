@@ -46,5 +46,5 @@ def create_activity_provider() -> PlatformActivityProvider:
 
     logger.error("Unsupported platform detected: %s", sys.platform)
     raise UnsupportedPlatformError(
-        "This version of Activity Tracker supports Windows and macOS."
+        "This version of IHRMS Monitor supports Windows and macOS."
     )

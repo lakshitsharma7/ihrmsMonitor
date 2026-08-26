@@ -26,7 +26,7 @@ class LoginWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Activity Tracker - Login")
+        self.setWindowTitle("IHRMS Monitor - Login")
         self.resize(400, 350)
         self.main_window = None
 

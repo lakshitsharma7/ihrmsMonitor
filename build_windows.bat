@@ -9,12 +9,12 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
-echo Building ActivityTracker.exe...
-pyinstaller --noconfirm --clean --windowed --onefile --name ActivityTracker app.py
+echo Building IHRMSMonitor.exe...
+pyinstaller --noconfirm --clean --windowed --onefile --name IHRMSMonitor app.py
 if errorlevel 1 goto :error
 
 echo.
-echo Build succeeded: dist\ActivityTracker.exe
+echo Build succeeded: dist\IHRMSMonitor.exe
 goto :eof
 
 :error
