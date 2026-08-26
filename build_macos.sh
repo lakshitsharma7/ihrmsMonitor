@@ -9,7 +9,7 @@ python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 
 echo "Building IHRMS Monitor.app..."
-pyinstaller --noconfirm --clean --windowed --name "IHRMS Monitor" app.py
+pyinstaller --noconfirm --clean --windowed --name "IHRMS Monitor" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets:assets" app.py
 
 echo
 echo "Build succeeded: dist/IHRMS Monitor.app"

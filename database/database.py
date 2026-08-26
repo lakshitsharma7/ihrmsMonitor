@@ -62,6 +62,7 @@ def init_database(db_path: Path | str | None = None) -> None:
             if "capture_on_switch" not in settings_col_names:
                 conn.execute(text("ALTER TABLE settings ADD COLUMN capture_on_switch BOOLEAN NOT NULL DEFAULT 1"))
         _create_default_admin_if_needed()
+        _create_default_settings_if_needed()
     except Exception:  # noqa: BLE001 - we must never crash the app on DB init
         logger.exception("Failed to create database tables")
         raise
@@ -143,6 +144,40 @@ def _create_default_admin_if_needed() -> None:
     except Exception:
         session.rollback()
         logger.exception("Failed to create default admin user")
+    finally:
+        session.close()
+
+
+def _create_default_settings_if_needed() -> None:
+    """Create default settings record if empty."""
+    session = get_session()
+    try:
+        from database.models import Settings
+        from sqlalchemy import select
+        from config.settings import (
+            DEFAULT_IDLE_THRESHOLD_SECONDS,
+            DEFAULT_START_WITH_SYSTEM,
+            DEFAULT_TRACKING_ENABLED,
+            DEFAULT_TRACK_WINDOW_TITLES,
+        )
+        stmt = select(Settings).limit(1)
+        record = session.execute(stmt).scalars().first()
+        if record is None:
+            record = Settings(
+                idle_threshold=DEFAULT_IDLE_THRESHOLD_SECONDS,
+                start_with_system=DEFAULT_START_WITH_SYSTEM,
+                tracking_enabled=DEFAULT_TRACKING_ENABLED,
+                track_window_titles=DEFAULT_TRACK_WINDOW_TITLES,
+                screenshot_interval_type="3_min",
+                screenshot_custom_interval=180,
+                capture_on_switch=True,
+            )
+            session.add(record)
+            session.commit()
+            logger.info("Created default settings record with updated defaults.")
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to initialize default settings")
     finally:
         session.close()
 
