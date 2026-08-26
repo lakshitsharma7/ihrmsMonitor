@@ -112,70 +112,90 @@ class SyncService:
             except Exception as err:
                 logger.error("Failed to retrieve settings from tracking/get_settings: %s", err)
 
-        sync_to = datetime.now(timezone.utc)
-        sync_from = sync_to - timedelta(minutes=self.ACTIVITY_WINDOW_MINUTES)
-
-        logger.info(
-            "Activity sync window: %s -> %s",
-            sync_from,
-            sync_to,
-        )
-
         db_session = get_session()
         try:
             repository = ActivityRepository(db_session)
-            sessions = repository.get_sessions_between(sync_from, sync_to)
+            # Retrieve all closed sessions that have not been synced yet
+            unsynced_sessions = repository.get_unsynced_closed_sessions()
 
-            # Filter out duplicate submissions (already synced session IDs)
-            unsynced_sessions = [s for s in sessions if s.id not in self._synced_session_ids]
+            if unsynced_sessions:
+                logger.info("Syncing %d unsynced closed sessions in batches", len(unsynced_sessions))
 
-            if not unsynced_sessions:
-                logger.info("No new/unsynced activities to sync in this window.")
-                return True
-
-            logger.info("Syncing %d new/unsynced sessions in batches", len(unsynced_sessions))
-
-            BATCH_SIZE = 100
-            for i in range(0, len(unsynced_sessions), BATCH_SIZE):
-                batch = unsynced_sessions[i:i + BATCH_SIZE]
-                
-                uploaded_count = 0
-                # Divide batch of 100 into 4 requests of 25 records each
-                PAGE_SIZE = 25
-                for page_num in range(1, 5): # page 1, 2, 3, 4
-                    start_idx = (page_num - 1) * PAGE_SIZE
-                    if start_idx >= len(batch):
-                        break
+                BATCH_SIZE = 100
+                for i in range(0, len(unsynced_sessions), BATCH_SIZE):
+                    batch = unsynced_sessions[i:i + BATCH_SIZE]
                     
-                    page_sessions = batch[start_idx:start_idx + PAGE_SIZE]
-                    if not page_sessions:
-                        break
+                    uploaded_count = 0
+                    # Divide batch of 100 into 4 requests of 25 records each
+                    PAGE_SIZE = 25
+                    for page_num in range(1, 5): # page 1, 2, 3, 4
+                        start_idx = (page_num - 1) * PAGE_SIZE
+                        if start_idx >= len(batch):
+                            break
                         
-                    payload = self._build_page_payload(
-                        sessions=page_sessions,
-                        sync_from=sync_from,
-                        sync_to=sync_to,
-                        page=page_num,
-                        page_size=PAGE_SIZE
+                        page_sessions = batch[start_idx:start_idx + PAGE_SIZE]
+                        if not page_sessions:
+                            break
+                            
+                        # Use actual min/max of the page's sessions started_at to avoid truncating times
+                        sync_from = self._to_utc(min(s.started_at for s in page_sessions))
+                        sync_to = self._to_utc(max(s.ended_at or s.started_at for s in page_sessions))
+
+                        payload = self._build_page_payload(
+                            sessions=page_sessions,
+                            sync_from=sync_from,
+                            sync_to=sync_to,
+                            page=page_num,
+                            page_size=PAGE_SIZE
+                        )
+
+                        import json
+                        new_payload = {
+                            "device_token": device_token or "mock_device_token",
+                            "sessions": json.dumps(payload["activities"])
+                        }
+                        
+                        res_data = self._send_request_with_retry(new_payload, page=page_num)
+                        if not res_data:
+                            logger.error("Activity sync batch page failed. Halting sync.")
+                            return False
+                            
+                        # Process mappings
+                        processed_items = res_data.get("data", [])
+                        if not isinstance(processed_items, list):
+                            processed_items = []
+                            
+                        for item in processed_items:
+                            client_ref = item.get("client_session_ref")
+                            server_id = item.get("activity_session_id")
+                            if client_ref is not None and server_id is not None:
+                                try:
+                                    repository.update_session_server_id(int(client_ref), str(server_id))
+                                except Exception as err:
+                                    logger.error("Failed to update server session ID for client ref %s: %s", client_ref, err)
+
+                        uploaded_count += len(page_sessions)
+                        logger.info("%d/%d records processed", uploaded_count, len(batch))
+            else:
+                logger.info("No new unsynced activities to sync.")
+
+            # Now sync any unuploaded screenshots for already-synced sessions
+            unuploaded = repository.get_sessions_with_unuploaded_screenshots()
+            if unuploaded:
+                logger.info("Found %d unuploaded screenshots. Processing screenshot uploads...", len(unuploaded))
+                for session in unuploaded:
+                    success = self.upload_screenshot_now(
+                        screenshot_path=session.screenshot_path,
+                        activity_session_id=session.server_session_id, # Must use the server side ID
+                        application_name=session.application_name,
+                        process_id=session.process_id,
+                        captured_at=session.started_at,
+                        local_session_id=session.id
                     )
-
-                    import json
-                    new_payload = {
-                        "device_token": device_token or "mock_device_token",
-                        "sessions": json.dumps(payload["activities"])
-                    }
-                    
-                    success = self._send_request_with_retry(new_payload, page=page_num)
-                    if not success:
-                        logger.error("Activity sync batch page failed. Halting sync.")
-                        return False
-                        
-                    # Mark successful sessions as synced
-                    for s in page_sessions:
-                        self._synced_session_ids.add(s.id)
-
-                    uploaded_count += len(page_sessions)
-                    logger.info("%d/%d records uploaded", uploaded_count, len(batch))
+                    if success:
+                        logger.info("Successfully uploaded and confirmed screenshot for local session ID %d", session.id)
+                    else:
+                        logger.error("Screenshot upload failed or deferred for local session ID %d", session.id)
 
             return True
 
@@ -185,22 +205,27 @@ class SyncService:
         finally:
             db_session.close()
 
-    def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> bool:
+    def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> dict | None:
         for attempt in range(1, retries + 1):
             try:
                 response = requests.post(
                     f"{self._api_url}/tracking/save_activity_batch",
                     data=payload,
-                    timeout=10,
+                    timeout=15,
                 )
-                response.raise_for_status()
                 logger.info(
-                    "Activity sync page %d successful: HTTP %s (attempt %d)",
+                    "Activity sync page %d HTTP response code: %d, Response body: %s (attempt %d)",
                     page,
                     response.status_code,
-                    attempt,
+                    response.text,
+                    attempt
                 )
-                return True
+                response.raise_for_status()
+                try:
+                    return response.json()
+                except Exception:
+                    logger.exception("Failed to parse JSON response for page %d", page)
+                    return None
             except requests.RequestException as exc:
                 logger.warning(
                     "Activity sync page %d failed (attempt %d/%d): %s",
@@ -210,9 +235,9 @@ class SyncService:
                     exc,
                 )
                 if attempt == retries:
-                    logger.error("Activity sync failed after maximum retries.")
-                    return False
-        return False
+                    logger.error("Activity sync failed after maximum retries. Error: %s", exc)
+                    return None
+        return None
 
     def _build_page_payload(
         self,
@@ -229,9 +254,13 @@ class SyncService:
             started_at = self._to_utc(session.started_at)
             ended_at = self._to_utc(session.ended_at) if session.ended_at else None
 
-            effective_start = max(started_at, sync_from)
-            effective_end = min(ended_at or sync_to, sync_to)
-            duration_seconds = max(0, int((effective_end - effective_start).total_seconds()))
+            # For closed sessions, use their actual duration
+            if ended_at:
+                duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
+            else:
+                effective_start = max(started_at, sync_from)
+                effective_end = min(ended_at or sync_to, sync_to)
+                duration_seconds = max(0, int((effective_end - effective_start).total_seconds()))
 
             activities.append({
                 "activity_session_id": session.id,
@@ -618,10 +647,11 @@ class SyncService:
     def upload_screenshot_now(
         self,
         screenshot_path: str | Path,
-        activity_session_id: int,
+        activity_session_id: str | int,
         application_name: str,
         process_id: int | None,
         captured_at: datetime | None = None,
+        local_session_id: int | None = None,
     ) -> bool:
         """
         Immediately upload a screenshot to:
@@ -633,7 +663,7 @@ class SyncService:
         try:
             from database.repository import SettingsRepository
             repo = SettingsRepository(db_session)
-            settings_record = repo.get_settings()
+            settings_record = repo.get_or_create()
             if settings_record and not settings_record.capture_on_switch:
                 logger.info("Screenshot upload skipped (capture_mode is not activity_with_screenshots)")
                 return True
@@ -698,8 +728,9 @@ class SyncService:
                 }
 
                 logger.info(
-                    "Uploading screenshot: %s",
+                    "Uploading screenshot to API: %s for server session %s",
                     screenshot_path,
+                    activity_session_id,
                 )
 
                 response = requests.post(
@@ -709,12 +740,29 @@ class SyncService:
                     timeout=30,
                 )
 
+                logger.info(
+                    "Screenshot upload HTTP response code: %d, Response body: %s",
+                    response.status_code,
+                    response.text
+                )
+
                 response.raise_for_status()
 
             logger.info(
                 "Screenshot upload successful: %s",
                 screenshot_path.name,
             )
+
+            # Update the database to mark screenshot as uploaded
+            if local_session_id is not None:
+                db_session = get_session()
+                try:
+                    repo = ActivityRepository(db_session)
+                    repo.update_session_screenshot_uploaded(local_session_id, True)
+                except Exception as err:
+                    logger.error("Failed to update screenshot uploaded state in db: %s", err)
+                finally:
+                    db_session.close()
 
             return True
 

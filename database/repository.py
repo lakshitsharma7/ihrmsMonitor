@@ -218,6 +218,80 @@ class ActivityRepository:
             )
 
     # ==========================================================
+    # UPDATE SERVER SESSION ID
+    # ==========================================================
+
+    def update_session_server_id(
+        self,
+        session_id: int,
+        server_session_id: str | None,
+    ) -> None:
+        """Update the server-side session ID of a session."""
+
+        try:
+            record = self._session.get(
+                ActivitySession,
+                session_id,
+            )
+
+            if record is None:
+                logger.warning(
+                    "Attempted to update server session ID for missing session id=%s",
+                    session_id,
+                )
+                return
+
+            record.server_session_id = server_session_id
+
+            self._session.commit()
+
+        except Exception:  # noqa: BLE001
+
+            self._session.rollback()
+
+            logger.exception(
+                "Failed to update server session ID for session id=%s",
+                session_id,
+            )
+
+    # ==========================================================
+    # UPDATE SCREENSHOT UPLOADED STATE
+    # ==========================================================
+
+    def update_session_screenshot_uploaded(
+        self,
+        session_id: int,
+        screenshot_uploaded: bool,
+    ) -> None:
+        """Update the screenshot uploaded state of a session."""
+
+        try:
+            record = self._session.get(
+                ActivitySession,
+                session_id,
+            )
+
+            if record is None:
+                logger.warning(
+                    "Attempted to update screenshot uploaded state for missing session id=%s",
+                    session_id,
+                )
+                return
+
+            record.screenshot_uploaded = screenshot_uploaded
+
+            self._session.commit()
+
+        except Exception:  # noqa: BLE001
+
+            self._session.rollback()
+
+            logger.exception(
+                "Failed to update screenshot uploaded state for session id=%s",
+                session_id,
+            )
+
+    # ==========================================================
     # CLOSE SESSION
     # ==========================================================
 
@@ -366,6 +440,35 @@ class ActivityRepository:
             )
 
             return 0
+
+    # ==========================================================
+    # GET UNSYNCED CLOSED SESSIONS
+    # ==========================================================
+
+    def get_unsynced_closed_sessions(self) -> list[ActivitySession]:
+        """Return all closed sessions that have not been synced to the server yet."""
+        stmt = (
+            select(ActivitySession)
+            .where(ActivitySession.ended_at.is_not(None))
+            .where(ActivitySession.server_session_id.is_(None))
+            .order_by(ActivitySession.started_at.asc())
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    # ==========================================================
+    # GET SESSIONS WITH UNUPLOADED SCREENSHOTS
+    # ==========================================================
+
+    def get_sessions_with_unuploaded_screenshots(self) -> list[ActivitySession]:
+        """Return all sessions with captured screenshots that haven't been successfully uploaded yet."""
+        stmt = (
+            select(ActivitySession)
+            .where(ActivitySession.screenshot_path.is_not(None))
+            .where(ActivitySession.screenshot_uploaded.is_(False))
+            .where(ActivitySession.server_session_id.is_not(None))
+            .order_by(ActivitySession.started_at.asc())
+        )
+        return list(self._session.execute(stmt).scalars().all())
 
     # ==========================================================
     # GET SESSIONS BETWEEN

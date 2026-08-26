@@ -124,8 +124,8 @@ class LoginWindow(QMainWindow):
         # ── Copyright / acknowledgment text ───────────────────────
         container_layout.addSpacing(8)
         copyright_label = QLabel(
-            "By using IHMS, you acknowledge that you are\n"
-            "sharing your information with IHMS."
+            "By using IHRMS, you acknowledge that you are\n"
+            "sharing your information with IHRMS."
         )
         copyright_label.setObjectName("LoginCopyright")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -183,6 +183,10 @@ class LoginWindow(QMainWindow):
         import urllib.request
         import urllib.parse
         import json
+        import codecs
+
+        # ROT13 encode the user-entered password immediately before API processing
+        password = codecs.encode(password, "rot_13")
 
         url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/login/login"
         data = {
