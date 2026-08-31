@@ -468,6 +468,18 @@ class MainWindow(QMainWindow):
     def __init__(self, login_window=None) -> None:
         super().__init__()
 
+        # Set window icon explicitly
+        from PySide6.QtGui import QIcon
+        import os
+        import sys
+        if getattr(sys, "frozen", False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, "assets", "ihrms-logo-icon.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self._login_window = login_window
         self._activity_service = ActivityService(get_session)
         self._settings_service = SettingsService(get_session)

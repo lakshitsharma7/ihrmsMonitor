@@ -78,7 +78,11 @@ def main() -> int:
 
     from PySide6.QtGui import QIcon
     import os
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "ihrms-logo-icon.ico")
+    if getattr(sys, "frozen", False):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_dir, "assets", "ihrms-logo-icon.ico")
     if os.path.isfile(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 

@@ -92,6 +92,19 @@ class LoginWindow(QMainWindow):
         self.setWindowTitle("iHRMS Monitor - Login")
         self.setMinimumSize(760, 520)
         self.resize(860, 560)
+        
+        # Set window icon explicitly
+        from PySide6.QtGui import QIcon
+        import os
+        import sys
+        if getattr(sys, "frozen", False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, "assets", "ihrms-logo-icon.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self.main_window = None
 
         self._build_ui()

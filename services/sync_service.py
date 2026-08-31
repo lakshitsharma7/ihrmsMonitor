@@ -839,7 +839,10 @@ class SyncService:
 
     @staticmethod
     def _get_username() -> str:
-
+        from services.session_service import SessionService
+        user = SessionService().current_user
+        if user and user.employee_id:
+            return user.employee_id
         try:
             return getpass.getuser()
 
