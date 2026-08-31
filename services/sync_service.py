@@ -193,8 +193,9 @@ class SyncService:
                         }
                         
                         res_data = self._send_request_with_retry(new_payload, page=page_num)
-                        if not res_data:
-                            logger.error("Activity sync batch page failed. Halting sync.")
+                        if not res_data or res_data.get("response") != "Success":
+                            error_msg = res_data.get("message") if res_data else "No response from server"
+                            logger.error("Activity sync batch page failed: %s. Halting sync.", error_msg)
                             SyncService.last_sync_status = "Failed"
                             SyncService.records_currently_sending = 0
                             return False
@@ -797,6 +798,11 @@ class SyncService:
                 )
 
                 response.raise_for_status()
+
+                # Verify response JSON body for success
+                res_json = response.json()
+                if res_json.get("response") != "Success":
+                    raise ValueError(res_json.get("message") or "Screenshot upload failed on server.")
 
             logger.info(
                 "Screenshot upload successful: %s",
