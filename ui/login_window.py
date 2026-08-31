@@ -8,6 +8,7 @@ import sys
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -30,6 +31,18 @@ HERO_BULLETS = (
     ("chart", "Live productivity and idle insights"),
     ("shield", "Secure, role-based access"),
 )
+
+
+CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
+
+CONSENT_TEXT = (
+    "By logging in to iHRMS Monitor, you acknowledge that you are "
+    "sharing your activity information with iHRMS Monitor."
+)
+
+# Hero logo tile on the login screen.
+LOGO_BOX_SIZE = 96
+LOGO_BOX_PADDING = 4
 
 
 def _asset_path(relative: str) -> str:
@@ -90,8 +103,8 @@ class LoginWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("iHRMS Monitor - Login")
-        self.setMinimumSize(760, 520)
-        self.resize(860, 560)
+        self.setMinimumSize(760, 600)
+        self.resize(860, 640)
         
         # Set window icon explicitly
         from PySide6.QtGui import QIcon
@@ -106,6 +119,10 @@ class LoginWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
 
         self.main_window = None
+        self.login_step = 1
+
+        # Company Code starts blank and nothing is verified yet.
+        self._verified_company_code = None
 
         self._build_ui()
 
@@ -121,7 +138,7 @@ class LoginWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("LoginCard")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        card.setFixedSize(780, 470)
+        card.setFixedSize(780, 545)
         card_layout = QHBoxLayout(card)
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
@@ -144,15 +161,35 @@ class LoginWindow(QMainWindow):
 
         # Hero illustration / App Icon (big iHRMS star logo)
         icon_label = QLabel()
-        icon_label.setFixedSize(64, 64)
+        icon_label.setFixedSize(LOGO_BOX_SIZE, LOGO_BOX_SIZE)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("background-color: #ffffff; border-radius: 8px; padding: 4px;")
+        icon_label.setStyleSheet(
+            "background-color: #ffffff; border-radius: 8px;"
+            f" padding: {LOGO_BOX_PADDING}px;"
+        )
         logo_path = _asset_path(os.path.join("assets", "ihrms_icon.png"))
         if os.path.isfile(logo_path):
             pixmap = QPixmap(logo_path)
-            icon_label.setPixmap(
-                pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+            # Fit inside the label's content box (the stylesheet padding is
+            # not part of it), and render at the screen's device pixel ratio.
+            # Without the ratio the pixmap is built at logical size and then
+            # stretched by the compositor on scaled displays, which is what
+            # made the logo look blurry.
+            inner = LOGO_BOX_SIZE - 2 * LOGO_BOX_PADDING
+
+            ratio = self.devicePixelRatioF() or 1.0
+
+            scaled_logo = pixmap.scaled(
+                round(inner * ratio),
+                round(inner * ratio),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
+
+            scaled_logo.setDevicePixelRatio(ratio)
+
+            icon_label.setPixmap(scaled_logo)
         else:
             icon_label.setText("iHRMS")
             icon_label.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
@@ -206,7 +243,9 @@ class LoginWindow(QMainWindow):
         logo_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-        logo_path = _asset_path(os.path.join("assets", "logo.png"))
+        logo_path = _asset_path(
+            os.path.join("assets", "hrms-logo-01-04-2026-10-31-18-1302918294.jpg")
+        )
         if os.path.isfile(logo_path):
             pixmap = QPixmap(logo_path)
             logo_label.setPixmap(
@@ -223,22 +262,70 @@ class LoginWindow(QMainWindow):
 
         panel_layout.addSpacing(26)
 
-        # ── Username ──────────────────────────────────────────────
+        # ── Company Code ──────────────────────────────────────────
+        self.company_code_input = QLineEdit()
+        self.company_code_input.setPlaceholderText("Company Code")
+        self.company_code_input.setMinimumHeight(42)
+        # Prevent autofill
+        self.company_code_input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        self.company_code_input.addAction(
+            _load_icon("shield"), QLineEdit.ActionPosition.LeadingPosition
+        )
+        panel_layout.addWidget(self.company_code_input)
+
+        # ── Verified company details (from the verification API) ───
+        # Hidden until a company code is verified, and cleared again the
+        # moment the code changes, so one company's details can never be
+        # shown alongside another company's code.
+        self.company_details = QWidget()
+        self.company_details.setObjectName("CompanyDetails")
+        self.company_details.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+
+        details_layout = QHBoxLayout(self.company_details)
+        details_layout.setContentsMargins(10, 8, 10, 8)
+        details_layout.setSpacing(10)
+
+        self.company_logo_label = QLabel()
+        self.company_logo_label.setFixedSize(30, 30)
+        self.company_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        details_layout.addWidget(self.company_logo_label)
+
+        self.company_name_label = QLabel()
+        self.company_name_label.setObjectName("CompanyDetailsText")
+        self.company_name_label.setWordWrap(True)
+        details_layout.addWidget(self.company_name_label, 1)
+
+        self.company_details.setVisible(False)
+        panel_layout.addWidget(self.company_details)
+
+        # Container for the step 2 credential fields
+        self.credentials_container = QWidget()
+        self.credentials_container.setObjectName("CredentialsContainer")
+        self.credentials_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        credentials_layout = QVBoxLayout(self.credentials_container)
+        credentials_layout.setContentsMargins(0, 0, 0, 0)
+        credentials_layout.setSpacing(12)
+
+        # ── Username (Employee ID / Username / Email) ──────────────────────────────────────────────
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Username or Email")
+        self.username_input.setPlaceholderText("Employee ID / Username / Email")
         self.username_input.setMinimumHeight(42)
+        # Prevent autofill
+        self.username_input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.username_input.addAction(
             _load_icon("user"), QLineEdit.ActionPosition.LeadingPosition
         )
-        panel_layout.addWidget(self.username_input)
-
-        panel_layout.addSpacing(12)
+        credentials_layout.addWidget(self.username_input)
 
         # ── Password (eye icon replaces the old "Show password" box) ──
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setMinimumHeight(42)
+        # Prevent autofill
+        self.password_input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.password_input.addAction(
             _load_icon("lock"), QLineEdit.ActionPosition.LeadingPosition
         )
@@ -250,18 +337,99 @@ class LoginWindow(QMainWindow):
         )
         self.toggle_password_action.setToolTip("Show password")
         self.toggle_password_action.triggered.connect(self._toggle_password_visibility)
-        panel_layout.addWidget(self.password_input)
+        credentials_layout.addWidget(self.password_input)
+
+        panel_layout.addWidget(self.credentials_container)
+        panel_layout.addSpacing(12)
+
+        self.login_step = 1
+        self.credentials_container.setVisible(False)
+
+        # Ensure all input fields are always blank on load
+        self.company_code_input.clear()
+        self.username_input.clear()
+        self.password_input.clear()
+
+        # Connect text changes of company code to reset step
+        self.company_code_input.textChanged.connect(self._on_company_code_changed)
 
         # Error label
-        panel_layout.addSpacing(12)
         self.error_label = QLabel("")
         self.error_label.setObjectName("LoginError")
         self.error_label.setWordWrap(True)
         panel_layout.addWidget(self.error_label)
 
+        # ── Consent (must be accepted before logging in) ──────────
+        panel_layout.addSpacing(14)
+
+        consent_row = QWidget()
+        consent_row.setObjectName("LoginConsentRow")
+        # The panel behind it is white; without this the row inherits the
+        # global window background and shows a grey patch.
+        consent_row.setStyleSheet(
+            # The box outline lives on the row so the checkbox sits inside it.
+            "#LoginConsentRow {"
+            " background-color: #f8f9fa;"
+            " border: 1px solid #dadce0;"
+            " border-radius: 6px; }"
+            # The text keeps the notice's appearance without a second border.
+            "#LoginConsentText {"
+            " background: transparent;"
+            " border: none;"
+            " color: #5f6368;"
+            " font-size: 11px; }"
+        )
+
+        consent_layout = QHBoxLayout(consent_row)
+        consent_layout.setContentsMargins(12, 8, 12, 8)
+        consent_layout.setSpacing(10)
+
+        self.consent_checkbox = QCheckBox()
+        self.consent_checkbox.setObjectName("LoginConsentCheckbox")
+        self.consent_checkbox.setChecked(False)
+        self.consent_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.consent_checkbox.setToolTip("Required to continue")
+
+        # The global QWidget background rule puts QCheckBox into stylesheet
+        # rendering, which drops the native tick, so the indicator is styled
+        # explicitly. The path is absolute so it also resolves when frozen.
+        check_icon = _asset_path(
+            os.path.join("assets", "icons", "check.svg")
+        ).replace("\\", "/")
+
+        self.consent_checkbox.setStyleSheet(
+            "#LoginConsentCheckbox { background: transparent; }"
+            "#LoginConsentCheckbox::indicator {"
+            " width: 18px; height: 18px;"
+            " border: 1px solid #c3ced7;"
+            " border-radius: 4px;"
+            " background-color: #ffffff; }"
+            "#LoginConsentCheckbox::indicator:hover {"
+            " border-color: #00a0c6; }"
+            "#LoginConsentCheckbox::indicator:checked {"
+            " background-color: #00a0c6;"
+            " border-color: #00a0c6;"
+            f" image: url({check_icon}); }}"
+        )
+        consent_layout.addWidget(
+            self.consent_checkbox,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
+
+        consent_text = QLabel(CONSENT_TEXT)
+        consent_text.setObjectName("LoginConsentText")
+        consent_text.setWordWrap(True)
+        consent_layout.addWidget(consent_text, 1)
+
+        panel_layout.addWidget(consent_row)
+
+        # Clear the validation message as soon as the box is ticked.
+        self.consent_checkbox.toggled.connect(self._on_consent_toggled)
+
         # Login button
         panel_layout.addSpacing(10)
-        self.login_button = QPushButton("Login")
+        self.login_button = QPushButton("Verify Company" if self.login_step == 1 else "Login")
         self.login_button.setObjectName("LoginButton")
         self.login_button.setMinimumHeight(44)
         self.login_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -270,27 +438,26 @@ class LoginWindow(QMainWindow):
 
         panel_layout.addStretch(1)
 
-        # ── Copyright / acknowledgment text ───────────────────────
-        copyright_label = QLabel(
-            "By logging in to iHRMS Monitor, you acknowledge that you are "
-            "sharing your activity information with iHRMS Monitor."
-        )
-        copyright_label.setObjectName("LoginCopyright")
-        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        copyright_label.setWordWrap(True)
-        panel_layout.addWidget(copyright_label)
-
         return panel
 
     def show_and_clear(self) -> None:
         """Clear fields and show the window again (used for logout)."""
+        self.login_step = 1
+        self.credentials_container.setVisible(False)
+        self.login_button.setText("Verify Company")
+        
+        # Drop the verified company so the next login starts from scratch.
+        self._reset_company_context()
+
+        self.company_code_input.clear()
         self.username_input.clear()
         self.password_input.clear()
+        self.consent_checkbox.setChecked(False)
+        self.company_code_input.setEnabled(True)
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
         self._set_password_visible(False)
         self.toggle_password_action.setEnabled(True)
-        self.login_button.setText("Login")
         self.login_button.setEnabled(True)
         self.error_label.clear()
         self.showNormal()
@@ -315,31 +482,202 @@ class LoginWindow(QMainWindow):
             self.password_input.echoMode() == QLineEdit.EchoMode.Password
         )
 
+    def _on_consent_toggled(self, checked: bool) -> None:
+        """Clear the consent validation message once the box is ticked."""
+
+        if checked and self.error_label.text() == CONSENT_REQUIRED_MESSAGE:
+            self.error_label.clear()
+
+    def _reset_company_context(self) -> None:
+        """
+        Forget the verified company and everything entered for it.
+
+        Called whenever the Company Code changes so no part of the previous
+        company - its base URL, its details, or credentials typed for it -
+        can be carried into the next company's login.
+        """
+
+        from config.api_config import ApiConfig
+
+        ApiConfig().reset()
+
+        self._verified_company_code = None
+
+        self.login_step = 1
+        self.credentials_container.setVisible(False)
+        self.login_button.setText("Verify Company")
+
+        # Credentials belong to the company they were typed for.
+        self.username_input.clear()
+        self.password_input.clear()
+        self._set_password_visible(False)
+
+        self.company_details.setVisible(False)
+        self.company_logo_label.clear()
+        self.company_name_label.clear()
+
+    def _on_company_code_changed(self) -> None:
+        """Any edit to the Company Code invalidates a previous verification."""
+
+        if self.login_step == 2 or self._verified_company_code:
+            self._reset_company_context()
+            self.error_label.clear()
+
+    def _show_company_details(self) -> None:
+        """Display the verified company's details returned by the API."""
+
+        from config.api_config import ApiConfig
+
+        api_config = ApiConfig()
+
+        details = api_config.details
+
+        company_id = api_config.company_id
+
+        parts = []
+
+        if company_id:
+            parts.append(f"Company ID: {company_id}")
+
+        if api_config.company_code:
+            parts.append(f"Code: {api_config.company_code}")
+
+        self.company_name_label.setText("Verified  -  " + "  |  ".join(parts))
+
+        # The logo is part of the details this company returned; it is
+        # optional, so a failure to fetch it must not block login.
+        self.company_logo_label.clear()
+
+        logo_url = details.get("logo_url")
+
+        if logo_url:
+            try:
+                import requests
+
+                response = requests.get(str(logo_url), timeout=6)
+                response.raise_for_status()
+
+                logo = QPixmap()
+
+                if logo.loadFromData(response.content):
+                    ratio = self.devicePixelRatioF() or 1.0
+
+                    scaled = logo.scaled(
+                        round(30 * ratio),
+                        round(30 * ratio),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+
+                    scaled.setDevicePixelRatio(ratio)
+
+                    self.company_logo_label.setPixmap(scaled)
+
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Could not load the verified company's logo",
+                    exc_info=True,
+                )
+
+        self.company_details.setVisible(True)
+
+    def _process_company_verification(self, company_code: str) -> None:
+        from config.api_config import ApiConfig, ApiConfigError
+        api_config = ApiConfig()
+
+        try:
+            api_config.load(company_code=company_code, force=True)
+
+            # Only now is this company the active context.
+            self._verified_company_code = company_code
+
+            self._show_company_details()
+
+            self.login_step = 2
+            self.credentials_container.setVisible(True)
+            self.username_input.clear()
+            self.password_input.clear()
+            self.login_button.setText("Login")
+            self.login_button.setEnabled(True)
+            self.company_code_input.setEnabled(True)
+            self.error_label.clear()
+
+            self.username_input.setFocus()
+
+        except ApiConfigError as config_err:
+            logger.error("Company verification failed: %s", config_err)
+
+            # Leave no trace of any previously verified company.
+            self._reset_company_context()
+
+            self.login_button.setEnabled(True)
+            self.company_code_input.setEnabled(True)
+
+            # Surface the message the verification API itself returned.
+            self.error_label.setText(str(config_err))
+
     def _handle_login(self) -> None:
         self.error_label.clear()
-        username = self.username_input.text().strip()
-        password = self.password_input.text()
+        company_code = self.company_code_input.text().strip()
 
-        # Simple validation
-        if not username or not password:
-            self.error_label.setText("Please enter both username and password.")
-            return
+        if self.login_step == 1:
+            if not company_code:
+                self.error_label.setText("Please enter Company Code.")
+                return
 
-        # Show loading/processing state
-        self.login_button.setText("Logging in...")
-        self.login_button.setEnabled(False)
-        self.username_input.setEnabled(False)
-        self.password_input.setEnabled(False)
-        self.toggle_password_action.setEnabled(False)
+            self.login_button.setText("Verifying...")
+            self.login_button.setEnabled(False)
+            self.company_code_input.setEnabled(False)
+            QTimer.singleShot(400, lambda: self._process_company_verification(company_code))
 
-        # Simulate brief latency for transition smoothness (like a native desktop processing check)
-        QTimer.singleShot(400, lambda: self._process_login(username, password))
+        elif self.login_step == 2:
+            # Consent is required before any credentials are sent.
+            if not self.consent_checkbox.isChecked():
+                self.error_label.setText(CONSENT_REQUIRED_MESSAGE)
+                return
 
-    def _process_login(self, username: str, password: str) -> None:
+            username = self.username_input.text().strip()
+            password = self.password_input.text()
+
+            # Simple validation
+            if not username or not password:
+                self.error_label.setText("Please enter both Employee ID and password.")
+                return
+
+            # Show loading/processing state
+            self.login_button.setText("Logging in...")
+            self.login_button.setEnabled(False)
+            self.company_code_input.setEnabled(False)
+            self.username_input.setEnabled(False)
+            self.password_input.setEnabled(False)
+            self.toggle_password_action.setEnabled(False)
+
+            # Simulate brief latency for transition smoothness (like a native desktop processing check)
+            QTimer.singleShot(400, lambda: self._process_login(company_code, username, password))
+
+    def _process_login(self, company_code: str, username: str, password: str) -> None:
         import urllib.request
         import urllib.parse
         import json
         import codecs
+        from PySide6.QtCore import QSettings
+
+        # Resolve Employee ID back to its username, but only within the same
+        # company: an employee code from another company must never be mapped
+        # onto this company's user.
+        settings = QSettings("Indovision", "iHRMSMonitor")
+        saved_emp_id = settings.value("last_employee_id", "")
+        saved_uname = settings.value("last_username", "")
+        saved_company = settings.value("last_company_code", "")
+        
+        resolved_username = username
+        if (
+            saved_emp_id
+            and username == saved_emp_id
+            and saved_uname
+            and str(saved_company) == company_code
+        ):
+            resolved_username = saved_uname
 
         # ROT13 encode the user-entered password immediately before API processing
         password = codecs.encode(password, "rot_13")
@@ -347,19 +685,31 @@ class LoginWindow(QMainWindow):
         from config.api_config import ApiConfig, ApiConfigError, get_device_id
         from utils.device import get_device_info
 
-        # The API base URL is resolved from the fixed Company Code, so it is
-        # never hardcoded here.
+        # Use the company context established by verification. It is not
+        # re-resolved here: the login must go to exactly the company the user
+        # verified and saw confirmed on screen.
         api_config = ApiConfig()
 
-        try:
-            api_url = api_config.base_url
-        except ApiConfigError as config_err:
-            logger.error("Could not resolve API configuration: %s", config_err)
+        if (
+            not api_config.is_verified
+            or self._verified_company_code != company_code
+            or api_config.company_code != company_code
+        ):
+            logger.error(
+                "Login attempted without a matching verified company "
+                "(entered=%s, verified=%s)",
+                company_code,
+                api_config.company_code,
+            )
+
+            self._reset_company_context()
+
             self._show_login_error(
-                "Could not reach the configuration service. "
-                "Please check your connection and try again."
+                "Please verify the Company Code before signing in."
             )
             return
+
+        api_url = api_config.base_url
 
         device_info = get_device_info()
 
@@ -470,13 +820,15 @@ class LoginWindow(QMainWindow):
                 role_lower = str(user_type).strip().lower()
                 tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
 
-                # The login API identifies the employee with emp_code.
-                employee_id = (
-                    res_json.get("emp_code")
-                    or res_json.get("employee_id")
-                    or res_json.get("emp_id")
-                )
+                # Save mapping of Employee ID <-> Username and company code to local settings
+                emp_code = res_json.get("emp_code") or res_json.get("indo_code") or username
+                uname_from_api = res_json.get("username") or resolved_username
+                if emp_code and uname_from_api:
+                    settings.setValue("last_employee_id", str(emp_code))
+                    settings.setValue("last_username", str(uname_from_api))
+                    settings.setValue("last_company_code", str(company_code))
 
+                employee_id = emp_code
                 SessionService().login(
                     username,
                     role=user_type,
@@ -518,6 +870,7 @@ class LoginWindow(QMainWindow):
         self.error_label.setText(message)
         self.login_button.setText("Login")
         self.login_button.setEnabled(True)
+        self.company_code_input.setEnabled(True)
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
         self.toggle_password_action.setEnabled(True)
