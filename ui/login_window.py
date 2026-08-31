@@ -193,16 +193,22 @@ class LoginWindow(QMainWindow):
         else:
             icon_label.setText("iHRMS")
             icon_label.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
-        hero_layout.addWidget(icon_label)
+        hero_layout.addWidget(
+            icon_label,
+            0,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
         hero_layout.addSpacing(18)
 
         brand_name = QLabel("iHRMS Monitor")
         brand_name.setObjectName("LoginBrandName")
+        brand_name.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(brand_name)
 
         hero_layout.addSpacing(6)
         tagline = QLabel("Smart workforce activity monitoring")
         tagline.setObjectName("LoginTagline")
+        tagline.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(tagline)
 
         hero_layout.addSpacing(26)
@@ -422,6 +428,11 @@ class LoginWindow(QMainWindow):
         consent_text.setWordWrap(True)
         consent_layout.addWidget(consent_text, 1)
 
+        # Consent only becomes relevant once a company has been verified,
+        # so the row stays hidden until then.
+        self.consent_row = consent_row
+        self.consent_row.setVisible(False)
+
         panel_layout.addWidget(consent_row)
 
         # Clear the validation message as soon as the box is ticked.
@@ -516,6 +527,9 @@ class LoginWindow(QMainWindow):
         self.company_logo_label.clear()
         self.company_name_label.clear()
 
+        self.consent_row.setVisible(False)
+        self.consent_checkbox.setChecked(False)
+
     def _on_company_code_changed(self) -> None:
         """Any edit to the Company Code invalidates a previous verification."""
 
@@ -592,6 +606,9 @@ class LoginWindow(QMainWindow):
             self._verified_company_code = company_code
 
             self._show_company_details()
+
+            # Consent applies to signing in, which is now possible.
+            self.consent_row.setVisible(True)
 
             self.login_step = 2
             self.credentials_container.setVisible(True)

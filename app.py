@@ -109,11 +109,61 @@ def main() -> int:
 
     # Imported after QApplication exists, since it builds widgets.
     from ui.login_window import LoginWindow
+    from services.secure_session import SessionStore
+    from services.session_service import SessionService
+    from config.api_config import ApiConfig
 
+    # Check for a saved session and attempt to restore it
+    session_store = SessionStore()
+    saved_session = session_store.load_session()
+
+    if saved_session:
+        logger.info("Found saved session for user: %s", saved_session.get("username"))
+        
+        try:
+            # Restore the company context
+            api_config = ApiConfig()
+            api_config.load(company_code=saved_session["company_code"], force=True)
+
+            # Restore the session
+            SessionService().restore_session(
+                username=saved_session["username"],
+                role=saved_session["user_type"],
+                full_name=saved_session.get("full_name"),
+                user_type=saved_session["user_type"],
+                tracking_permitted=saved_session.get("tracking_permitted", True),
+                indo_code=saved_session["indo_code"],
+                api_key=saved_session["api_key"],
+                employee_id=saved_session.get("employee_id"),
+                company_code=saved_session["company_code"],
+                device_token=saved_session["device_token"],
+            )
+
+            logger.info("Session restored successfully for user: %s", saved_session.get("username"))
+
+            # Open main window directly without showing login
+            from ui.main_window import MainWindow
+            main_window = MainWindow(login_window=None)
+            main_window.hide()
+            if hasattr(main_window, "tray") and main_window.tray:
+                main_window.tray.show_message(
+                    "iHRMS Monitor",
+                    "iHRMS Monitor has started in the background."
+                )
+            
+            return app.exec()
+
+        except Exception:
+            logger.exception("Failed to restore session, falling back to login")
+            # Fall through to login screen if session restoration fails
+            session_store.clear_session()
+
+    # No valid session found, show login window
     login_window = LoginWindow()
     login_window.show()
 
     return app.exec()
+
 
 
 

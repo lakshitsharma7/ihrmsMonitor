@@ -19,6 +19,10 @@ class UserSession:
     api_key: str | None = None         # auth token from login
     employee_id: str | None = None     # employee id from login
     raw_login_data: Dict[str, Any] = field(default_factory=dict)
+    # ── Company context ───────────────────────────────────────
+    company_code: str | None = None    # verified company code
+    device_token: str | None = None    # device enrollment token
+    device_info: Dict[str, str] | None = None  # device information
 
 
 class SessionService:
@@ -46,6 +50,8 @@ class SessionService:
         indo_code: str | None = None,
         api_key: str | None = None,
         employee_id: str | None = None,
+        company_code: str | None = None,
+        device_token: str | None = None,
         raw_login_data: Dict[str, Any] | None = None,
     ) -> None:
         self._current_user = UserSession(
@@ -57,8 +63,43 @@ class SessionService:
             indo_code=indo_code,
             api_key=api_key,
             employee_id=employee_id,
+            company_code=company_code,
+            device_token=device_token,
             raw_login_data=raw_login_data or {},
         )
+        self.device_token = device_token
+
+    def restore_session(
+        self,
+        username: str,
+        role: str | None = None,
+        full_name: str | None = None,
+        *,
+        user_type: str = "",
+        tracking_permitted: bool = True,
+        indo_code: str | None = None,
+        api_key: str | None = None,
+        employee_id: str | None = None,
+        company_code: str | None = None,
+        device_token: str | None = None,
+    ) -> None:
+        """Restore a previously saved session.
+        
+        Similar to login() but used when restoring from persistent storage.
+        """
+        self.login(
+            username=username,
+            role=role or user_type,
+            full_name=full_name,
+            user_type=user_type,
+            tracking_permitted=tracking_permitted,
+            indo_code=indo_code,
+            api_key=api_key,
+            employee_id=employee_id,
+            company_code=company_code,
+            device_token=device_token,
+        )
+
 
     def auth_payload(self) -> Dict[str, str]:
         """

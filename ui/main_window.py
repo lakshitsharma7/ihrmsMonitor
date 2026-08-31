@@ -1140,6 +1140,13 @@ class MainWindow(QMainWindow):
         from services.session_service import SessionService
         SessionService().logout()
 
+        # Clear saved session for auto-login
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().clear_session()
+        except Exception:
+            logger.warning("Failed to clear saved session", exc_info=True)
+
         self.hide()
         if hasattr(self, "tray") and self.tray.tray_icon:
             self.tray.tray_icon.hide()
