@@ -96,6 +96,19 @@ def main() -> int:
 
     logger.info("Starting %s", APP_NAME)
 
+    from PySide6.QtCore import QDir, QLockFile
+
+    # Single-instance guard to prevent duplicate background processes from
+    # conflicting on SQLite database locks and system resources.
+    lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
+    lock_file = QLockFile(lock_path)
+    if not lock_file.tryLock(100):
+        logger.warning(
+            "Another instance of %s is already running. Exiting gracefully.",
+            APP_NAME,
+        )
+        return 0
+
     try:
         init_database()
     except Exception:  # noqa: BLE001

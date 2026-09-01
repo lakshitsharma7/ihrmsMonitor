@@ -15,6 +15,7 @@ from platform_support.base import (
 from tracker.activity_session import CurrentSession
 from utils.logger import get_logger
 
+from config.settings import SYNC_INTERVAL_SECONDS
 from services.screenshot import capture_screenshot
 
 
@@ -116,6 +117,9 @@ class ActivityTracker:
 
         self._last_screenshot_time = None
 
+        # Drives the periodic activity sync (see SYNC_INTERVAL_SECONDS).
+        self._last_sync_time = None
+
     # ==========================================================
     # CONFIGURATION
     # ==========================================================
@@ -187,6 +191,13 @@ class ActivityTracker:
         logger.info(
             "Activity tracker started"
         )
+
+        # A previous run may have collected logs it never managed to send
+        # (no connection, or the machine was shut down). Push those now
+        # rather than making them wait a full cycle.
+        self._last_sync_time = self._clock()
+
+        self._sync_activity()
 
     # ==========================================================
     # STOP
@@ -293,6 +304,32 @@ class ActivityTracker:
                     elapsed = (now - self._last_screenshot_time).total_seconds()
                     if elapsed >= interval_seconds:
                         self._capture_screenshot_for_current_session()
+
+            # --------------------------------------------------
+            # Periodic activity sync.
+            #
+            # Runs off the tracker's own poll loop, so it needs no user
+            # interaction and keeps running while the app sits in the tray.
+            # Checked even while idle: logs collected before the user went
+            # idle still need to go out.
+            # --------------------------------------------------
+
+            now = self._clock()
+
+            if self._last_sync_time is None:
+                self._last_sync_time = now
+
+            elif (now - self._last_sync_time).total_seconds() >= (
+                SYNC_INTERVAL_SECONDS
+            ):
+                self._last_sync_time = now
+
+                logger.info(
+                    "Activity sync interval reached (%d seconds)",
+                    SYNC_INTERVAL_SECONDS,
+                )
+
+                self._sync_activity()
 
         except Exception:  # noqa: BLE001
 
@@ -468,10 +505,12 @@ class ActivityTracker:
 
         # ------------------------------------------------------
         # STEP 5:
-        # Sync activity.
+        # Nothing to send here.
+        #
+        # The session is already stored locally. Sending is handled by the
+        # periodic sync in poll(), so an application switch no longer fires
+        # its own API request.
         # ------------------------------------------------------
-
-        self._sync_activity()
 
     # ==========================================================
     # SCREENSHOT
@@ -515,68 +554,32 @@ class ActivityTracker:
             # Capture using existing screenshot service.
             # --------------------------------------------------
 
-            original_path = capture_screenshot()
+            # The capture service names the file after the session, so
+            # there is nothing to rename afterwards. The previous
+            # capture-then-rename step raced with the file still being
+            # written and silently dropped the screenshot.
+            screenshot_path = capture_screenshot(
+                activity_session_id=session_id,
+            )
 
-            if not original_path:
+            if not screenshot_path:
 
                 logger.warning(
-                    "capture_screenshot() returned None "
-                    "for session=%s",
+                    "No screenshot file was produced for session=%s; "
+                    "see the capture error above",
                     session_id,
                 )
 
                 return None
 
-            original_path = Path(
-                original_path
-            )
-
-            if not original_path.exists():
-
-                logger.warning(
-                    "Screenshot path does not exist: %s",
-                    original_path,
-                )
-
-                return None
-
-            # --------------------------------------------------
-            # Create session-specific filename.
-            # --------------------------------------------------
-
-            timestamp = (
-                datetime.now().strftime(
-                    "%Y-%m-%d_%H-%M-%S-%f"
-                )
-            )
-
-            new_filename = (
-                f"session_{session_id}_"
-                f"{timestamp}"
-                f"{original_path.suffix or '.png'}"
-            )
-
-            new_path = (
-                original_path.parent
-                / new_filename
-            )
-
-            # --------------------------------------------------
-            # Rename the screenshot.
-            # --------------------------------------------------
-
-            original_path.rename(
-                new_path
-            )
-
             logger.info(
                 "Screenshot saved: "
                 "session=%s path=%s",
                 session_id,
-                new_path,
+                screenshot_path,
             )
 
-            return str(new_path)
+            return screenshot_path
 
         except Exception:  # noqa: BLE001
 

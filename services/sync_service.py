@@ -724,18 +724,49 @@ class SyncService:
             screenshot_path
         )
 
-        import time
-        attempts = 0
-        while not screenshot_path.exists() and attempts < 50:
-            time.sleep(0.1)
-            attempts += 1
-
+        # The capture service writes the file before returning its path, so
+        # a missing file here means it was removed or never written - waiting
+        # for it cannot help. (This used to poll for 5 seconds because
+        # capture ran on a background thread.)
         if not screenshot_path.exists():
 
             logger.error(
-                "Screenshot does not exist: %s",
+                "Screenshot file is missing, nothing to upload for local "
+                "session %s: %s",
+                local_session_id,
                 screenshot_path,
             )
+
+            # Retrying a file that no longer exists would block the upload
+            # queue on every future sync, so drop the reference. The activity
+            # log itself is untouched.
+            if local_session_id is not None:
+                db_session = get_session()
+
+                try:
+                    ActivityRepository(
+                        db_session
+                    ).update_session_screenshot_path(
+                        local_session_id,
+                        None,
+                    )
+
+                    logger.warning(
+                        "Cleared the missing screenshot reference for local "
+                        "session %s so it is no longer retried",
+                        local_session_id,
+                    )
+
+                except Exception as err:  # noqa: BLE001
+                    logger.error(
+                        "Could not clear the missing screenshot reference "
+                        "for local session %s: %s",
+                        local_session_id,
+                        err,
+                    )
+
+                finally:
+                    db_session.close()
 
             return False
 

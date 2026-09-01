@@ -15,6 +15,12 @@ ORG_NAME = "iHRMSMonitorApp"
 # How often (in seconds) the tracker worker polls for the active application.
 POLL_INTERVAL_SECONDS = 1.0
 
+# How often collected activity logs are sent to the Log API. Logs are always
+# written to the local database first, so nothing is lost between cycles: a
+# failed send simply leaves the records unsynced and the next cycle retries
+# them.
+SYNC_INTERVAL_SECONDS = 2 * 60 * 60
+
 # Default idle threshold, in seconds, before a user is considered idle.
 DEFAULT_IDLE_THRESHOLD_SECONDS = 3 * 60
 

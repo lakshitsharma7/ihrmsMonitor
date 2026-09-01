@@ -809,28 +809,51 @@ class LoginWindow(QMainWindow):
                     "os_username": device_info["os_username"],
                 }
 
+                device_token = None
                 try:
+                    # Configure SSL context using certifi CA bundle if available
+                    import ssl
+                    try:
+                        import certifi
+                        ssl_context = ssl.create_default_context(cafile=certifi.where())
+                    except Exception:
+                        ssl_context = ssl.create_default_context()
+
                     encoded_enroll_data = urllib.parse.urlencode(enroll_data).encode("utf-8")
                     enroll_request = urllib.request.Request(
                         enroll_url,
                         data=encoded_enroll_data,
+                        headers={
+                            "User-Agent": "iHRMS-Monitor/1.0 (Windows NT 10.0; Win64; x64)",
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
                         method="POST"
                     )
                     
-                    with urllib.request.urlopen(enroll_request, timeout=10) as enroll_response:
+                    with urllib.request.urlopen(enroll_request, timeout=10, context=ssl_context) as enroll_response:
                         enroll_response_body = enroll_response.read().decode("utf-8")
                         
                     enroll_json = json.loads(enroll_response_body)
                     device_token = enroll_json.get("device_token") or enroll_json.get("data", {}).get("device_token")
-                    if not device_token:
-                        raise ValueError("No device_token returned by enroll_device")
-                        
-                    SessionService().device_token = device_token
-                    
-                except Exception as enroll_err:
-                    logger.exception("Device enrollment failed: %s", enroll_err)
+                except Exception as urllib_err:
+                    logger.warning("urllib enrollment attempt encountered: %s; trying requests fallback", urllib_err)
+                    try:
+                        import requests
+                        resp = requests.post(enroll_url, data=enroll_data, timeout=10)
+                        if resp.status_code == 200:
+                            enroll_json = resp.json()
+                            device_token = enroll_json.get("device_token") or enroll_json.get("data", {}).get("device_token")
+                        else:
+                            logger.error("requests enrollment failed: %s %s", resp.status_code, resp.text)
+                    except Exception as req_err:
+                        logger.exception("Fallback requests enrollment also failed: %s", req_err)
+
+                if not device_token:
+                    logger.error("Device enrollment failed: No device token returned from %s", enroll_url)
                     self._show_login_error("Device enrollment failed. Please check backend server status.")
                     return
+
+                SessionService().device_token = device_token
 
                 full_name = res_json.get("fullName") or res_json.get("username") or username
                 user_type = res_json.get("user_type") or "User"
@@ -859,8 +882,28 @@ class LoginWindow(QMainWindow):
                         if employee_id is not None
                         else None
                     ),
+                    company_code=company_code,
+                    device_token=device_token,
                     raw_login_data=res_json,
                 )
+
+                # Persist the authenticated session securely for auto-login on restart
+                try:
+                    from services.secure_session import SessionStore
+                    SessionStore().save_session(
+                        company_code=company_code,
+                        indo_code=indo_code,
+                        api_key=api_key,
+                        device_token=device_token,
+                        username=username,
+                        full_name=full_name,
+                        user_type=user_type,
+                        employee_id=str(employee_id) if employee_id is not None else None,
+                        device_info=device_info,
+                        tracking_permitted=tracking_permitted,
+                    )
+                except Exception as save_err:
+                    logger.warning("Could not persist session: %s", save_err)
 
                 # Open existing main window
                 from ui.main_window import MainWindow

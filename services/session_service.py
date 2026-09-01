@@ -54,6 +54,10 @@ class SessionService:
         device_token: str | None = None,
         raw_login_data: Dict[str, Any] | None = None,
     ) -> None:
+        # If device_token was already set (e.g. during enrollment), preserve it
+        if device_token is None and getattr(self, "device_token", None) is not None:
+            device_token = self.device_token
+
         self._current_user = UserSession(
             username=username,
             role=role,

@@ -86,12 +86,27 @@ def _windows_is_enabled() -> bool:
 
 
 def _windows_set_enabled(enabled: bool, exe_path: str) -> bool:
+    import sys
     import winreg  # type: ignore
 
     with winreg.OpenKey(
         winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE
     ) as key:
         if enabled:
+            # Only register auto-start for packaged/frozen builds, never bare python.exe.
+            # Running bare python.exe on Windows startup without a script spawns
+            # an orphaned headless interpreter that hangs and triggers 'Python is not responding'.
+            if not getattr(sys, "frozen", False) and "python" in Path(exe_path).name.lower():
+                logger.info(
+                    "Skipping Windows startup registration for development interpreter: %s",
+                    exe_path,
+                )
+                try:
+                    winreg.DeleteValue(key, APP_NAME)
+                except FileNotFoundError:
+                    pass
+                return True
+
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
         else:
             try:

@@ -1,20 +1,61 @@
 @echo off
-REM Build a standalone Windows executable.
-REM Run this FROM Windows - PyInstaller cannot cross-compile a .exe on macOS/Linux.
+REM Build standalone Windows application and setup installer.
+REM Run this on Windows.
 
-setlocal
+setlocal enabledelayedexpansion
 
-echo Installing dependencies...
+echo ===================================================
+echo [1/3] Installing / Verifying Dependencies...
+echo ===================================================
 python -m pip install --upgrade pip
 pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
-echo Building "iHRMS Monitor.exe"...
-pyinstaller --noconfirm --clean --windowed --onefile --name "iHRMS Monitor" --icon="assets/ihrms-logo-icon.ico" --paths=. --hidden-import=config --hidden-import=config.settings --add-data "assets;assets" app.py
+echo.
+echo ===================================================
+echo [2/3] Building iHRMS Monitor with PyInstaller...
+echo ===================================================
+pyinstaller --noconfirm --clean "IHRMS Monitor.spec"
 if errorlevel 1 goto :error
 
 echo.
-echo Build succeeded: dist\"iHRMS Monitor.exe"
+echo PyInstaller build succeeded in dist\iHRMS Monitor\
+
+echo.
+echo ===================================================
+echo [3/3] Compiling Windows Installer with Inno Setup...
+echo ===================================================
+set "ISCC="
+
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
+    set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+) else if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+    set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+) else if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
+    set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+) else (
+    for %%i in (ISCC.exe) do set "ISCC=%%~$PATH:i"
+)
+
+if not defined ISCC (
+    echo WARNING: Inno Setup Compiler ^(ISCC.exe^) not found.
+    echo Please install Inno Setup 6 or add ISCC.exe to PATH to build the installer.
+    goto :done_pyinstaller
+)
+
+echo Using Inno Setup Compiler: "%ISCC%"
+"%ISCC%" "IHRMS Monitor.iss"
+if errorlevel 1 goto :error
+
+echo.
+echo ===================================================
+echo Installer Build Complete: dist\installer\iHRMSMonitorSetup.exe
+echo ===================================================
+goto :eof
+
+:done_pyinstaller
+echo.
+echo PyInstaller build completed at dist\iHRMS Monitor\
 goto :eof
 
 :error
