@@ -10,7 +10,7 @@ SQLAlchemy queries directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -362,12 +362,13 @@ class ActivityRepository:
 
     def close_stale_sessions(
         self,
-        ended_at: datetime,
+        ended_at: datetime | None = None,
     ) -> int:
-        """Close every ActivitySession whose ended_at is NULL."""
+        """Close every ActivitySession whose ended_at is NULL without extending across offline time."""
 
         try:
-            ended_at = _to_utc(ended_at)
+            if ended_at is not None:
+                ended_at = _to_utc(ended_at)
 
             stmt = (
                 select(ActivitySession)
@@ -392,18 +393,27 @@ class ActivityRepository:
             closed_count = 0
 
             for record in stale_sessions:
-
                 started_at = _to_utc(
                     record.started_at
                 )
 
+                # If duration_seconds was already updated by heartbeat, use it.
+                # Never let a stale session span across sleep, shutdown, or overnight.
+                if record.duration_seconds > 0:
+                    effective_end = started_at + timedelta(seconds=record.duration_seconds)
+                elif ended_at is not None:
+                    # Cap stale session duration to at most 60 seconds from started_at
+                    max_allowed = started_at + timedelta(seconds=60)
+                    effective_end = min(ended_at, max_allowed)
+                else:
+                    effective_end = started_at + timedelta(seconds=1)
+
                 effective_end = max(
-                    ended_at,
+                    effective_end,
                     started_at,
                 )
 
                 record.ended_at = effective_end
-
                 record.duration_seconds = max(
                     0,
                     int(
@@ -417,10 +427,12 @@ class ActivityRepository:
 
                 logger.warning(
                     "Closing stale activity session: "
-                    "id=%s app=%s started_at=%s",
+                    "id=%s app=%s started_at=%s ended_at=%s duration=%ss",
                     record.id,
                     record.application_name,
                     record.started_at,
+                    record.ended_at,
+                    record.duration_seconds,
                 )
 
             self._session.commit()
@@ -438,8 +450,38 @@ class ActivityRepository:
             logger.exception(
                 "Failed to close stale activity sessions"
             )
-
             return 0
+
+    # ==========================================================
+    # HEARTBEAT
+    # ==========================================================
+
+    def update_session_heartbeat(
+        self,
+        session_id: int,
+        now: datetime,
+    ) -> None:
+        """Periodically update an open session's duration so far.
+
+        This guarantees that sudden shutdowns, crashes, or reboots preserve
+        exact active time up to the moment of shutdown and never add false time.
+        """
+        try:
+            record = self._session.get(ActivitySession, session_id)
+            if record is None or record.ended_at is not None:
+                return
+
+            now_utc = _to_utc(now)
+            started_at = _to_utc(record.started_at)
+            if now_utc >= started_at:
+                record.duration_seconds = max(
+                    0,
+                    int((now_utc - started_at).total_seconds()),
+                )
+                self._session.commit()
+        except Exception:  # noqa: BLE001
+            self._session.rollback()
+            logger.debug("Failed to update session heartbeat", exc_info=True)
 
     # ==========================================================
     # GET UNSYNCED CLOSED SESSIONS
@@ -720,18 +762,33 @@ class ActivityRepository:
         start: datetime,
         end: datetime,
     ) -> int:
-        """Return total duration of closed sessions."""
+        """Return total duration of active tracked time overlapping [start, end].
+
+        Calculates the exact overlap duration within the requested window and
+        includes any currently open/active session up to min(now, end).
+        """
+        start_utc = _to_utc(start)
+        end_utc = _to_utc(end)
 
         sessions = self.get_sessions_between(
-            start,
-            end,
+            start_utc,
+            end_utc,
         )
 
-        return sum(
-            session.duration_seconds
-            for session in sessions
-            if session.ended_at is not None
-        )
+        now_utc = datetime.now(timezone.utc)
+        total_seconds = 0
+
+        for session in sessions:
+            sess_start = _to_utc(session.started_at)
+            sess_end = _to_utc(session.ended_at) if session.ended_at is not None else now_utc
+
+            overlap_start = max(sess_start, start_utc)
+            overlap_end = min(sess_end, end_utc)
+
+            if overlap_end > overlap_start:
+                total_seconds += int((overlap_end - overlap_start).total_seconds())
+
+        return total_seconds
 
     # ==========================================================
     # APPLICATION USAGE

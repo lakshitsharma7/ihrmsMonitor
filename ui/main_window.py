@@ -31,6 +31,7 @@ from tracker.tracker_worker import build_tracker_thread
 from services.sync_service import SyncService
 from ui.dashboard import DashboardPage
 from ui.settings import SettingsPage
+from ui.weekly_timeline import WeeklyTimelinePage
 from utils.logger import get_logger
 
 
@@ -647,6 +648,12 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self.weekly_page = (
+            WeeklyTimelinePage(
+                self._activity_service
+            )
+        )
+
         self.settings_page = (
             SettingsPage(
                 self._settings_service
@@ -657,9 +664,21 @@ class MainWindow(QMainWindow):
             self._on_settings_changed
         )
 
+        self.dashboard_page.weekly_timeline_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.weekly_page)
+        )
+        self.weekly_page.back_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.dashboard_page)
+        )
+
         self.tabs.addTab(
             self.dashboard_page,
             "Dashboard",
+        )
+
+        self.tabs.addTab(
+            self.weekly_page,
+            "Weekly Timeline",
         )
 
         # self.tabs.addTab(
@@ -1088,6 +1107,8 @@ class MainWindow(QMainWindow):
             self._refresh_badge_style()
 
         self.dashboard_page.refresh()
+        if hasattr(self, "weekly_page") and self.weekly_page.isVisible():
+            self.weekly_page.refresh()
         self._apply_rbac_permissions()
 
     # ==========================================================
@@ -1126,7 +1147,12 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _on_tab_changed(self, index: int) -> None:
-        if index == 1:  # Settings tab
+        current_widget = self.tabs.currentWidget()
+        if hasattr(self, "weekly_page") and current_widget == self.weekly_page:
+            self.weekly_page.refresh()
+        elif hasattr(self, "dashboard_page") and current_widget == self.dashboard_page:
+            self.dashboard_page.refresh()
+        elif hasattr(self, "settings_page") and current_widget == self.settings_page:
             self.settings_page.reload()
             if hasattr(self, "_tracker") and self._tracker:
                 self.settings_page.update_capture_status(self._tracker.is_tracking)
@@ -1159,12 +1185,6 @@ class MainWindow(QMainWindow):
             self._login_window.show()
 
     # -- tray actions -----------------------------------------------------------
-
-        self.showNormal()
-
-        self.raise_()
-
-        self.activateWindow()
 
     def _show_and_raise(self) -> None:
         """Show the main window and bring it to the foreground."""

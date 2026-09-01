@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from database.repository import (
     ActivityRepository,
@@ -38,39 +38,121 @@ class ActivityService:
             db_session
         )
 
-    def get_today_total_seconds(
+    def get_day_total_seconds(
         self,
-        now: datetime | None = None,
+        target_date: date,
     ) -> int:
-        """Return today's total tracked seconds."""
+        """Return total active tracked seconds for a given local calendar date.
 
-        now = now or datetime.now(
-            timezone.utc
-        )
+        Computes the exact local day bounds (00:00:00 to 23:59:59.999999)
+        and converts to UTC to query the database.
+        """
+        local_now = datetime.now().astimezone()
+        local_tz = local_now.tzinfo
 
-        start = datetime.combine(
-            now.date(),
+        start_local = datetime.combine(
+            target_date,
             time.min,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
 
-        end = datetime.combine(
-            now.date(),
+        end_local = datetime.combine(
+            target_date,
             time.max,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
+
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
 
         db_session = self._session_factory()
-
         try:
             return self._repo(
                 db_session
             ).get_total_duration_seconds(
-                start,
-                end,
+                start_utc,
+                end_utc,
             )
         finally:
             db_session.close()
+
+    def get_today_total_seconds(
+        self,
+        now: datetime | None = None,
+    ) -> int:
+        """Return today's total tracked seconds based on local calendar day.
+
+        Persists across laptop and application restarts and automatically
+        resets when the local calendar date changes.
+        """
+        if now is None:
+            local_now = datetime.now().astimezone()
+            target_date = local_now.date()
+        else:
+            target_date = now.astimezone().date() if now.tzinfo else now.date()
+
+        return self.get_day_total_seconds(target_date)
+
+    @staticmethod
+    def format_hours_minutes(total_seconds: int) -> str:
+        """Format total seconds into hours and minutes, e.g. '7h 25m', '0h 0m'."""
+        total_seconds = max(0, int(total_seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{hours}h {minutes}m"
+
+    def get_weekly_timeline_data(self) -> list[dict]:
+        """
+        Return the 7-day timeline data for the current week (Monday through Sunday).
+
+        Each item contains:
+            day_name: str (e.g. "Monday")
+            short_day: str (e.g. "Mon")
+            date_str: str (e.g. "01 Sep")
+            date_obj: date object
+            total_seconds: int
+            total_hours: float
+            formatted_time: str (e.g. "7h 25m")
+            display_line: str (e.g. "Monday — 01 Sep — 7h 25m")
+            is_today: bool
+            is_future: bool
+        """
+        local_now = datetime.now().astimezone()
+        today = local_now.date()
+
+        # Monday of current week (weekday() is 0 for Monday)
+        monday = today - timedelta(days=today.weekday())
+
+        week_data = []
+        for offset in range(7):
+            day_date = monday + timedelta(days=offset)
+            is_today = (day_date == today)
+            is_future = (day_date > today)
+
+            if is_future:
+                total_seconds = 0
+            else:
+                total_seconds = self.get_day_total_seconds(day_date)
+
+            day_name = day_date.strftime("%A")
+            date_str = day_date.strftime("%d %b")
+            formatted_time = self.format_hours_minutes(total_seconds)
+            display_line = f"{day_name} — {date_str} — {formatted_time}"
+
+            week_data.append({
+                "day_name": day_name,
+                "short_day": day_date.strftime("%a"),
+                "date_str": date_str,
+                "date_obj": day_date,
+                "total_seconds": total_seconds,
+                "total_hours": round(total_seconds / 3600.0, 2),
+                "formatted_time": formatted_time,
+                "display_line": display_line,
+                "is_today": is_today,
+                "is_future": is_future,
+            })
+
+        return week_data
 
     def get_today_application_usage(
         self,

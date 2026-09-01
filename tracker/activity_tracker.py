@@ -120,6 +120,9 @@ class ActivityTracker:
         # Drives the periodic activity sync (see SYNC_INTERVAL_SECONDS).
         self._last_sync_time = None
 
+        # Tracks wall-clock timestamp between polls to detect system sleep / hibernate
+        self._last_poll_time = None
+
     # ==========================================================
     # CONFIGURATION
     # ==========================================================
@@ -240,6 +243,29 @@ class ActivityTracker:
             return self._state()
 
         try:
+            now = self._clock()
+
+            # --------------------------------------------------
+            # System sleep / hibernate / suspend detection.
+            #
+            # The timer polls every ~1s. If the wall-clock elapsed time
+            # between polls exceeds 10s, the laptop went to sleep or hibernated.
+            # Close the previous session at the moment the laptop went to sleep
+            # so sleep/offline time is NEVER counted as working time.
+            # --------------------------------------------------
+            if self._last_poll_time is not None:
+                gap_seconds = (now - self._last_poll_time).total_seconds()
+                if gap_seconds > 10.0:
+                    logger.info(
+                        "System sleep / suspend detected: elapsed %.1fs between polls. "
+                        "Closing previous session at last active time.",
+                        gap_seconds,
+                    )
+                    if self._current is not None:
+                        self._close_current_session_at(self._last_poll_time)
+                    self._is_idle = False
+
+            self._last_poll_time = now
 
             # --------------------------------------------------
             # Get idle time.
@@ -355,6 +381,23 @@ class ActivityTracker:
         if active is None:
             return
 
+        now = self._clock()
+
+        # Check calendar date rollover: if the day changed while tracking,
+        # close the session at local midnight and open a new session for today.
+        if self._current is not None:
+            now_local = now.astimezone()
+            curr_local = self._current.started_at.astimezone()
+            if now_local.date() != curr_local.date():
+                logger.info(
+                    "Calendar date rolled over from %s to %s. Splitting session at midnight.",
+                    curr_local.date(),
+                    now_local.date(),
+                )
+                from datetime import time
+                midnight_utc = datetime.combine(now_local.date(), time.min).astimezone(timezone.utc)
+                self._close_current_session_at(midnight_utc)
+
         # ------------------------------------------------------
         # Window title.
         # ------------------------------------------------------
@@ -395,6 +438,9 @@ class ActivityTracker:
             active.application_name,
             active.process_id,
         ):
+
+            # Keep database record updated with current elapsed time
+            self._heartbeat_current_session(now)
 
             # --------------------------------------------------
             # Only update window title.
@@ -697,53 +743,51 @@ class ActivityTracker:
     # CLOSE CURRENT SESSION
     # ==========================================================
 
+    def _close_current_session_at(
+        self,
+        ended_at: datetime,
+    ) -> None:
+        """Close the currently tracked session at a specific timestamp."""
+        if self._current is None:
+            return
+
+        session_id = self._current.db_id
+        application_name = self._current.application_name
+
+        db_session = self._session_factory()
+        try:
+            repository = ActivityRepository(db_session)
+            repository.close_session(session_id, ended_at)
+            logger.info(
+                "Closed session: app=%s session_id=%s ended_at=%s",
+                application_name,
+                session_id,
+                ended_at,
+            )
+        finally:
+            db_session.close()
+            self._current = None
+
     def _close_current_session(
         self,
     ) -> None:
         """Close the currently tracked session."""
+        self._close_current_session_at(self._clock())
 
+    def _heartbeat_current_session(
+        self,
+        now: datetime,
+    ) -> None:
+        """Periodically update the open session in database with current elapsed time."""
         if self._current is None:
             return
 
-        now = self._clock()
-
-        session_id = (
-            self._current.db_id
-        )
-
-        application_name = (
-            self._current.application_name
-        )
-
-        db_session = (
-            self._session_factory()
-        )
-
+        db_session = self._session_factory()
         try:
-
-            repository = (
-                ActivityRepository(
-                    db_session
-                )
-            )
-
-            repository.close_session(
-                session_id,
-                now,
-            )
-
-            logger.info(
-                "Closed session: "
-                "app=%s session_id=%s",
-                application_name,
-                session_id,
-            )
-
+            repository = ActivityRepository(db_session)
+            repository.update_session_heartbeat(self._current.db_id, now)
         finally:
-
             db_session.close()
-
-            self._current = None
 
     # ==========================================================
     # CLOSE STALE DATABASE SESSION
@@ -753,55 +797,19 @@ class ActivityTracker:
         self,
     ) -> None:
         """
-        Close an old open session from a previous tracker run.
+        Close an old open session from a previous tracker run safely without extending offline time.
         """
-
-        db_session = (
-            self._session_factory()
-        )
-
+        db_session = self._session_factory()
         try:
-
-            repository = (
-                ActivityRepository(
-                    db_session
-                )
-            )
-
-            stale_session = (
-                repository.get_open_session()
-            )
-
-            if stale_session is None:
-                return
-
-            logger.warning(
-                "Found stale open session: "
-                "id=%s app=%s started_at=%s",
-                stale_session.id,
-                stale_session.application_name,
-                stale_session.started_at,
-            )
-
-            repository.close_session(
-                stale_session.id,
-                self._clock(),
-            )
-
-            logger.info(
-                "Stale session closed: id=%s",
-                stale_session.id,
-            )
-
+            repository = ActivityRepository(db_session)
+            closed = repository.close_stale_sessions()
+            if closed > 0:
+                logger.info("Closed %d stale open database sessions without extending duration", closed)
         except Exception:  # noqa: BLE001
-
             logger.exception(
-                "Failed to close stale "
-                "database session"
+                "Failed to close stale database session"
             )
-
         finally:
-
             db_session.close()
 
     # ==========================================================

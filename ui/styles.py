@@ -107,6 +107,22 @@ QPushButton#SecondaryButton:hover {
     background-color: #eaf1fd;
 }
 
+QPushButton#WeeklyTimelineButton {
+    background-color: #f0f7ff;
+    color: #1a73e8;
+    border: 1px solid #c2e7ff;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QPushButton#WeeklyTimelineButton:hover {
+    background-color: #e0f2fe;
+    border-color: #7dd3fc;
+    color: #0284c7;
+}
+
 QTableWidget {
     background-color: #ffffff;
     alternate-background-color: #f8f9fb;

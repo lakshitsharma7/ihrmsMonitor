@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -24,6 +25,8 @@ from ui.activity_table import (
 
 class DashboardPage(QWidget):
     """Main Activity Tracker dashboard."""
+
+    weekly_timeline_requested = Signal()
 
     def __init__(
         self,
@@ -217,6 +220,27 @@ class DashboardPage(QWidget):
 
         today_layout.addWidget(
             self.today_total_label
+        )
+
+        today_layout.addSpacing(6)
+
+        self.weekly_timeline_button = QPushButton(
+            "Weekly Timeline →"
+        )
+        self.weekly_timeline_button.setObjectName(
+            "WeeklyTimelineButton"
+        )
+        self.weekly_timeline_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.weekly_timeline_button.setToolTip(
+            "View weekly active usage graph (Monday–Sunday)"
+        )
+        self.weekly_timeline_button.clicked.connect(
+            self.weekly_timeline_requested.emit
+        )
+        today_layout.addWidget(
+            self.weekly_timeline_button
         )
 
         middle_row.addWidget(

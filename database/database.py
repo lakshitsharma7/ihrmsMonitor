@@ -65,6 +65,14 @@ def init_database(db_path: Path | str | None = None) -> None:
                 conn.execute(text("ALTER TABLE settings ADD COLUMN screenshot_custom_interval INTEGER NOT NULL DEFAULT 180"))
             if "capture_on_switch" not in settings_col_names:
                 conn.execute(text("ALTER TABLE settings ADD COLUMN capture_on_switch BOOLEAN NOT NULL DEFAULT 1"))
+
+            # Sanitize legacy corrupted sessions where duration exceeds 2 hours
+            # caused by older builds extending sessions across offline/shutdown time
+            conn.execute(text(
+                "UPDATE activity_sessions "
+                "SET duration_seconds = 300, ended_at = datetime(started_at, '+300 seconds') "
+                "WHERE duration_seconds > 7200"
+            ))
         _create_default_admin_if_needed()
         _create_default_settings_if_needed()
     except Exception:  # noqa: BLE001 - we must never crash the app on DB init
