@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -122,6 +122,10 @@ class ActivityTracker:
 
         # Tracks wall-clock timestamp between polls to detect system sleep / hibernate
         self._last_poll_time = None
+
+        # Tracks idle state and timestamps to calculate and send idle time accurately
+        self._idle_start_time = None
+        self._last_active_session_id = None
 
     # ==========================================================
     # CONFIGURATION
@@ -292,7 +296,7 @@ class ActivityTracker:
 
             if now_idle and not was_idle:
 
-                self._on_became_idle()
+                self._on_became_idle(idle_seconds)
 
             # --------------------------------------------------
             # User became active again.
@@ -341,18 +345,18 @@ class ActivityTracker:
             # --------------------------------------------------
 
             now = self._clock()
+            sync_interval = self._get_sync_interval_seconds()
 
             if self._last_sync_time is None:
                 self._last_sync_time = now
 
-            elif (now - self._last_sync_time).total_seconds() >= (
-                SYNC_INTERVAL_SECONDS
-            ):
+            elif (now - self._last_sync_time).total_seconds() >= sync_interval:
                 self._last_sync_time = now
 
                 logger.info(
-                    "Activity sync interval reached (%d seconds)",
-                    SYNC_INTERVAL_SECONDS,
+                    "Activity sync interval reached (%d seconds / %.1f hours)",
+                    sync_interval,
+                    sync_interval / 3600.0,
                 )
 
                 self._sync_activity()
@@ -431,63 +435,46 @@ class ActivityTracker:
             return
 
         # ------------------------------------------------------
-        # Same application + same process.
+        # Same application + same process + same window title.
         # ------------------------------------------------------
 
-        if self._current.matches_application(
-            active.application_name,
-            active.process_id,
-        ):
+        is_same_window = (
+            self._current.matches_application(
+                active.application_name,
+                active.process_id,
+            )
+            and (
+                not self._track_window_titles
+                or title == self._current.window_title
+            )
+        )
 
+        if is_same_window:
             # Keep database record updated with current elapsed time
             self._heartbeat_current_session(now)
-
-            # --------------------------------------------------
-            # Only update window title.
-            # --------------------------------------------------
-
-            if (
-                title
-                != self._current.window_title
-            ):
-
-                self._current.window_title = (
-                    title
-                )
-
-                self._update_session_title(
-                    title
-                )
-
-                if self._capture_on_switch:
-                    self._capture_screenshot_for_current_session()
-
             return
 
         # ======================================================
-        # APPLICATION CHANGED
+        # APPLICATION OR WINDOW CHANGED
         # ======================================================
 
         previous_application = (
             self._current.application_name
         )
-
+        previous_title = (
+            self._current.window_title
+        )
         previous_session_id = (
             self._current.db_id
         )
 
         logger.info(
-            "Application changed: "
-            "%s -> %s",
-            previous_application,
-            active.application_name,
-        )
-
-        logger.info(
-            "Closing previous session: "
-            "id=%s app=%s",
+            "Active activity changed: [id=%s app=%s title=%r] -> [app=%s title=%r]",
             previous_session_id,
             previous_application,
+            previous_title,
+            active.application_name,
+            title,
         )
 
         # ------------------------------------------------------
@@ -495,7 +482,7 @@ class ActivityTracker:
         # Close OLD session.
         # ------------------------------------------------------
 
-        self._close_current_session()
+        self._close_current_session_at(now)
 
         # ------------------------------------------------------
         # STEP 2:
@@ -624,6 +611,18 @@ class ActivityTracker:
                 session_id,
                 screenshot_path,
             )
+
+            # Associate screenshot path in local database
+            db_session = self._session_factory()
+            try:
+                ActivityRepository(db_session).update_session_screenshot_path(
+                    session_id,
+                    screenshot_path,
+                )
+            except Exception as db_err:
+                logger.error("Failed to associate screenshot path in database: %s", db_err)
+            finally:
+                db_session.close()
 
             return screenshot_path
 
@@ -818,15 +817,25 @@ class ActivityTracker:
 
     def _on_became_idle(
         self,
+        idle_seconds: float = 0.0,
     ) -> None:
         """Handle the user becoming idle."""
 
+        now = self._clock()
+        last_input_time = now - timedelta(seconds=max(0.0, idle_seconds))
+        self._idle_start_time = last_input_time
+
         logger.info(
-            "User became idle; "
-            "closing current session"
+            "User became idle after %.1fs of inactivity; closing active session at %s",
+            idle_seconds,
+            last_input_time,
         )
 
-        self._close_current_session()
+        if self._current is not None:
+            self._last_active_session_id = self._current.db_id
+            self._close_current_session_at(last_input_time)
+        else:
+            self._last_active_session_id = None
 
     # ==========================================================
     # ACTIVE AGAIN
@@ -835,20 +844,42 @@ class ActivityTracker:
     def _on_became_active(
         self,
     ) -> None:
-        """
-        Handle activity resuming after idle.
+        """Handle activity resuming after idle."""
 
-        The next poll creates a new session and captures
-        its screenshot.
-        """
+        now = self._clock()
+        idle_duration = 0
+        if self._idle_start_time:
+            idle_duration = max(0, int((now - self._idle_start_time).total_seconds()))
 
         logger.info(
-            "User activity resumed after idle"
+            "User activity resumed after idle. Total idle duration: %ds",
+            idle_duration,
         )
+
+        if self._last_active_session_id and idle_duration > 0:
+            db_session = self._session_factory()
+            try:
+                repo = ActivityRepository(db_session)
+                repo.update_session_idle_seconds(self._last_active_session_id, idle_duration)
+            except Exception as err:
+                logger.error("Failed to update idle seconds for session %s: %s", self._last_active_session_id, err)
+            finally:
+                db_session.close()
+
+        self._idle_start_time = None
+        self._last_active_session_id = None
 
     # ==========================================================
     # ACTIVITY SYNC
     # ==========================================================
+
+    def _get_sync_interval_seconds(self) -> int:
+        """Return the current sync interval in seconds (default 2 hours)."""
+        if self._sync_service is not None:
+            configured = getattr(self._sync_service, "current_sync_interval_seconds", None)
+            if configured and int(configured) > 0:
+                return int(configured)
+        return SYNC_INTERVAL_SECONDS
 
     def _sync_activity(
         self,
@@ -869,6 +900,14 @@ class ActivityTracker:
             return
 
         try:
+            # Checkpoint the current active session at now so all synced sessions
+            # have a definitive start and end time without overlap or open guessing.
+            now = self._clock()
+            if self._current is not None:
+                active_app = ActiveApplication(self._current.application_name, self._current.process_id)
+                title = self._current.window_title
+                self._close_current_session_at(now)
+                self._open_new_session(active_app, title)
 
             success = (
                 self._sync_service

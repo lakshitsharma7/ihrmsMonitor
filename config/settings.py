@@ -19,7 +19,7 @@ POLL_INTERVAL_SECONDS = 1.0
 # written to the local database first, so nothing is lost between cycles: a
 # failed send simply leaves the records unsynced and the next cycle retries
 # them.
-SYNC_INTERVAL_SECONDS = 2 * 60 * 60
+SYNC_INTERVAL_SECONDS = 2 * 60 * 60  # 2 hours (7200 seconds)
 
 # Default idle threshold, in seconds, before a user is considered idle.
 DEFAULT_IDLE_THRESHOLD_SECONDS = 3 * 60

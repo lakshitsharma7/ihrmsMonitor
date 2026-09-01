@@ -50,6 +50,7 @@ class SyncService:
     last_sync_status: str = "Sent"  # Sending / Sent / Failed
     last_successful_sync_time: str = "Never"
     records_currently_sending: int = 0
+    current_sync_interval_seconds: int = 2 * 60 * 60  # Default 2 hours (7200 seconds)
 
     def __init__(
         self,
@@ -83,6 +84,16 @@ class SyncService:
         from services.session_service import SessionService
 
         device_token = SessionService().device_token
+
+        if not device_token:
+            try:
+                from services.secure_session import SessionStore
+                session_data = SessionStore().load_session()
+                if session_data and session_data.get("device_token"):
+                    device_token = session_data.get("device_token")
+                    SessionService().device_token = device_token
+            except Exception:
+                pass
 
         if not device_token:
             logger.error(
@@ -122,8 +133,22 @@ class SyncService:
             )
             response.raise_for_status()
             res_data = response.json()
-            if res_data.get("status") == 1:
+            settings_data = {}
+            if res_data.get("response") == "Success" and "data" in res_data:
+                settings_data = res_data.get("data", {})
+            elif res_data.get("status") == 1:
                 settings_data = res_data.get("settings", {})
+
+            if settings_data:
+                logger.info("Fetched configuration from Sync API (get_settings): %s", settings_data)
+
+                # Sync interval: default to 2 hours (7200 seconds) per requirement
+                server_sync_interval = settings_data.get("sync_interval_seconds") or settings_data.get("sync_interval")
+                if server_sync_interval and int(server_sync_interval) >= 7200:
+                    self.current_sync_interval_seconds = int(server_sync_interval)
+                else:
+                    self.current_sync_interval_seconds = 2 * 60 * 60
+
                 # Update local database settings
                 db_session = get_session()
                 try:
@@ -133,19 +158,21 @@ class SyncService:
                     capture_interval = settings_data.get("capture_interval", 180)
                     capture_mode = settings_data.get("capture_mode", "activity_with_screenshots")
                     tracking_enabled = settings_data.get("tracking_enabled", True)
+                    idle_threshold = settings_data.get("idle_threshold_seconds", 300)
 
                     repo.update(
                         screenshot_custom_interval=capture_interval,
                         screenshot_interval_type="custom",
                         capture_on_switch=(capture_mode == "activity_with_screenshots"),
-                        tracking_enabled=tracking_enabled
+                        tracking_enabled=tracking_enabled,
+                        idle_threshold=idle_threshold,
                     )
                 except Exception as err:
                     logger.error("Failed to update database settings from get_settings response: %s", err)
                 finally:
                     db_session.close()
         except Exception as err:
-            logger.error("Failed to retrieve settings from tracking/get_settings: %s", err)
+            logger.warning("Could not reach Sync API (tracking/get_settings); continuing with local configuration: %s", err)
 
         db_session = get_session()
         try:
@@ -191,6 +218,19 @@ class SyncService:
                             "device_token": device_token,
                             "sessions": json.dumps(payload["activities"])
                         }
+
+                        logger.info(
+                            "Syncing activity batch page %d (%d records):\n%s",
+                            page_num,
+                            len(payload["activities"]),
+                            "\n".join([
+                                f"  [Session #{a['activity_session_id']}] app={a['application_name']!r} "
+                                f"title={a['window_title'][:40]!r} start_time={a['start_time']} "
+                                f"end_time={a['end_time']} duration={a['duration']}s idle_time={a['idle_time']}s"
+                                for a in payload["activities"]
+                            ])
+                        )
+                        logger.info("Exact JSON payload to backend (page %d):\n%s", page_num, json.dumps(new_payload, indent=2))
                         
                         res_data = self._send_request_with_retry(new_payload, page=page_num)
                         if not res_data or res_data.get("response") != "Success":
@@ -298,25 +338,64 @@ class SyncService:
         activities = []
         totals_map = {}
 
-        for session in sessions:
-            started_at = self._to_utc(session.started_at)
-            ended_at = self._to_utc(session.ended_at) if session.ended_at else None
+        # Deduplicate sessions by ID and sort chronologically by started_at
+        seen_ids = set()
+        unique_sessions = []
+        for s in sorted(sessions, key=lambda x: x.started_at):
+            if s.id not in seen_ids:
+                seen_ids.add(s.id)
+                unique_sessions.append(s)
 
-            # For closed sessions, use their actual duration
-            if ended_at:
-                duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
+        now_local = datetime.now().astimezone()
+        last_end = None
+
+        for session in unique_sessions:
+            local_start = self._to_local(session.started_at)
+            local_end = self._to_local(session.ended_at) if session.ended_at else None
+
+            # Prevent future timestamps
+            if local_start > now_local:
+                local_start = now_local
+            if local_end and local_end > now_local:
+                local_end = now_local
+
+            # Prevent overlapping with previous session in the timeline
+            if last_end is not None and local_start < last_end:
+                local_start = last_end
+
+            if local_end:
+                if local_end < local_start:
+                    local_end = local_start
+                duration_seconds = max(0, int((local_end - local_start).total_seconds()))
             else:
-                effective_start = max(started_at, sync_from)
-                effective_end = min(ended_at or sync_to, sync_to)
-                duration_seconds = max(0, int((effective_end - effective_start).total_seconds()))
+                duration_seconds = max(0, int(session.duration_seconds or 0))
+                local_end = local_start + timedelta(seconds=duration_seconds)
+                if local_end > now_local:
+                    local_end = now_local
+                    duration_seconds = max(0, int((local_end - local_start).total_seconds()))
+
+            last_end = local_end
+
+            idle_seconds = max(0, int(getattr(session, "idle_seconds", 0) or 0))
+
+            # Format the actual local activity start/end time
+            # Standard local datetime representation: YYYY-MM-DD HH:MM:SS
+            start_time_str = local_start.strftime("%Y-%m-%d %H:%M:%S")
+            end_time_str = local_end.strftime("%Y-%m-%d %H:%M:%S") if local_end else start_time_str
 
             activities.append({
                 "activity_session_id": session.id,
                 "application_name": session.application_name,
+                "window_title": session.window_title or "",
                 "process_id": session.process_id,
-                "started_at": started_at.isoformat(),
-                "ended_at": ended_at.isoformat() if ended_at else None,
+                "start_time": start_time_str,
+                "started_at": start_time_str,
+                "end_time": end_time_str,
+                "ended_at": end_time_str,
+                "duration": duration_seconds,
                 "duration_seconds": duration_seconds,
+                "idle_time": idle_seconds,
+                "idle_duration_seconds": idle_seconds,
             })
 
             totals_map[session.application_name] = totals_map.get(session.application_name, 0) + duration_seconds
@@ -337,8 +416,8 @@ class SyncService:
                 "platform": platform.system(),
             },
             "sync": {
-                "from_": sync_from.isoformat(),
-                "to": sync_to.isoformat(),
+                "from_": sync_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": sync_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
             "activities": activities,
             "totals": totals,
@@ -777,67 +856,91 @@ class SyncService:
             )
 
         try:
+            with screenshot_path.open("rb") as screenshot_file:
+                raw_bytes = screenshot_file.read()
 
-            with screenshot_path.open(
-                "rb"
-            ) as screenshot_file:
+            import base64
+            base64_encoded_str = base64.b64encode(raw_bytes).decode("utf-8")
 
-                files = {
-                    "screenshot": (
-                        screenshot_path.name,
-                        screenshot_file,
-                        self._get_content_type(
-                            screenshot_path
-                        ),
-                    )
-                }
+            device_token = self._require_device_token()
+            if not device_token:
+                logger.error("Cannot upload screenshot: device token is missing.")
+                return False
 
-                device_token = self._require_device_token()
+            if not activity_session_id or str(activity_session_id).lower() == "none":
+                # Check if server session ID was populated in DB
+                if local_session_id is not None:
+                    db_session = get_session()
+                    try:
+                        from database.models import ActivitySession
+                        sess_rec = db_session.get(ActivitySession, local_session_id)
+                        if sess_rec and sess_rec.server_session_id:
+                            activity_session_id = sess_rec.server_session_id
+                    finally:
+                        db_session.close()
 
-                if not device_token:
-                    return False
-
-                data = {
-                    "device_token": device_token,
-                    "activity_session_id": str(
-                        activity_session_id
-                    ),
-                    "captured_at": (
-                        self._to_utc(
-                            captured_at
-                        ).isoformat()
-                    ),
-                }
-
-                logger.info(
-                    "Uploading screenshot to API: %s for server session %s",
+            if not activity_session_id or str(activity_session_id).lower() == "none":
+                logger.warning(
+                    "Cannot upload screenshot %s: missing server activity_session_id for local session %s",
                     screenshot_path,
-                    activity_session_id,
+                    local_session_id,
                 )
+                return False
 
-                response = requests.post(
-                    f"{self._api_url}/tracking/upload_screenshot",
-                    files=files,
-                    data=data,
-                    timeout=30,
+            # Format captured_at matching Postman format: YYYY-MM-DDTHH:MM:SSZ
+            captured_at_utc = self._to_utc(captured_at)
+            captured_at_str = captured_at_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            files = {
+                "screenshot": (
+                    screenshot_path.name,
+                    raw_bytes,
+                    self._get_content_type(screenshot_path),
                 )
+            }
 
-                logger.info(
-                    "Screenshot upload HTTP response code: %d, Response body: %s",
-                    response.status_code,
-                    response.text
-                )
-
-                response.raise_for_status()
-
-                # Verify response JSON body for success
-                res_json = response.json()
-                if res_json.get("response") != "Success":
-                    raise ValueError(res_json.get("message") or "Screenshot upload failed on server.")
+            data = {
+                "device_token": device_token,
+                "activity_session_id": str(activity_session_id),
+                "captured_at": captured_at_str,
+                "screenshot": base64_encoded_str,
+            }
 
             logger.info(
-                "Screenshot upload successful: %s",
+                "Uploading screenshot to API: %s (bytes=%dB, base64_len=%d) for server session %s",
                 screenshot_path.name,
+                len(raw_bytes),
+                len(base64_encoded_str),
+                activity_session_id,
+            )
+
+            response = requests.post(
+                f"{self._api_url}/tracking/upload_screenshot",
+                files=files,
+                data=data,
+                timeout=60,
+            )
+
+            logger.info(
+                "Screenshot upload HTTP response code: %d, Response body: %s",
+                response.status_code,
+                response.text,
+            )
+
+            response.raise_for_status()
+
+            # Verify response JSON body for success
+            res_json = response.json()
+            if res_json.get("response") != "Success":
+                error_msg = res_json.get("message") or "Screenshot upload failed on server."
+                logger.error("Screenshot upload failed on server: %s", error_msg)
+                raise ValueError(error_msg)
+
+            screenshot_id = res_json.get("data", {}).get("screenshot_id")
+            logger.info(
+                "Screenshot upload successful: %s (screenshot_id=%s)",
+                screenshot_path.name,
+                screenshot_id,
             )
 
             # Update the database to mark screenshot as uploaded
@@ -899,6 +1002,17 @@ class SyncService:
         return value.astimezone(
             timezone.utc
         )
+
+    @staticmethod
+    def _to_local(
+        value: datetime,
+    ) -> datetime:
+        """Normalize stored datetime to actual local computer timezone."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone()
 
     @staticmethod
     def _get_content_type(

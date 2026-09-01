@@ -55,6 +55,8 @@ def init_database(db_path: Path | str | None = None) -> None:
                 conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN server_session_id VARCHAR(100)"))
             if "screenshot_uploaded" not in column_names:
                 conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN screenshot_uploaded BOOLEAN NOT NULL DEFAULT 0"))
+            if "idle_seconds" not in column_names:
+                conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN idle_seconds INTEGER NOT NULL DEFAULT 0"))
             
             # Migrate settings table
             settings_cols = conn.execute(text("PRAGMA table_info(settings)")).fetchall()

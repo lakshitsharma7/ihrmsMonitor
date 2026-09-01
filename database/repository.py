@@ -104,6 +104,7 @@ class ActivityRepository:
         process_id: int | None,
         window_title: str | None,
         started_at: datetime,
+        idle_seconds: int = 0,
     ) -> ActivitySession:
         """Create a new open activity session."""
 
@@ -117,6 +118,7 @@ class ActivityRepository:
                 started_at=started_at,
                 ended_at=None,
                 duration_seconds=0,
+                idle_seconds=max(0, int(idle_seconds)),
             )
 
             self._session.add(record)
@@ -292,6 +294,26 @@ class ActivityRepository:
             )
 
     # ==========================================================
+    # UPDATE IDLE SECONDS
+    # ==========================================================
+
+    def update_session_idle_seconds(
+        self,
+        session_id: int,
+        idle_seconds: int,
+    ) -> None:
+        """Update the idle seconds for an activity session."""
+        try:
+            record = self._session.get(ActivitySession, session_id)
+            if record is None:
+                return
+            record.idle_seconds = max(0, int(idle_seconds))
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            logger.exception("Failed to update idle seconds for session id=%s", session_id)
+
+    # ==========================================================
     # CLOSE SESSION
     # ==========================================================
 
@@ -299,6 +321,7 @@ class ActivityRepository:
         self,
         session_id: int,
         ended_at: datetime,
+        idle_seconds: int | None = None,
     ) -> ActivitySession | None:
         """Close an activity session and calculate its duration."""
 
@@ -331,6 +354,9 @@ class ActivityRepository:
                     ).total_seconds()
                 ),
             )
+
+            if idle_seconds is not None:
+                record.idle_seconds = max(0, int(idle_seconds))
 
             self._session.commit()
             self._session.refresh(record)
@@ -488,7 +514,7 @@ class ActivityRepository:
     # ==========================================================
 
     def get_unsynced_closed_sessions(self) -> list[ActivitySession]:
-        """Return all closed sessions that have not been synced to the server yet."""
+        """Return all closed sessions or sessions with captured screenshots that need to be synced."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.ended_at.is_not(None))
