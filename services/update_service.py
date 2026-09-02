@@ -103,35 +103,84 @@ class UpdateCheckWorker(QThread):
         """Execute version check and optional download."""
         try:
             self.status_changed.emit("Checking for updates...")
-            logger.info("Checking for updates against API: %s (current version: %s)", self._api_url, APP_VERSION)
+            logger.info("Checking for updates (current version: %s)", APP_VERSION)
 
-            check_url = f"{self._api_url}/punch/check_new_version"
-            payload = {
-                "indo_code": self._indo_code,
-                "key": self._api_key,
-                "os_type": "WINDOWS",
-            }
+            server_version = ""
+            file_name = ""
+            download_url = ""
+            force_update = False
 
-            resp = requests.post(check_url, data=payload, timeout=API_TIMEOUT_SECONDS)
-            if resp.status_code != 200:
-                logger.warning("Version check failed with HTTP status: %d", resp.status_code)
-                self.check_completed.emit(False)
-                return
+            # ----------------------------------------------------------
+            # 1. AppController Version URL & Configuration Source
+            # ----------------------------------------------------------
+            try:
+                from config.api_config import ApiConfig
+                api_cfg = ApiConfig()
+                version_url = api_cfg.version_url or api_cfg.activity_tracker_link
 
-            data = resp.json()
-            logger.info("Version check response: %s", data)
+                if version_url:
+                    logger.info("Checking AppController version URL: %s", version_url)
+                    try:
+                        v_resp = requests.get(version_url, timeout=API_TIMEOUT_SECONDS)
+                        if v_resp.status_code == 200:
+                            try:
+                                v_data = v_resp.json()
+                                if isinstance(v_data, dict):
+                                    server_version = str(
+                                        v_data.get("version")
+                                        or v_data.get("version_code")
+                                        or v_data.get("activity_tracker_version")
+                                        or ""
+                                    ).strip()
+                                    file_name = str(
+                                        v_data.get("file_name")
+                                        or v_data.get("installer")
+                                        or ""
+                                    ).strip()
+                                    download_url = str(
+                                        v_data.get("download_url")
+                                        or v_data.get("url")
+                                        or ""
+                                    ).strip()
+                                    force_update = str(v_data.get("force_update", "0")).strip() in ("1", "true", "True")
+                            except Exception:
+                                pass
+                    except Exception as v_err:
+                        logger.debug("AppController version URL check request failed: %s", v_err)
 
-            if data.get("status") != 1:
-                logger.info("No active update available on server (status != 1).")
-                self.check_completed.emit(False)
-                return
+                # If version not resolved from URL GET, check direct activity_tracker_version in AppController
+                if not server_version and api_cfg.activity_tracker_version:
+                    server_version = str(api_cfg.activity_tracker_version).strip()
+                    logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
 
-            server_version = str(data.get("version_code", "")).strip()
-            file_name = str(data.get("file_name", "")).strip()
-            force_update = str(data.get("force_update", "0")).strip() == "1"
+                if not download_url and api_cfg.activity_tracker_link:
+                    download_url = api_cfg.activity_tracker_link
+
+            except Exception as ac_err:
+                logger.debug("Error checking AppController version details: %s", ac_err)
+
+            # ----------------------------------------------------------
+            # 2. Company Endpoint Fallback (/punch/check_new_version)
+            # ----------------------------------------------------------
+            if not server_version or server_version.upper() == "NA":
+                check_url = f"{self._api_url}/punch/check_new_version"
+                payload = {
+                    "indo_code": self._indo_code,
+                    "key": self._api_key,
+                    "os_type": "WINDOWS",
+                }
+
+                resp = requests.post(check_url, data=payload, timeout=API_TIMEOUT_SECONDS)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info("Version check response from punch/check_new_version: %s", data)
+                    if data.get("status") == 1:
+                        server_version = str(data.get("version_code", "")).strip()
+                        file_name = str(data.get("file_name", "")).strip()
+                        force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
 
             if not server_version or server_version.upper() == "NA":
-                logger.info("Server version code is NA. Application is up to date.")
+                logger.info("No newer version reported. Application is up to date.")
                 self.check_completed.emit(False)
                 return
 
@@ -147,7 +196,9 @@ class UpdateCheckWorker(QThread):
                 return
 
             # Resolve the download URL
-            download_url = self._resolve_download_url(file_name)
+            if not download_url:
+                download_url = self._resolve_download_url(file_name)
+
             logger.info(
                 "Newer version available: v%s (current: v%s). Download target: %s (force=%s)",
                 server_version,
@@ -158,10 +209,10 @@ class UpdateCheckWorker(QThread):
 
             self.update_available.emit(server_version, download_url, force_update)
 
-            # Check if the file is a Windows executable (.exe)
-            if not file_name.lower().endswith(".exe") and not download_url.lower().endswith(".exe"):
+            # Check if the target is a valid Windows installer or direct URL
+            if file_name and not file_name.lower().endswith(".exe") and not download_url.lower().endswith(".exe"):
                 logger.info(
-                    "New version %s found, but file_name '%s' is not a Windows installer (.exe). Skipping automatic binary download.",
+                    "New version %s found, but file_name '%s' is not an executable installer. Skipping automatic binary download.",
                     server_version,
                     file_name,
                 )
@@ -180,6 +231,16 @@ class UpdateCheckWorker(QThread):
             logger.exception("Error during automatic update check: %s", err)
             self.error_occurred.emit(str(err))
             self.check_completed.emit(False)
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="UPDATE_CHECK_ERROR",
+                    error_message=f"Update check failed: {err}",
+                    exc=err,
+                    extra_context={"current_version": APP_VERSION, "api_url": self._api_url},
+                )
+            except Exception:
+                pass
 
     def _resolve_download_url(self, file_name: str) -> str:
         """Construct full download URL from file_name or return direct URL."""
@@ -255,6 +316,134 @@ class UpdateCheckWorker(QThread):
                 except Exception:
                     pass
             self.error_occurred.emit(f"Download error: {dl_err}")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="UPDATE_DOWNLOAD_ERROR",
+                    error_message=f"Failed to download update installer from {download_url}: {dl_err}",
+                    exc=dl_err,
+                    extra_context={"download_url": download_url, "target_version": version},
+                )
+            except Exception:
+                pass
+
+
+# ==============================================================
+# PRE-UPDATE DATA FLUSH
+# ==============================================================
+
+def flush_pending_data_before_update(max_retries: int = 3) -> bool:
+    """
+    Upload all pending activity logs and pending screenshots before updating.
+
+    Requirements:
+    1. Before installing any update, upload all pending activity logs and pending screenshots
+       using the existing sync/upload flow.
+    2. Do not start the update until pending data has been successfully uploaded.
+    3. If there is no pending data, continue with the update normally.
+    4. If pending data fails to upload after retries, halt update and report to support email.
+    """
+    from database.database import get_session
+    from database.repository import ActivityRepository
+    from services.session_service import SessionService
+
+    logger.info("Verifying pending activity logs and screenshots before update...")
+
+    # Finalize active tracking session if tracker is running
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app:
+            for widget in app.topLevelWidgets():
+                if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
+                    logger.info("Stopping active tracking to record session before update.")
+                    widget.stop_tracking()
+                    import time
+                    time.sleep(1.0)
+    except Exception as stop_err:
+        logger.debug("Could not auto-stop active tracker: %s", stop_err)
+
+    emp_id = None
+    try:
+        session = SessionService().current_user
+        emp_id = session.employee_id if session else None
+    except Exception:
+        pass
+
+    # First check if there is any pending data
+    db = get_session()
+    unsynced = []
+    unuploaded = []
+    try:
+        repo = ActivityRepository(db)
+        unsynced = repo.get_unsynced_closed_sessions(employee_id=emp_id)
+        unuploaded = repo.get_sessions_with_unuploaded_screenshots(employee_id=emp_id)
+        if not unsynced and not unuploaded:
+            logger.info("No pending data found before update. Ready to proceed.")
+            return True
+        logger.info("Found %d unsynced activities and %d unuploaded screenshots.", len(unsynced), len(unuploaded))
+    finally:
+        db.close()
+
+    # Upload pending data using existing sync flow
+    sync_service = None
+    try:
+        from services.sync_service import SyncService
+        sync_service = SyncService()
+    except Exception as init_err:
+        logger.warning("Could not initialize SyncService for pre-update flush: %s", init_err)
+
+    for attempt in range(1, max_retries + 1):
+        if sync_service:
+            try:
+                logger.info("Executing pre-update sync attempt %d/%d...", attempt, max_retries)
+                sync_service.sync_activity_now()
+            except Exception as sync_err:
+                logger.exception("Pre-update sync attempt %d failed: %s", attempt, sync_err)
+
+        # Check remaining
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            unsynced = repo.get_unsynced_closed_sessions(employee_id=emp_id)
+            unuploaded = repo.get_sessions_with_unuploaded_screenshots(employee_id=emp_id)
+            if not unsynced and not unuploaded:
+                logger.info("All pending data successfully uploaded before update.")
+                return True
+            logger.warning(
+                "Attempt %d/%d: %d activities and %d screenshots still pending.",
+                attempt,
+                max_retries,
+                len(unsynced),
+                len(unuploaded),
+            )
+        finally:
+            db.close()
+
+        import time
+        time.sleep(2.0)
+
+    # If pending data remains after all retries, abort update
+    err_msg = (
+        f"Pre-update flush failed: {len(unsynced)} pending activities and "
+        f"{len(unuploaded)} pending screenshots could not be uploaded. Update aborted."
+    )
+    logger.error(err_msg)
+
+    try:
+        from services.error_report_service import ErrorReportService
+        ErrorReportService().report_error(
+            error_type="UPDATE_PRE_FLUSH_FAILED",
+            error_message=err_msg,
+            extra_context={
+                "pending_activities_count": len(unsynced),
+                "pending_screenshots_count": len(unuploaded),
+            },
+        )
+    except Exception:
+        pass
+
+    return False
 
 
 # ==============================================================
@@ -272,11 +461,23 @@ def install_update_and_restart(installer_path: str) -> bool:
     """
     path = Path(installer_path)
     if not path.exists():
-        logger.error("Cannot launch installer: file does not exist at %s", installer_path)
+        err_msg = f"Cannot launch installer: file does not exist at {installer_path}"
+        logger.error(err_msg)
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error("UPDATE_INSTALL_ERROR", err_msg)
+        except Exception:
+            pass
         return False
 
     if not str(path).lower().endswith(".exe"):
-        logger.error("Cannot launch installer: file is not a Windows executable (%s)", installer_path)
+        err_msg = f"Cannot launch installer: file is not a Windows executable ({installer_path})"
+        logger.error(err_msg)
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error("UPDATE_INSTALL_ERROR", err_msg)
+        except Exception:
+            pass
         return False
 
     logger.info("Launching update installer: %s", path)
@@ -302,6 +503,11 @@ def install_update_and_restart(installer_path: str) -> bool:
         return True
     except Exception as err:
         logger.exception("Failed to spawn update installer: %s", err)
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error("UPDATE_INSTALL_ERROR", f"Failed to launch update installer: {err}", exc=err)
+        except Exception:
+            pass
         return False
 
 
@@ -390,9 +596,22 @@ class UpdateService(QObject):
 
         self._worker.start()
 
-    def apply_update(self) -> bool:
-        """Install the downloaded update and restart the application."""
+    def apply_update(self, pre_flush: bool = True) -> bool:
+        """
+        Install the downloaded update and restart the application.
+
+        Prior to running the installer, uploads all pending activity logs
+        and screenshots. If pending data cannot be uploaded, halts the update
+        to avoid data loss.
+        """
         if not self._downloaded_installer:
             logger.warning("apply_update called but no installer was downloaded.")
             return False
+
+        if pre_flush:
+            logger.info("Uploading pending activity and screenshot data prior to update...")
+            if not flush_pending_data_before_update():
+                logger.error("Update aborted: pending activity/screenshot data could not be uploaded.")
+                return False
+
         return install_update_and_restart(self._downloaded_installer)

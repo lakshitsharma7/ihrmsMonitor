@@ -72,6 +72,13 @@ class SyncService:
             self._api_url,
         )
 
+    @classmethod
+    def reset_sync_state(cls) -> None:
+        """Reset sync status flags and counters when switching users or on logout."""
+        cls.last_sync_status = "Sent"
+        cls.last_successful_sync_time = "Never"
+        cls.records_currently_sending = 0
+
     @staticmethod
     def _require_device_token() -> str | None:
         """
@@ -89,9 +96,19 @@ class SyncService:
             try:
                 from services.secure_session import SessionStore
                 session_data = SessionStore().load_session()
+                current_u = SessionService().current_user
                 if session_data and session_data.get("device_token"):
-                    device_token = session_data.get("device_token")
-                    SessionService().device_token = device_token
+                    # If a user is active, only accept stored token if it belongs to them
+                    if current_u is not None:
+                        stored_emp = session_data.get("employee_id")
+                        stored_user = session_data.get("username")
+                        if (stored_emp and current_u.employee_id and stored_emp == current_u.employee_id) or \
+                           (stored_user and current_u.username and stored_user == current_u.username):
+                            device_token = session_data.get("device_token")
+                            SessionService().device_token = device_token
+                    else:
+                        device_token = session_data.get("device_token")
+                        SessionService().device_token = device_token
             except Exception:
                 pass
 
@@ -296,6 +313,16 @@ class SyncService:
             logger.exception("Unexpected error during activity sync: %s", exc)
             SyncService.last_sync_status = "Failed"
             SyncService.records_currently_sending = 0
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="ACTIVITY_SYNC_ERROR",
+                    error_message=f"Activity sync failed: {exc}",
+                    exc=exc,
+                    extra_context={"api_url": self._api_url},
+                )
+            except Exception:
+                pass
             return False
         finally:
             db_session.close()
@@ -331,6 +358,16 @@ class SyncService:
                 )
                 if attempt == retries:
                     logger.error("Activity sync failed after maximum retries. Error: %s", exc)
+                    try:
+                        from services.error_report_service import ErrorReportService
+                        ErrorReportService().report_error(
+                            error_type="ACTIVITY_SYNC_ERROR",
+                            error_message=f"Activity sync failed after {retries} retries: {exc}",
+                            exc=exc,
+                            extra_context={"page": page, "api_url": self._api_url},
+                        )
+                    except Exception:
+                        pass
                     return None
         return None
 
@@ -964,14 +1001,35 @@ class SyncService:
                 "Screenshot upload failed: %s",
                 exc,
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="SCREENSHOT_UPLOAD_ERROR",
+                    error_message=f"Screenshot upload failed for session {activity_session_id}: {exc}",
+                    exc=exc,
+                    extra_context={"session_id": str(activity_session_id), "file": str(screenshot_path.name)},
+                )
+            except Exception:
+                pass
 
             return False
 
-        except Exception:
+        except Exception as exc:
 
             logger.exception(
-                "Unexpected screenshot upload error"
+                "Unexpected screenshot upload error: %s",
+                exc,
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="SCREENSHOT_UPLOAD_ERROR",
+                    error_message=f"Unexpected screenshot upload error for session {activity_session_id}: {exc}",
+                    exc=exc,
+                    extra_context={"session_id": str(activity_session_id), "file": str(screenshot_path.name)},
+                )
+            except Exception:
+                pass
 
             return False
 
@@ -983,8 +1041,10 @@ class SyncService:
     def _get_username() -> str:
         from services.session_service import SessionService
         user = SessionService().current_user
-        if user and user.employee_id:
-            return user.employee_id
+        if user:
+            emp = user.employee_id or user.indo_code or user.username
+            if emp:
+                return str(emp)
         try:
             return getpass.getuser()
 

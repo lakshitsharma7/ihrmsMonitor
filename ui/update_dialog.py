@@ -190,10 +190,25 @@ class UpdateDialog(QDialog):
 
     def _on_install_clicked(self) -> None:
         if self._installer_path:
-            self.status_label.setText("Launching installer and restarting application...")
+            self.status_label.setText("Uploading pending activity and screenshots before update...")
+            self.status_label.setStyleSheet("font-size: 13px; color: #1a73e8; background: transparent;")
             self.install_btn.setEnabled(False)
             if not self._is_force:
                 self.later_btn.setEnabled(False)
+            
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+            
             self.restart_requested.emit(self._installer_path)
-            install_update_and_restart(self._installer_path)
-            self.accept()
+            
+            # Execute apply_update with pre-update flush
+            success = UpdateService().apply_update(pre_flush=True)
+            if not success:
+                self.status_label.setText("Could not upload pending data. Update postponed.")
+                self.status_label.setStyleSheet("font-size: 13px; color: #d93025; background: transparent;")
+                self.install_btn.setEnabled(True)
+                self.install_btn.setText("Retry")
+                if not self._is_force:
+                    self.later_btn.setEnabled(True)
+            else:
+                self.accept()

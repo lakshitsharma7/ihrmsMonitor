@@ -318,6 +318,21 @@ class ApiConfig:
 
         return self._logo_url
 
+    @property
+    def activity_tracker_version(self) -> str | None:
+        """Latest tracker version configured in AppController."""
+        return self._details.get("activity_tracker_version")
+
+    @property
+    def activity_tracker_link(self) -> str | None:
+        """Tracker download or version URL configured in AppController."""
+        return self._details.get("activity_tracker_link")
+
+    @property
+    def version_url(self) -> str | None:
+        """Version URL configured in AppController (fallback to activity_tracker_link)."""
+        return self._details.get("version_url") or self._details.get("activity_tracker_link")
+
     def endpoint(
         self,
         path: str,

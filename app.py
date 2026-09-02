@@ -67,7 +67,28 @@ def _set_windows_app_identity() -> None:
         )
 
 
+def _setup_exception_hook() -> None:
+    """Install global exception handler to capture and report critical unhandled errors."""
+    original_hook = sys.excepthook
+
+    def _custom_excepthook(exc_type, exc_value, exc_traceback):
+        logger.critical("Uncaught critical exception: %s", exc_value, exc_info=(exc_type, exc_value, exc_traceback))
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error(
+                error_type="CRITICAL_RUNTIME_ERROR",
+                error_message=str(exc_value),
+                exc=exc_value,
+            )
+        except Exception:
+            pass
+        original_hook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = _custom_excepthook
+
+
 def main() -> int:
+    _setup_exception_hook()
     _set_windows_app_identity()
 
     app = QApplication(sys.argv)

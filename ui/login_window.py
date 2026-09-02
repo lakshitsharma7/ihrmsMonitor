@@ -772,6 +772,15 @@ class LoginWindow(QMainWindow):
         # ROT13 encode the user-entered password immediately before API processing
         password = codecs.encode(password, "rot_13")
 
+        # Guarantee no lingering session or token from a previous user exists
+        from services.session_service import SessionService
+        from services.secure_session import SessionStore
+        SessionService().clear()
+        try:
+            SessionStore().clear_session()
+        except Exception:
+            pass
+
         from config.api_config import ApiConfig, ApiConfigError, get_device_id
         from utils.device import get_device_info
 
@@ -959,7 +968,14 @@ class LoginWindow(QMainWindow):
                 tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
 
                 # Save mapping of Employee ID <-> Username and company code to local settings
-                emp_code = res_json.get("emp_code") or res_json.get("indo_code") or username
+                emp_code = (
+                    res_json.get("employee_id")
+                    or res_json.get("emp_code")
+                    or res_json.get("user_id")
+                    or res_json.get("id")
+                    or res_json.get("indo_code")
+                    or username
+                )
                 uname_from_api = res_json.get("username") or resolved_username
                 if emp_code and uname_from_api:
                     settings.setValue("last_employee_id", str(emp_code))

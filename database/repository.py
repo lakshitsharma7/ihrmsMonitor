@@ -115,8 +115,8 @@ class ActivityRepository:
                 try:
                     from services.session_service import SessionService
                     u = SessionService().current_user
-                    if u and u.employee_id:
-                        employee_id = str(u.employee_id)
+                    if u:
+                        employee_id = str(u.employee_id or u.indo_code or u.username or "")
                 except Exception:
                     pass
 
@@ -524,14 +524,26 @@ class ActivityRepository:
     # ==========================================================
 
     def get_unsynced_closed_sessions(self, employee_id: str | None = None) -> list[ActivitySession]:
-        """Return all closed sessions or sessions with captured screenshots that need to be synced."""
+        """Return all closed sessions that need to be synced, strictly scoped to employee_id."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.ended_at.is_not(None))
             .where(ActivitySession.server_session_id.is_(None))
         )
-        if employee_id is not None:
+        if employee_id is None:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    employee_id = str(u.employee_id or u.indo_code or u.username or "")
+            except Exception:
+                pass
+
+        if employee_id:
             stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        else:
+            return []
+
         stmt = stmt.order_by(ActivitySession.started_at.asc())
         return list(self._session.execute(stmt).scalars().all())
 
@@ -540,15 +552,27 @@ class ActivityRepository:
     # ==========================================================
 
     def get_sessions_with_unuploaded_screenshots(self, employee_id: str | None = None) -> list[ActivitySession]:
-        """Return all sessions with captured screenshots that haven't been successfully uploaded yet."""
+        """Return all sessions with captured screenshots that haven't been uploaded yet, scoped to employee_id."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.screenshot_path.is_not(None))
             .where(ActivitySession.screenshot_uploaded.is_(False))
             .where(ActivitySession.server_session_id.is_not(None))
         )
-        if employee_id is not None:
+        if employee_id is None:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    employee_id = str(u.employee_id or u.indo_code or u.username or "")
+            except Exception:
+                pass
+
+        if employee_id:
             stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        else:
+            return []
+
         stmt = stmt.order_by(ActivitySession.started_at.asc())
         return list(self._session.execute(stmt).scalars().all())
 
@@ -785,8 +809,9 @@ class ActivityRepository:
     def get_sessions_for_day(
         self,
         day: datetime,
+        employee_id: str | None = None,
     ) -> list[ActivitySession]:
-        """Return sessions for a given UTC calendar day."""
+        """Return sessions for a given UTC calendar day scoped to employee_id."""
 
         day = _to_utc(day)
 
@@ -805,6 +830,7 @@ class ActivityRepository:
         return self.get_sessions_between(
             start,
             end,
+            employee_id=employee_id,
         )
 
     # ==========================================================
@@ -904,14 +930,30 @@ class ActivityRepository:
 
     def get_open_session(
         self,
+        employee_id: str | None = None,
     ) -> ActivitySession | None:
-        """Return the newest currently-open session."""
+        """Return the newest currently-open session for the specified or current employee."""
 
         stmt = (
             select(ActivitySession)
             .where(
                 ActivitySession.ended_at.is_(None)
             )
+        )
+        if employee_id is None:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    employee_id = str(u.employee_id or u.indo_code or u.username or "")
+            except Exception:
+                pass
+
+        if employee_id:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+
+        stmt = (
+            stmt
             .order_by(
                 ActivitySession.started_at.desc()
             )

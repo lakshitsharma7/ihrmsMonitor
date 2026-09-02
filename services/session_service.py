@@ -54,9 +54,8 @@ class SessionService:
         device_token: str | None = None,
         raw_login_data: Dict[str, Any] | None = None,
     ) -> None:
-        # If device_token was already set (e.g. during enrollment), preserve it
-        if device_token is None and getattr(self, "device_token", None) is not None:
-            device_token = self.device_token
+        # Strictly associate device_token with the current user session (never inherit from previous user)
+        self.device_token = device_token
 
         self._current_user = UserSession(
             username=username,
@@ -71,7 +70,6 @@ class SessionService:
             device_token=device_token,
             raw_login_data=raw_login_data or {},
         )
-        self.device_token = device_token
 
     def restore_session(
         self,
@@ -136,3 +134,7 @@ class SessionService:
     def logout(self) -> None:
         self._current_user = None
         self.device_token = None
+
+    def clear(self) -> None:
+        """Explicitly clear all in-memory user and device token state."""
+        self.logout()

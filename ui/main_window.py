@@ -1193,6 +1193,7 @@ class MainWindow(QMainWindow):
             from services.sync_service import SyncService
             logger.info("Flushing pending activity and screenshots for user before logout...")
             SyncService().sync_activity_now()
+            SyncService.reset_sync_state()
         except Exception as flush_err:
             logger.warning("Could not flush sync on logout: %s", flush_err)
 
@@ -1210,13 +1211,17 @@ class MainWindow(QMainWindow):
         if hasattr(self, "tray") and self.tray.tray_icon:
             self.tray.tray_icon.hide()
 
-        if self._login_window:
-            self._login_window.main_window = None
-            self._login_window.show_and_clear()
+        login_win = self._login_window
+        if login_win:
+            login_win.main_window = None
+            login_win.show_and_clear()
         else:
             from ui.login_window import LoginWindow
-            self._login_window = LoginWindow()
-            self._login_window.show()
+            login_win = LoginWindow()
+            login_win.show()
+
+        self.close()
+        self.deleteLater()
 
     # -- tray actions -----------------------------------------------------------
 
