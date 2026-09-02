@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config.settings import get_running_app_version
 from services.activity_service import ActivityService
 from tracker.activity_tracker import TrackerState
 from ui.activity_table import (
@@ -179,7 +180,7 @@ class DashboardPage(QWidget):
         )
 
         self.version_label = QLabel(
-            "Version: 1.0.0"
+            f"Version: {get_running_app_version()}"
         )
 
         # Give them StatusLabel object names
@@ -459,3 +460,11 @@ class DashboardPage(QWidget):
         self.timeline_table.set_entries(
             timeline
         )
+
+    def set_version(self, version: str) -> None:
+        """Dynamically update the displayed application version."""
+        if version:
+            v_str = str(version).strip()
+            if not v_str.lower().startswith("version"):
+                v_str = f"Version: {v_str}"
+            self.version_label.setText(v_str)

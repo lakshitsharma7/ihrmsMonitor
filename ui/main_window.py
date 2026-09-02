@@ -534,6 +534,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2000, self._check_for_updates)
 
+        # Also schedule recurring update checks every 2 hours for continuously open laptops
+        self._periodic_update_timer = QTimer(self)
+        self._periodic_update_timer.setInterval(2 * 60 * 60 * 1000)
+        self._periodic_update_timer.timeout.connect(lambda: self._check_for_updates(manual=False))
+        self._periodic_update_timer.start()
+
     # ==========================================================
     # BUILD UI
     # ==========================================================
@@ -667,11 +673,13 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
 
+        from config.settings import get_running_app_version
         self.dashboard_page = (
             DashboardPage(
                 self._activity_service
             )
         )
+        self.dashboard_page.set_version(get_running_app_version())
 
         self.weekly_page = (
             WeeklyTimelinePage(
@@ -1320,7 +1328,7 @@ class MainWindow(QMainWindow):
     # ==========================================================
 
     def _check_for_updates(self, manual: bool = False) -> None:
-        """Trigger background version check from update API."""
+        """Trigger background version check from update API using unified pipeline."""
         try:
             from config.api_config import ApiConfig
             from services.session_service import SessionService
@@ -1333,74 +1341,68 @@ class MainWindow(QMainWindow):
             api_key = session.api_key if session else None
 
             def on_available(version: str, download_url: str, force: bool):
-                logger.info("Update available: v%s (force=%s)", version, force)
+                logger.info("Pipeline update available: v%s (force=%s)", version, force)
                 self._latest_version = version
                 self._is_force_update = force
                 self.update_button.setVisible(True)
-                self.update_button.setText(f"🚀 Update v{version}")
+                self.update_button.setText(f"🚀 Updating v{version}...")
                 if hasattr(self, "tray") and self.tray:
                     self.tray.show_message(
                         "iHRMS Monitor Update",
-                        f"A new version (v{version}) is downloading in the background.",
+                        f"New version v{version} is preparing to install.",
                     )
-                if manual:
-                    self._show_update_dialog(version, force, None)
-
-            def on_progress(percent: int, downloaded: int, total: int):
-                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    self._update_dialog.update_progress(percent, downloaded, total)
+                self._show_update_dialog(version, force, None, worker=getattr(self, "_pipeline_worker", None))
 
             def on_completed(installer_path: str, version: str, force: bool):
-                logger.info("Update installer downloaded: %s", installer_path)
+                logger.info("Pipeline update downloaded: %s", installer_path)
                 self._latest_installer_path = installer_path
                 self._latest_version = version
                 self._is_force_update = force
 
                 self.update_button.setVisible(True)
-                self.update_button.setText(f"Restart & Install v{version}")
+                self.update_button.setText(f"Restarting v{version}...")
                 self.update_button.setStyleSheet(
                     "background-color: #0f9d58; color: #ffffff; font-weight: 700; "
                     "border-radius: 4px; padding: 5px 12px; margin-right: 6px;"
                 )
 
-                if hasattr(self, "tray") and self.tray:
-                    self.tray.show_message(
-                        "iHRMS Monitor Update Ready",
-                        f"Version {version} is ready to install. Click to restart and update.",
-                    )
-
                 if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    self._update_dialog.set_download_complete(installer_path)
-                elif force or manual:
-                    self._show_update_dialog(version, force, installer_path)
+                    self._update_dialog._on_download_completed(installer_path, version, force)
 
-            def on_error(err_msg: str):
-                logger.warning("Update check failed: %s", err_msg)
+            def on_error(phase: str, err_msg: str):
+                logger.warning("Pipeline update error (%s): %s", phase, err_msg)
+                self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
                 if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    self._update_dialog.set_error(err_msg)
+                    self._update_dialog._on_error_occurred(phase, err_msg)
                 elif manual:
                     from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "Check for Updates", f"Could not check for updates:\n{err_msg}")
+                    QMessageBox.warning(self, "Check for Updates", f"Update error ({phase}):\n{err_msg}")
 
-            UpdateService().check_for_updates(
+            self._pipeline_worker = UpdateService().start_pipeline(
                 api_url=api_url,
                 indo_code=indo_code,
                 api_key=api_key,
-                auto_download=True,
                 on_available=on_available,
-                on_progress=on_progress,
-                on_completed=on_completed,
+                on_download_completed=on_completed,
                 on_error=on_error,
             )
 
         except Exception as err:
-            logger.exception("Failed to start update check: %s", err)
+            logger.exception("Failed to start update pipeline: %s", err)
 
-    def _show_update_dialog(self, version: str, is_force: bool, installer_path: str | None = None) -> None:
-        """Display the update dialog."""
+    def _show_update_dialog(
+        self,
+        version: str,
+        is_force: bool,
+        installer_path: str | None = None,
+        worker: object | None = None,
+    ) -> None:
+        """Display the update dialog and attach pipeline worker."""
         from ui.update_dialog import UpdateDialog
 
         if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+            if worker:
+                self._update_dialog.attach_pipeline_worker(worker)
             self._update_dialog.raise_()
             self._update_dialog.activateWindow()
             return
@@ -1410,6 +1412,7 @@ class MainWindow(QMainWindow):
             is_force=is_force,
             installer_path=installer_path,
             parent=self,
+            pipeline_worker=worker,
         )
         self._update_dialog.show()
 
@@ -1420,6 +1423,7 @@ class MainWindow(QMainWindow):
             version=version,
             is_force=self._is_force_update,
             installer_path=self._latest_installer_path,
+            worker=getattr(self, "_pipeline_worker", None),
         )
 
         

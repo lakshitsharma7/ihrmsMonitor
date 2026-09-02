@@ -13,8 +13,11 @@ if errorlevel 1 goto :error
 
 echo.
 echo ===================================================
-echo [2/3] Building iHRMS Monitor with PyInstaller...
+echo [2/3] Generating Version Info & Building with PyInstaller...
 echo ===================================================
+python scripts\generate_version_info.py
+if errorlevel 1 goto :error
+
 pyinstaller --noconfirm --clean "IHRMS Monitor.spec"
 if errorlevel 1 goto :error
 
@@ -43,8 +46,9 @@ if not defined ISCC (
     goto :done_pyinstaller
 )
 
-echo Using Inno Setup Compiler: "%ISCC%"
-"%ISCC%" "IHRMS Monitor.iss"
+for /f "delims=" %%v in ('python -c "from config.settings import APP_VERSION; print(APP_VERSION)"') do set "APP_VER=%%v"
+echo Using Inno Setup Compiler: "%ISCC%" for Version %APP_VER%
+"%ISCC%" /DMyAppVersion="%APP_VER%" "IHRMS Monitor.iss"
 if errorlevel 1 goto :error
 
 echo.

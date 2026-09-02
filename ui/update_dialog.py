@@ -30,11 +30,13 @@ class UpdateDialog(QDialog):
         is_force: bool = False,
         installer_path: str | None = None,
         parent: QWidget | None = None,
+        pipeline_worker: object | None = None,
     ) -> None:
         super().__init__(parent)
         self._version = version
         self._is_force = is_force
         self._installer_path = installer_path
+        self._pipeline_worker = pipeline_worker
 
         self.setWindowTitle("iHRMS Monitor Update")
         self.setFixedSize(450, 260)
@@ -44,6 +46,19 @@ class UpdateDialog(QDialog):
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self._setup_ui()
+
+        if self._pipeline_worker:
+            self.attach_pipeline_worker(self._pipeline_worker)
+
+    def attach_pipeline_worker(self, worker: object) -> None:
+        """Connect UpdatePipelineWorker signals to auto-advancing UI."""
+        self._pipeline_worker = worker
+        worker.phase_changed.connect(self._on_phase_changed)
+        worker.progress_changed.connect(self._on_progress_changed)
+        worker.status_message.connect(self._on_status_message)
+        worker.upload_completed.connect(self._on_upload_completed)
+        worker.download_completed.connect(self._on_download_completed)
+        worker.error_occurred.connect(self._on_error_occurred)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -83,7 +98,7 @@ class UpdateDialog(QDialog):
         self.status_label = QLabel(
             "An update has been downloaded and is ready to install."
             if self._installer_path
-            else "Downloading update in the background..."
+            else "Preparing update in background..."
         )
         self.status_label.setStyleSheet("font-size: 13px; color: #3c4043; background: transparent;")
         layout.addWidget(self.status_label)
@@ -137,7 +152,7 @@ class UpdateDialog(QDialog):
             self.later_btn.setVisible(False)
         btn_layout.addWidget(self.later_btn)
 
-        self.install_btn = QPushButton("Restart & Install" if self._installer_path else "Downloading...")
+        self.install_btn = QPushButton("Restart & Install" if self._installer_path else "Updating...")
         self.install_btn.setEnabled(bool(self._installer_path))
         self.install_btn.setStyleSheet("""
             QPushButton {
@@ -161,8 +176,56 @@ class UpdateDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+    def _on_phase_changed(self, phase: str, desc: str) -> None:
+        """Handle transition between update phases."""
+        self.status_label.setStyleSheet("font-size: 13px; color: #1a73e8; background: transparent;")
+        self.status_label.setText(desc)
+        if phase == "uploading_pending":
+            self.install_btn.setEnabled(False)
+            self.install_btn.setText("Uploading...")
+        elif phase == "downloading":
+            self.install_btn.setEnabled(False)
+            self.install_btn.setText("Downloading...")
+        elif phase == "installing":
+            self.install_btn.setEnabled(False)
+            self.install_btn.setText("Restarting...")
+
+    def _on_progress_changed(self, percent: int, current: int, total: int) -> None:
+        """Update progress bar percentage."""
+        self.progress_bar.setValue(max(0, min(100, percent)))
+
+    def _on_status_message(self, message: str) -> None:
+        """Update status message text."""
+        self.status_label.setText(message)
+
+    def _on_upload_completed(self) -> None:
+        """Advance immediately when pending data upload reaches 100%."""
+        self.progress_bar.setValue(100)
+        self.status_label.setText("Pending data upload complete. Starting download...")
+        self.status_label.setStyleSheet("font-size: 13px; color: #0f9d58; background: transparent;")
+
+    def _on_download_completed(self, installer_path: str, version: str = "", force: bool = False) -> None:
+        """Called when download finishes - automatically install without waiting."""
+        self._installer_path = installer_path
+        self.progress_bar.setValue(100)
+        self.status_label.setText("Download complete! Restarting to install update...")
+        self.status_label.setStyleSheet("font-size: 13px; color: #0f9d58; font-weight: 600; background: transparent;")
+        self.install_btn.setText("Restarting...")
+        self.install_btn.setEnabled(False)
+        if not self._is_force:
+            self.later_btn.setEnabled(False)
+
+    def _on_error_occurred(self, phase: str, message: str) -> None:
+        """Display error and enable retry without hanging."""
+        self.status_label.setText(f"Update failed: {message}")
+        self.status_label.setStyleSheet("font-size: 13px; color: #d93025; background: transparent;")
+        self.install_btn.setText("Retry")
+        self.install_btn.setEnabled(True)
+        if not self._is_force:
+            self.later_btn.setEnabled(True)
+
     def update_progress(self, percent: int, downloaded: int, total: int) -> None:
-        """Update progress bar percentage and status."""
+        """Backward-compatible progress updater."""
         self.progress_bar.setValue(percent)
         if total > 0:
             mb_down = downloaded / (1024 * 1024)
@@ -172,43 +235,35 @@ class UpdateDialog(QDialog):
             self.status_label.setText(f"Downloading update... ({percent}%)")
 
     def set_download_complete(self, installer_path: str) -> None:
-        """Called when download finishes."""
-        self._installer_path = installer_path
-        self.progress_bar.setValue(100)
-        self.status_label.setText("Download complete! Ready to install and restart.")
-        self.install_btn.setText("Restart & Install")
-        self.install_btn.setEnabled(True)
+        """Backward-compatible download completed callback - auto launches install."""
+        self._on_download_completed(installer_path)
 
     def set_error(self, message: str) -> None:
-        """Display download or check error."""
-        self.status_label.setText(f"Update error: {message}")
-        self.status_label.setStyleSheet("font-size: 13px; color: #d93025; background: transparent;")
-        self.install_btn.setText("Close")
-        self.install_btn.setEnabled(True)
-        self.install_btn.clicked.disconnect()
-        self.install_btn.clicked.connect(self.reject)
+        """Backward-compatible error handler."""
+        self._on_error_occurred("general", message)
 
     def _on_install_clicked(self) -> None:
-        if self._installer_path:
-            self.status_label.setText("Uploading pending activity and screenshots before update...")
-            self.status_label.setStyleSheet("font-size: 13px; color: #1a73e8; background: transparent;")
+        """Handle install or retry button click."""
+        if self.install_btn.text() == "Retry":
+            # Restart pipeline or retry install
             self.install_btn.setEnabled(False)
-            if not self._is_force:
-                self.later_btn.setEnabled(False)
-            
-            from PySide6.QtWidgets import QApplication
-            QApplication.processEvents()
-            
-            self.restart_requested.emit(self._installer_path)
-            
-            # Execute apply_update with pre-update flush
-            success = UpdateService().apply_update(pre_flush=True)
-            if not success:
-                self.status_label.setText("Could not upload pending data. Update postponed.")
-                self.status_label.setStyleSheet("font-size: 13px; color: #d93025; background: transparent;")
-                self.install_btn.setEnabled(True)
-                self.install_btn.setText("Retry")
-                if not self._is_force:
-                    self.later_btn.setEnabled(True)
-            else:
-                self.accept()
+            self.status_label.setText("Retrying update...")
+            self.status_label.setStyleSheet("font-size: 13px; color: #1a73e8; background: transparent;")
+            from services.update_service import UpdateService
+            from config.api_config import ApiConfig
+            from services.session_service import SessionService
+
+            api_cfg = ApiConfig()
+            session = SessionService().current_user
+            worker = UpdateService().start_pipeline(
+                api_url=api_cfg.base_url,
+                indo_code=session.indo_code if session else None,
+                api_key=session.api_key if session else None,
+            )
+            self.attach_pipeline_worker(worker)
+            return
+
+        if self._installer_path:
+            self.status_label.setText("Starting update installer and restarting...")
+            self.install_btn.setEnabled(False)
+            install_update_and_restart(self._installer_path)

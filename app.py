@@ -159,19 +159,35 @@ def main() -> int:
     saved_session = session_store.load_session()
 
     if saved_session:
-        logger.info("Found saved session for user: %s", saved_session.get("username"))
+        logger.info("Found saved session for user: %s (company: %s)", saved_session.get("username"), saved_session.get("company_code"))
         
         try:
             # Restore the company context
             api_config = ApiConfig()
-            api_config.load(company_code=saved_session["company_code"], force=True)
+            company_code = saved_session.get("company_code")
+            base_url = saved_session.get("base_url")
+            company_id = saved_session.get("company_id")
+
+            # Try online verification; if network error occurs, fall back to cached config
+            try:
+                api_config.load(company_code=company_code, force=False)
+            except Exception as net_err:
+                logger.warning("Could not reach verification service online: %s. Using cached configuration.", net_err)
+                if base_url:
+                    api_config.set_cached_configuration(
+                        company_code=company_code,
+                        base_url=base_url,
+                        company_id=company_id,
+                    )
+                else:
+                    raise
 
             # Restore the session
             SessionService().restore_session(
                 username=saved_session["username"],
-                role=saved_session["user_type"],
+                role=saved_session.get("user_type", "User"),
                 full_name=saved_session.get("full_name"),
-                user_type=saved_session["user_type"],
+                user_type=saved_session.get("user_type", "User"),
                 tracking_permitted=saved_session.get("tracking_permitted", True),
                 indo_code=saved_session["indo_code"],
                 api_key=saved_session["api_key"],
@@ -182,22 +198,26 @@ def main() -> int:
 
             logger.info("Session restored successfully for user: %s", saved_session.get("username"))
 
-            # Open main window directly without showing login
+            # Open main window directly and display the Dashboard
             from ui.main_window import MainWindow
             main_window = MainWindow(login_window=None)
-            main_window.hide()
+            main_window.show()
+            main_window.raise_()
+            main_window.activateWindow()
             if hasattr(main_window, "tray") and main_window.tray:
                 main_window.tray.show_message(
                     "iHRMS Monitor",
-                    "iHRMS Monitor has started in the background."
+                    "iHRMS Monitor has started."
                 )
             
             return app.exec()
 
-        except Exception:
-            logger.exception("Failed to restore session, falling back to login")
-            # Fall through to login screen if session restoration fails
-            session_store.clear_session()
+        except Exception as restore_err:
+            logger.exception("Failed to restore session: %s", restore_err)
+            # Only clear the session if the stored data is genuinely corrupted or invalid
+            if not session_store.validate_session():
+                logger.warning("Session data is corrupted. Clearing session store.")
+                session_store.clear_session()
 
     # No valid session found, show login window
     login_window = LoginWindow()

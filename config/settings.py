@@ -8,9 +8,37 @@ accessed through ``services.settings_service.SettingsService``.
 
 from __future__ import annotations
 
+import sys
+
 APP_NAME = "iHRMS Monitor"
 APP_VERSION = "1.0.0"
 ORG_NAME = "iHRMSMonitorApp"
+
+
+def get_running_app_version() -> str:
+    """
+    Return the authoritative running application version.
+
+    If running as a compiled Windows EXE (PyInstaller), inspects the embedded
+    binary metadata via win32api.GetFileVersionInfo. Otherwise returns APP_VERSION.
+    """
+    if getattr(sys, "frozen", False):
+        try:
+            import win32api
+
+            exe_path = sys.executable
+            info = win32api.GetFileVersionInfo(exe_path, "\\")
+            ms = info.get("FileVersionMS", 0)
+            ls = info.get("FileVersionLS", 0)
+            v1, v2 = ms >> 16, ms & 0xFFFF
+            v3, v4 = ls >> 16, ls & 0xFFFF
+            if v4 == 0:
+                return f"{v1}.{v2}.{v3}"
+            return f"{v1}.{v2}.{v3}.{v4}"
+        except Exception:
+            pass
+    return APP_VERSION
+
 
 # How often (in seconds) the tracker worker polls for the active application.
 POLL_INTERVAL_SECONDS = 1.0

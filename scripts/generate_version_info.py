@@ -1,0 +1,73 @@
+"""Generate Windows file_version_info.txt for PyInstaller from config.settings.APP_VERSION."""
+
+import os
+import re
+import sys
+from pathlib import Path
+
+# Add project root to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.settings import APP_VERSION, APP_NAME
+
+
+def parse_version_tuple(v_str: str) -> tuple[int, int, int, int]:
+    """Parse version string into a 4-tuple of integers for Windows PE version info."""
+    clean = re.sub(r"[^\d.]", "", v_str).strip(".")
+    parts = [int(p) for p in clean.split(".") if p.isdigit()]
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])  # type: ignore
+
+
+def generate_version_info(target_file: str = "file_version_info.txt") -> str:
+    v_tuple = parse_version_tuple(APP_VERSION)
+    v_str = f"{v_tuple[0]}.{v_tuple[1]}.{v_tuple[2]}.{v_tuple[3]}"
+
+    content = f"""# UTF-8
+#
+# Version Information file for PyInstaller
+#
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={v_tuple},
+    prodvers={v_tuple},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Indovision Services'),
+            StringStruct('FileDescription', '{APP_NAME} Desktop Client'),
+            StringStruct('FileVersion', '{v_str}'),
+            StringStruct('InternalName', '{APP_NAME}'),
+            StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),
+            StringStruct('OriginalFilename', '{APP_NAME}.exe'),
+            StringStruct('ProductName', '{APP_NAME}'),
+            StringStruct('ProductVersion', '{v_str}')
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    out_path = PROJECT_ROOT / target_file
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"Generated {out_path} for version {APP_VERSION} ({v_str})")
+    return str(out_path)
+
+
+if __name__ == "__main__":
+    generate_version_info()

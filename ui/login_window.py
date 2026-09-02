@@ -1015,19 +1015,23 @@ class LoginWindow(QMainWindow):
                         employee_id=str(employee_id) if employee_id is not None else None,
                         device_info=device_info,
                         tracking_permitted=tracking_permitted,
+                        base_url=api_config.base_url,
+                        company_id=api_config.company_id,
                     )
                 except Exception as save_err:
                     logger.warning("Could not persist session: %s", save_err)
 
-                # Open existing main window
+                # Open existing main window and present Dashboard directly
                 from ui.main_window import MainWindow
 
                 self.main_window = MainWindow(login_window=self)
-                self.main_window.hide()
+                self.main_window.show()
+                self.main_window.raise_()
+                self.main_window.activateWindow()
                 if hasattr(self.main_window, "tray") and self.main_window.tray:
                     self.main_window.tray.show_message(
                         "iHRMS Monitor",
-                        "iHRMS Monitor is running in the background."
+                        "iHRMS Monitor is active.",
                     )
 
                 # Hide login window

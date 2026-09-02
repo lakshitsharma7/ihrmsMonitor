@@ -40,6 +40,8 @@ class SessionStore:
 
     # QSettings keys for persisted session data
     _KEY_COMPANY_CODE = "session/company_code"
+    _KEY_BASE_URL = "session/base_url"
+    _KEY_COMPANY_ID = "session/company_id"
     _KEY_INDO_CODE = "session/indo_code"
     _KEY_API_KEY = "session/api_key"
     _KEY_DEVICE_TOKEN = "session/device_token"
@@ -123,6 +125,8 @@ class SessionStore:
         employee_id: str | None,
         device_info: Dict[str, str],
         tracking_permitted: bool,
+        base_url: str | None = None,
+        company_id: str | None = None,
     ) -> bool:
         """Save session data securely.
         
@@ -137,6 +141,8 @@ class SessionStore:
             employee_id: Employee ID
             device_info: Device information dict
             tracking_permitted: Whether user can be tracked
+            base_url: Resolved API backend URL
+            company_id: Resolved company ID
             
         Returns:
             True if session was saved successfully
@@ -144,6 +150,11 @@ class SessionStore:
         try:
             # Store non-sensitive data unencrypted
             self.settings.setValue(self._KEY_COMPANY_CODE, company_code)
+            if base_url:
+                self.settings.setValue(self._KEY_BASE_URL, base_url)
+            if company_id:
+                self.settings.setValue(self._KEY_COMPANY_ID, str(company_id))
+
             self.settings.setValue(self._KEY_USERNAME, username)
             self.settings.setValue(self._KEY_FULL_NAME, full_name or "")
             self.settings.setValue(self._KEY_USER_TYPE, user_type)
@@ -190,6 +201,8 @@ class SessionStore:
             Dict with session data if a valid session is found, None otherwise.
             The dict contains:
             - company_code
+            - base_url
+            - company_id
             - indo_code
             - api_key
             - device_token
@@ -237,6 +250,8 @@ class SessionStore:
                     logger.warning("Session checksum mismatch - data may be corrupted")
                     return None
 
+            base_url = self.settings.value(self._KEY_BASE_URL) or None
+            company_id = self.settings.value(self._KEY_COMPANY_ID) or None
             full_name = self.settings.value(self._KEY_FULL_NAME) or None
             user_type = self.settings.value(self._KEY_USER_TYPE) or "User"
             employee_id = self.settings.value(self._KEY_EMPLOYEE_ID) or None
@@ -253,6 +268,8 @@ class SessionStore:
 
             session = {
                 "company_code": company_code,
+                "base_url": base_url,
+                "company_id": company_id,
                 "indo_code": indo_code,
                 "api_key": api_key,
                 "device_token": device_token,
@@ -279,6 +296,8 @@ class SessionStore:
         """Clear all persisted session data."""
         try:
             self.settings.remove(self._KEY_COMPANY_CODE)
+            self.settings.remove(self._KEY_BASE_URL)
+            self.settings.remove(self._KEY_COMPANY_ID)
             self.settings.remove(self._KEY_INDO_CODE)
             self.settings.remove(self._KEY_API_KEY)
             self.settings.remove(self._KEY_DEVICE_TOKEN)

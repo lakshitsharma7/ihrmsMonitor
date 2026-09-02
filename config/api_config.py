@@ -202,10 +202,29 @@ class ApiConfig:
                 payload = response.json()
 
             except Exception as exc:  # noqa: BLE001
-                logger.exception(
+                logger.warning(
                     "App Controller request failed: %s",
                     exc,
                 )
+
+                # If network fails, check if we have cached configuration for this exact company
+                try:
+                    from PySide6.QtCore import QSettings
+                    st = QSettings("Indovision", "iHRMSMonitor")
+                    cached_cc = st.value("ApiConfig/last_verified_code")
+                    cached_url = st.value("ApiConfig/last_base_url")
+                    if cached_cc == cc and cached_url:
+                        self._company_code = cc
+                        self._base_url = str(cached_url).rstrip("/")
+                        self._company_id = st.value("ApiConfig/last_company_id") or None
+                        self._logo_url = st.value("ApiConfig/last_logo_url") or None
+                        import json
+                        raw_det = st.value("ApiConfig/last_details", "{}")
+                        self._details = json.loads(raw_det) if isinstance(raw_det, str) else {}
+                        logger.info("Using cached company configuration for %s: %s", cc, self._base_url)
+                        return
+                except Exception as cache_err:
+                    logger.debug("Could not read cached config: %s", cache_err)
 
                 # Never fall back to another company's configuration.
                 self._clear_state()
@@ -254,8 +273,45 @@ class ApiConfig:
 
             self._details = dict(data)
 
+            # Persist successfully verified company config
+            try:
+                from PySide6.QtCore import QSettings
+                st = QSettings("Indovision", "iHRMSMonitor")
+                st.setValue("ApiConfig/last_verified_code", self._company_code)
+                st.setValue("ApiConfig/last_base_url", self._base_url)
+                if self._company_id:
+                    st.setValue("ApiConfig/last_company_id", self._company_id)
+                if self._logo_url:
+                    st.setValue("ApiConfig/last_logo_url", self._logo_url)
+                import json
+                st.setValue("ApiConfig/last_details", json.dumps(self._details))
+            except Exception as cache_save_err:
+                logger.debug("Could not cache company configuration: %s", cache_save_err)
+
             logger.info(
                 "Company verified: code=%s company_id=%s base_url=%s",
+                self._company_code,
+                self._company_id,
+                self._base_url,
+            )
+
+    def set_cached_configuration(
+        self,
+        company_code: str,
+        base_url: str,
+        company_id: str | None = None,
+        logo_url: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        """Adopt pre-verified company configuration from persistent cache."""
+        with self._lock:
+            self._company_code = str(company_code).strip()
+            self._base_url = str(base_url).rstrip("/")
+            self._company_id = str(company_id) if company_id is not None else None
+            self._logo_url = str(logo_url) if logo_url else None
+            self._details = dict(details) if details else {}
+            logger.info(
+                "Company configuration adopted from cache: code=%s company_id=%s base_url=%s",
                 self._company_code,
                 self._company_id,
                 self._base_url,

@@ -14,6 +14,7 @@ import io
 import os
 import re
 import sys
+import time
 import json
 import subprocess
 from pathlib import Path
@@ -23,11 +24,18 @@ import requests
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QApplication
 
-from config.settings import APP_VERSION
+from config.settings import APP_VERSION, get_running_app_version
 from utils.logger import get_logger
 from utils.paths import get_updates_directory
 
 API_TIMEOUT_SECONDS = 15
+DEFAULT_CENTRAL_VERSION_URL = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
+
+CACHE_BUST_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 logger = get_logger(__name__)
 
@@ -52,8 +60,10 @@ def parse_version(version_str: str) -> tuple[int, ...]:
     return tuple(nums) if nums else (0,)
 
 
-def is_newer_version(server_version: str, current_version: str = APP_VERSION) -> bool:
+def is_newer_version(server_version: str, current_version: str | None = None) -> bool:
     """Return True if server_version is strictly newer than current_version."""
+    if current_version is None:
+        current_version = get_running_app_version()
     try:
         s_parts = parse_version(server_version)
         c_parts = parse_version(current_version)
@@ -102,8 +112,9 @@ class UpdateCheckWorker(QThread):
     def run(self) -> None:
         """Execute version check and optional download."""
         try:
+            installed_version = get_running_app_version()
             self.status_changed.emit("Checking for updates...")
-            logger.info("Checking for updates (current version: %s)", APP_VERSION)
+            logger.info("Checking for updates (current version: %s)", installed_version)
 
             server_version = ""
             file_name = ""
@@ -116,12 +127,14 @@ class UpdateCheckWorker(QThread):
             try:
                 from config.api_config import ApiConfig
                 api_cfg = ApiConfig()
-                version_url = api_cfg.version_url or api_cfg.activity_tracker_link
+                version_url = api_cfg.version_url or api_cfg.activity_tracker_link or DEFAULT_CENTRAL_VERSION_URL
 
                 if version_url:
                     logger.info("Checking AppController version URL: %s", version_url)
                     try:
-                        v_resp = requests.get(version_url, timeout=API_TIMEOUT_SECONDS)
+                        timestamp = int(time.time())
+                        cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
+                        v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
                         if v_resp.status_code == 200:
                             try:
                                 v_data = v_resp.json()
@@ -170,14 +183,18 @@ class UpdateCheckWorker(QThread):
                     "os_type": "WINDOWS",
                 }
 
-                resp = requests.post(check_url, data=payload, timeout=API_TIMEOUT_SECONDS)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    logger.info("Version check response from punch/check_new_version: %s", data)
-                    if data.get("status") == 1:
-                        server_version = str(data.get("version_code", "")).strip()
-                        file_name = str(data.get("file_name", "")).strip()
-                        force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
+                try:
+                    cb_check_url = f"{check_url}?_t={int(time.time())}"
+                    resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        logger.info("Version check response from punch/check_new_version: %s", data)
+                        if data.get("status") == 1:
+                            server_version = str(data.get("version_code", "")).strip()
+                            file_name = str(data.get("file_name", "")).strip()
+                            force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
+                except Exception as punch_err:
+                    logger.debug("Punch check_new_version failed: %s", punch_err)
 
             if not server_version or server_version.upper() == "NA":
                 logger.info("No newer version reported. Application is up to date.")
@@ -185,10 +202,10 @@ class UpdateCheckWorker(QThread):
                 return
 
             # Check if server version is strictly newer than current app version
-            if not is_newer_version(server_version, APP_VERSION):
+            if not is_newer_version(server_version, installed_version):
                 logger.info(
                     "Current version (%s) is up to date with server version (%s).",
-                    APP_VERSION,
+                    installed_version,
                     server_version,
                 )
                 self.status_changed.emit("Application is up to date.")
@@ -332,7 +349,10 @@ class UpdateCheckWorker(QThread):
 # PRE-UPDATE DATA FLUSH
 # ==============================================================
 
-def flush_pending_data_before_update(max_retries: int = 3) -> bool:
+def flush_pending_data_before_update(
+    max_retries: int = 2,
+    on_progress=None,
+) -> bool:
     """
     Upload all pending activity logs and pending screenshots before updating.
 
@@ -358,8 +378,7 @@ def flush_pending_data_before_update(max_retries: int = 3) -> bool:
                 if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
                     logger.info("Stopping active tracking to record session before update.")
                     widget.stop_tracking()
-                    import time
-                    time.sleep(1.0)
+                    time.sleep(0.5)
     except Exception as stop_err:
         logger.debug("Could not auto-stop active tracker: %s", stop_err)
 
@@ -378,12 +397,24 @@ def flush_pending_data_before_update(max_retries: int = 3) -> bool:
         repo = ActivityRepository(db)
         unsynced = repo.get_unsynced_closed_sessions(employee_id=emp_id)
         unuploaded = repo.get_sessions_with_unuploaded_screenshots(employee_id=emp_id)
-        if not unsynced and not unuploaded:
+        total_initial = len(unsynced) + len(unuploaded)
+        if total_initial == 0:
             logger.info("No pending data found before update. Ready to proceed.")
+            if on_progress:
+                try:
+                    on_progress(100, 0, 0)
+                except Exception:
+                    pass
             return True
         logger.info("Found %d unsynced activities and %d unuploaded screenshots.", len(unsynced), len(unuploaded))
     finally:
         db.close()
+
+    if on_progress:
+        try:
+            on_progress(0, 0, total_initial)
+        except Exception:
+            pass
 
     # Upload pending data using existing sync flow
     sync_service = None
@@ -407,8 +438,22 @@ def flush_pending_data_before_update(max_retries: int = 3) -> bool:
             repo = ActivityRepository(db)
             unsynced = repo.get_unsynced_closed_sessions(employee_id=emp_id)
             unuploaded = repo.get_sessions_with_unuploaded_screenshots(employee_id=emp_id)
-            if not unsynced and not unuploaded:
+            remaining = len(unsynced) + len(unuploaded)
+            completed = total_initial - remaining
+            pct = int((completed / total_initial) * 100) if total_initial > 0 else 100
+            if on_progress:
+                try:
+                    on_progress(pct, completed, total_initial)
+                except Exception:
+                    pass
+
+            if remaining == 0:
                 logger.info("All pending data successfully uploaded before update.")
+                if on_progress:
+                    try:
+                        on_progress(100, total_initial, total_initial)
+                    except Exception:
+                        pass
                 return True
             logger.warning(
                 "Attempt %d/%d: %d activities and %d screenshots still pending.",
@@ -420,8 +465,7 @@ def flush_pending_data_before_update(max_retries: int = 3) -> bool:
         finally:
             db.close()
 
-        import time
-        time.sleep(2.0)
+        time.sleep(1.0)
 
     # If pending data remains after all retries, abort update
     err_msg = (
@@ -470,8 +514,8 @@ def install_update_and_restart(installer_path: str) -> bool:
             pass
         return False
 
-    if not str(path).lower().endswith(".exe"):
-        err_msg = f"Cannot launch installer: file is not a Windows executable ({installer_path})"
+    if path.stat().st_size < 1024 * 100:
+        err_msg = f"Cannot launch installer: file is incomplete ({path.stat().st_size} bytes)"
         logger.error(err_msg)
         try:
             from services.error_report_service import ErrorReportService
@@ -480,21 +524,40 @@ def install_update_and_restart(installer_path: str) -> bool:
             pass
         return False
 
-    logger.info("Launching update installer: %s", path)
+    logger.info("Preparing detached installer launch: %s", path)
 
-    # Inno Setup installation target executable
+    updates_dir = get_updates_directory()
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     target_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
 
-    # Command: run installer silently, wait for installation completion, then launch the updated app
-    if target_exe.parent.exists():
-        cmd = f'cmd.exe /c "start /wait \"\" \"{path}\" /SILENT /SP- /CLOSEAPPLICATIONS & start \"\" \"{target_exe}\""'
-    else:
-        cmd = f'cmd.exe /c start "" "{path}" /SILENT /SP- /CLOSEAPPLICATIONS'
+    bat_path = updates_dir / "silent_update.bat"
+    bat_content = f"""@echo off
+timeout /t 2 /nobreak > NUL
+start "" /wait "{path}" /SILENT /SP- /CLOSEAPPLICATIONS
+if exist "{target_exe}" (
+    start "" "{target_exe}"
+)
+del "%~f0"
+"""
+    try:
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write(bat_content)
+    except Exception as w_err:
+        logger.warning("Could not write helper bat file: %s", w_err)
 
     try:
-        subprocess.Popen(cmd, shell=True)
-        logger.info("Installer and restart sequence spawned. Quitting current application cleanly.")
+        creation_flags = 0
+        if sys.platform.startswith("win"):
+            creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+
+        if bat_path.exists():
+            subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
+            logger.info("Spawned detached silent update script: %s", bat_path)
+        else:
+            cmd = f'cmd.exe /c start "" "{path}" /SILENT /SP- /CLOSEAPPLICATIONS'
+            subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
+
+        logger.info("Installer launched. Quitting current application cleanly.")
 
         # Cleanly quit application
         app = QApplication.instance()
@@ -509,6 +572,243 @@ def install_update_and_restart(installer_path: str) -> bool:
         except Exception:
             pass
         return False
+
+
+# ==============================================================
+# UNIFIED UPDATE PIPELINE WORKER (NON-BLOCKING)
+# ==============================================================
+
+class UpdatePipelineWorker(QThread):
+    """
+    Unified background worker managing the end-to-end update flow without blocking GUI:
+    Phase 1: Version Check
+    Phase 2: Pending Data Upload (uploads logs & screenshots, or skips if 0 pending)
+    Phase 3: Update Download (streams installer with progress)
+    Phase 4: Auto-Install & Restart (launches detached silent installer and restarts app)
+    """
+    phase_changed = Signal(str, str)          # phase_name, description
+    progress_changed = Signal(int, int, int)  # percent, current, total
+    status_message = Signal(str)              # human-readable message
+    update_available = Signal(str, str, bool) # version, download_url, is_force
+    upload_completed = Signal()
+    download_completed = Signal(str, str, bool) # installer_path, version, is_force
+    ready_to_install = Signal(str)            # installer_path
+    error_occurred = Signal(str, str)         # phase, error_text
+
+    def __init__(
+        self,
+        api_url: str,
+        indo_code: str | None = None,
+        api_key: str | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._api_url = api_url.rstrip("/")
+        self._indo_code = indo_code or "DEFAULT"
+        self._api_key = api_key or "DEFAULT"
+        self._is_cancelled = False
+        self._installer_path: str | None = None
+        self._server_version: str | None = None
+        self._is_force: bool = False
+
+    def cancel(self) -> None:
+        self._is_cancelled = True
+
+    def run(self) -> None:
+        try:
+            # --------------------------------------------------
+            # Phase 1: Version Check
+            # --------------------------------------------------
+            installed_version = get_running_app_version()
+            self.phase_changed.emit("checking", "Checking for updates...")
+            self.status_message.emit("Checking for updates...")
+            logger.info("Pipeline: Checking for updates (current version: %s)", installed_version)
+
+            server_version = ""
+            file_name = ""
+            download_url = ""
+            force_update = False
+
+            # AppController
+            try:
+                from config.api_config import ApiConfig
+                api_cfg = ApiConfig()
+                version_url = api_cfg.version_url or api_cfg.activity_tracker_link or DEFAULT_CENTRAL_VERSION_URL
+                if version_url:
+                    try:
+                        timestamp = int(time.time())
+                        cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
+                        v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
+                        if v_resp.status_code == 200:
+                            v_data = v_resp.json()
+                            if isinstance(v_data, dict):
+                                server_version = str(
+                                    v_data.get("version")
+                                    or v_data.get("version_code")
+                                    or v_data.get("activity_tracker_version")
+                                    or ""
+                                ).strip()
+                                file_name = str(
+                                    v_data.get("file_name")
+                                    or v_data.get("installer")
+                                    or ""
+                                ).strip()
+                                download_url = str(
+                                    v_data.get("download_url")
+                                    or v_data.get("url")
+                                    or v_data.get("link")
+                                    or ""
+                                ).strip()
+                                force_update = bool(v_data.get("force", False))
+                    except Exception as ac_fetch_err:
+                        logger.debug("Pipeline AppController URL fetch failed: %s", ac_fetch_err)
+
+                if not server_version and api_cfg.activity_tracker_version:
+                    server_version = str(api_cfg.activity_tracker_version).strip()
+                if not download_url and api_cfg.activity_tracker_link:
+                    download_url = api_cfg.activity_tracker_link
+            except Exception as ac_err:
+                logger.debug("Pipeline AppController check error: %s", ac_err)
+
+            # Punch check_new_version fallback
+            if not server_version or server_version.upper() == "NA":
+                check_url = f"{self._api_url}/punch/check_new_version"
+                payload = {
+                    "indo_code": self._indo_code,
+                    "key": self._api_key,
+                    "os_type": "WINDOWS",
+                }
+                try:
+                    cb_check_url = f"{check_url}?_t={int(time.time())}"
+                    resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("status") == 1:
+                            server_version = str(data.get("version_code", "")).strip()
+                            file_name = str(data.get("file_name", "")).strip()
+                            force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
+                except Exception as resp_err:
+                    logger.debug("Pipeline punch check error: %s", resp_err)
+
+            if not server_version or server_version.upper() == "NA" or not is_newer_version(server_version, installed_version):
+                logger.info("Pipeline: Application is up to date (current: %s, server: %s)", installed_version, server_version)
+                self.status_message.emit("Application is up to date.")
+                self.phase_changed.emit("done", "Application is up to date.")
+                return
+
+            if not download_url:
+                parts = self._api_url.split("/hrms_api")
+                base_domain = parts[0] if parts else self._api_url
+                download_url = f"{base_domain}/uploads/{file_name}"
+
+            self._server_version = server_version
+            self._is_force = force_update
+            self.update_available.emit(server_version, download_url, force_update)
+            logger.info("Pipeline: Update available: v%s at %s", server_version, download_url)
+
+            if self._is_cancelled:
+                return
+
+            # --------------------------------------------------
+            # Phase 2: Pending Data Upload
+            # --------------------------------------------------
+            self.phase_changed.emit("uploading_pending", "Uploading pending activity and screenshots before update...")
+            self.status_message.emit("Uploading pending activity and screenshots before update...")
+
+            def _on_flush_progress(pct: int, cur: int, tot: int):
+                self.progress_changed.emit(pct, cur, tot)
+                if tot > 0:
+                    self.status_message.emit(f"Uploading pending data: {cur}/{tot} ({pct}%)")
+
+            upload_success = flush_pending_data_before_update(max_retries=2, on_progress=_on_flush_progress)
+            if not upload_success:
+                err_msg = "Could not upload pending activity logs/screenshots. Update postponed."
+                logger.error("Pipeline: %s", err_msg)
+                self.error_occurred.emit("uploading_pending", err_msg)
+                return
+
+            self.progress_changed.emit(100, 100, 100)
+            self.status_message.emit("Pending data upload complete. Starting download...")
+            self.upload_completed.emit()
+
+            if self._is_cancelled:
+                return
+
+            # --------------------------------------------------
+            # Phase 3: Update Download
+            # --------------------------------------------------
+            self.phase_changed.emit("downloading", f"Downloading update v{server_version}...")
+            updates_dir = get_updates_directory()
+            installer_path = updates_dir / f"iHRMSMonitorSetup_v{server_version}.exe"
+            self._installer_path = str(installer_path)
+
+            if installer_path.exists() and installer_path.stat().st_size > 1024 * 1024:
+                logger.info("Pipeline: Installer already downloaded and verified: %s", installer_path)
+                self.progress_changed.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
+            else:
+                temp_path = updates_dir / f"iHRMSMonitorSetup_v{server_version}.tmp"
+                self.progress_changed.emit(0, 0, 0)
+                logger.info("Pipeline: Downloading installer from %s to %s", download_url, temp_path)
+
+                with requests.get(download_url, stream=True, timeout=60) as r:
+                    if r.status_code != 200:
+                        err_msg = f"Failed to download update (HTTP {r.status_code})"
+                        self.error_occurred.emit("downloading", err_msg)
+                        return
+
+                    total_size = int(r.headers.get("content-length", 0))
+                    downloaded = 0
+                    chunk_size = 64 * 1024
+
+                    with open(temp_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=chunk_size):
+                            if self._is_cancelled:
+                                f.close()
+                                if temp_path.exists():
+                                    temp_path.unlink()
+                                return
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total_size > 0:
+                                    pct = int((downloaded / total_size) * 100)
+                                    self.progress_changed.emit(pct, downloaded, total_size)
+                                    mb_down = downloaded / (1024 * 1024)
+                                    mb_tot = total_size / (1024 * 1024)
+                                    self.status_message.emit(f"Downloading update: {mb_down:.1f} MB / {mb_tot:.1f} MB ({pct}%)")
+
+                if temp_path.exists():
+                    if installer_path.exists():
+                        installer_path.unlink()
+                    temp_path.rename(installer_path)
+
+            if not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
+                err_msg = "Downloaded installer is incomplete or corrupt."
+                self.error_occurred.emit("downloading", err_msg)
+                return
+
+            self.progress_changed.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
+            self.status_message.emit("Download complete! Ready to install.")
+            self.download_completed.emit(str(installer_path), server_version, force_update)
+
+            # --------------------------------------------------
+            # Phase 4: Auto-Install & Restart
+            # --------------------------------------------------
+            self.phase_changed.emit("installing", "Launching update installer and restarting...")
+            self.status_message.emit("Launching update installer and restarting...")
+            self.ready_to_install.emit(str(installer_path))
+
+            UpdateService()._downloaded_installer = str(installer_path)
+            UpdateService()._available_version = server_version
+            UpdateService()._is_force_update = force_update
+
+            # Automatically launch installer and restart application
+            time.sleep(1.0)
+            install_update_and_restart(str(installer_path))
+
+        except Exception as err:
+            logger.exception("Update pipeline error: %s", err)
+            self.error_occurred.emit("pipeline", str(err))
 
 
 # ==============================================================
@@ -532,6 +832,7 @@ class UpdateService(QObject):
         super().__init__(parent)
         self._initialized = True
         self._worker: UpdateCheckWorker | None = None
+        self._pipeline_worker: UpdatePipelineWorker | None = None
         self._downloaded_installer: str | None = None
         self._available_version: str | None = None
         self._is_force_update: bool = False
@@ -550,6 +851,63 @@ class UpdateService(QObject):
     def is_force_update(self) -> bool:
         """Return True if the available update is marked mandatory."""
         return self._is_force_update
+
+    def start_pipeline(
+        self,
+        api_url: str,
+        indo_code: str | None = None,
+        api_key: str | None = None,
+        on_phase=None,
+        on_progress=None,
+        on_status=None,
+        on_available=None,
+        on_upload_completed=None,
+        on_download_completed=None,
+        on_ready_to_install=None,
+        on_error=None,
+    ) -> UpdatePipelineWorker:
+        """Start the complete non-blocking background update pipeline."""
+        if self._pipeline_worker is not None and self._pipeline_worker.isRunning():
+            logger.info("Update pipeline already running. Returning active instance.")
+            return self._pipeline_worker
+
+        self._pipeline_worker = UpdatePipelineWorker(
+            api_url=api_url,
+            indo_code=indo_code,
+            api_key=api_key,
+        )
+
+        def _handle_available(ver: str, url: str, force: bool):
+            self._available_version = ver
+            self._is_force_update = force
+            if on_available:
+                on_available(ver, url, force)
+
+        def _handle_download_completed(path: str, ver: str, force: bool):
+            self._downloaded_installer = path
+            self._available_version = ver
+            self._is_force_update = force
+            if on_download_completed:
+                on_download_completed(path, ver, force)
+
+        self._pipeline_worker.update_available.connect(_handle_available)
+        self._pipeline_worker.download_completed.connect(_handle_download_completed)
+
+        if on_phase:
+            self._pipeline_worker.phase_changed.connect(on_phase)
+        if on_progress:
+            self._pipeline_worker.progress_changed.connect(on_progress)
+        if on_status:
+            self._pipeline_worker.status_message.connect(on_status)
+        if on_upload_completed:
+            self._pipeline_worker.upload_completed.connect(on_upload_completed)
+        if on_ready_to_install:
+            self._pipeline_worker.ready_to_install.connect(on_ready_to_install)
+        if on_error:
+            self._pipeline_worker.error_occurred.connect(on_error)
+
+        self._pipeline_worker.start()
+        return self._pipeline_worker
 
     def check_for_updates(
         self,
@@ -596,7 +954,7 @@ class UpdateService(QObject):
 
         self._worker.start()
 
-    def apply_update(self, pre_flush: bool = True) -> bool:
+    def apply_update(self, installer_path: str | None = None, pre_flush: bool = True) -> bool:
         """
         Install the downloaded update and restart the application.
 
@@ -604,9 +962,12 @@ class UpdateService(QObject):
         and screenshots. If pending data cannot be uploaded, halts the update
         to avoid data loss.
         """
-        if not self._downloaded_installer:
-            logger.warning("apply_update called but no installer was downloaded.")
+        target_path = installer_path or self._downloaded_installer
+        if not target_path or not Path(target_path).exists():
+            logger.warning("apply_update called but installer path is invalid: %s", target_path)
             return False
+
+        self._downloaded_installer = str(target_path)
 
         if pre_flush:
             logger.info("Uploading pending activity and screenshot data prior to update...")

@@ -1,12 +1,16 @@
 ; Inno Setup script for iHRMS Monitor
 ; Use Inno Setup Compiler (https://jrsoftware.org/isinfo.php) to compile this into a Windows setup installer.
 
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.0"
+#endif
+
 [Setup]
 ; A stable AppId is what lets a new build upgrade an existing install
 ; instead of appearing as a second program in Apps & Features.
 AppId={{8F3C7A21-4B6D-4E15-9C2A-1D7E5B8A0342}
 AppName=iHRMS Monitor
-AppVersion=1.0.0
+AppVersion={#MyAppVersion}
 AppPublisher=Indovision Services
 UninstallDisplayName=iHRMS Monitor
 UninstallDisplayIcon={app}\iHRMS Monitor.exe
