@@ -253,22 +253,13 @@ class LoginWindow(QMainWindow):
         panel_layout.setSpacing(0)
 
         # ── Brand logo (Centered) ──────────────────────────────────
-        logo_label = QLabel()
-        logo_label.setObjectName("LoginLogo")
-        logo_label.setAlignment(
+        self.brand_logo_label = QLabel()
+        self.brand_logo_label.setObjectName("LoginLogo")
+        self.brand_logo_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-        logo_path = _asset_path(
-            os.path.join("assets", "hrms-logo-01-04-2026-10-31-18-1302918294.jpg")
-        )
-        if os.path.isfile(logo_path):
-            pixmap = QPixmap(logo_path)
-            logo_label.setPixmap(
-                pixmap.scaledToWidth(190, Qt.TransformationMode.SmoothTransformation)
-            )
-        else:
-            logo_label.setText("indoVISION")
-        panel_layout.addWidget(logo_label)
+        self._set_default_brand_logo()
+        panel_layout.addWidget(self.brand_logo_label)
 
         panel_layout.addSpacing(12)
         caption = QLabel("Sign in to continue")
@@ -546,6 +537,21 @@ class LoginWindow(QMainWindow):
         if checked and self.error_label.text() == CONSENT_REQUIRED_MESSAGE:
             self.error_label.clear()
 
+    def _set_default_brand_logo(self) -> None:
+        """Set the default Indovision brand logo above 'Sign in to continue'."""
+        if not hasattr(self, "brand_logo_label"):
+            return
+        logo_path = _asset_path(
+            os.path.join("assets", "hrms-logo-01-04-2026-10-31-18-1302918294.jpg")
+        )
+        if os.path.isfile(logo_path):
+            pixmap = QPixmap(logo_path)
+            self.brand_logo_label.setPixmap(
+                pixmap.scaledToWidth(190, Qt.TransformationMode.SmoothTransformation)
+            )
+        else:
+            self.brand_logo_label.setText("indoVISION")
+
     def _reset_company_context(self) -> None:
         """
         Forget the verified company and everything entered for it.
@@ -576,6 +582,9 @@ class LoginWindow(QMainWindow):
 
         self.consent_row.setVisible(False)
         self.consent_checkbox.setChecked(False)
+
+        # Reset main brand logo back to the default fallback logo
+        self._set_default_brand_logo()
 
     def _on_company_code_changed(self) -> None:
         """Any edit to the Company Code invalidates a previous verification."""
@@ -609,20 +618,22 @@ class LoginWindow(QMainWindow):
         # optional, so a failure to fetch it must not block login.
         self.company_logo_label.clear()
 
-        logo_url = details.get("logo_url")
+        logo_url = details.get("logo_url") or api_config.logo_url
 
         if logo_url:
             try:
                 import requests
 
-                response = requests.get(str(logo_url), timeout=6)
+                headers = {"User-Agent": "iHRMS-Monitor/1.0"}
+                response = requests.get(str(logo_url), headers=headers, timeout=6)
                 response.raise_for_status()
 
                 logo = QPixmap()
 
-                if logo.loadFromData(response.content):
+                if logo.loadFromData(response.content) and not logo.isNull():
                     ratio = self.devicePixelRatioF() or 1.0
 
+                    # 1. Update badge logo
                     scaled = logo.scaled(
                         round(30 * ratio),
                         round(30 * ratio),
@@ -634,11 +645,26 @@ class LoginWindow(QMainWindow):
 
                     self.company_logo_label.setPixmap(scaled)
 
+                    # 2. Update the dynamic company logo above "Sign in to continue"
+                    brand_scaled = logo.scaled(
+                        190,
+                        60,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    self.brand_logo_label.setPixmap(brand_scaled)
+                    logger.info("Dynamic company logo displayed successfully from %s", logo_url)
+                else:
+                    self._set_default_brand_logo()
+
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "Could not load the verified company's logo",
+                    "Could not load the verified company's logo; keeping fallback",
                     exc_info=True,
                 )
+                self._set_default_brand_logo()
+        else:
+            self._set_default_brand_logo()
 
         self.company_details.setVisible(True)
 
