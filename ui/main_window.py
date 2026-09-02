@@ -481,6 +481,10 @@ class MainWindow(QMainWindow):
         if os.path.isfile(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
+        self.setWindowTitle(APP_NAME)
+        self.resize(1024, 720)
+        self.setMinimumSize(920, 600)
+
         self._login_window = login_window
         self._activity_service = ActivityService(get_session)
         self._settings_service = SettingsService(get_session)
@@ -624,6 +628,7 @@ class MainWindow(QMainWindow):
         self.start_button.setObjectName("PrimaryButton")
         self.start_button.clicked.connect(self.start_tracking)
         header_layout.addWidget(self.start_button)
+        self.start_button.hide()
 
         self.stop_button = QPushButton("Stop Tracking")
         self.stop_button.setObjectName("SecondaryButton")
@@ -893,21 +898,20 @@ class MainWindow(QMainWindow):
         from services.session_service import SessionService
         session = SessionService().current_user
 
-        # Unconditionally hide "Stop Tracking" button and tray menu stop action per request
+        # Unconditionally hide "Stop Tracking" and "Start Tracking" buttons
         self.stop_button.hide()
+        self.start_button.hide()
         if hasattr(self, "tray") and self.tray:
             self.tray.stop_action.setVisible(False)
 
         if session and not session.tracking_permitted:
-            logger.info("Enforcing RBAC tracking restrictions: hiding start/stop tracking controls")
-            self.start_button.hide()
+            logger.info("Enforcing RBAC tracking restrictions: hiding tracking controls")
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.hide()
             self.status_badge.hide()
             if hasattr(self, "tray") and self.tray:
                 self.tray.start_action.setVisible(False)
         else:
-            self.start_button.show()
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.show()
             self.status_badge.show()
@@ -1318,7 +1322,7 @@ class MainWindow(QMainWindow):
             from services.update_service import UpdateService
 
             api_config = ApiConfig()
-            api_url = api_config.api_url
+            api_url = api_config.base_url
             session = SessionService().current_user
             indo_code = session.indo_code if session else None
             api_key = session.api_key if session else None

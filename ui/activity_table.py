@@ -101,8 +101,7 @@ class ApplicationUsageTable(QTableWidget):
 
         self.verticalHeader().setDefaultSectionSize(32)
 
-        self.setMinimumHeight(120)
-        self.setMaximumHeight(220)
+        self.setMinimumHeight(165)
 
     def set_entries(
         self,
@@ -294,8 +293,7 @@ class ActivityTimelineTable(QTableWidget):
 
         self.verticalHeader().setDefaultSectionSize(32)
 
-        self.setMinimumHeight(150)
-        self.setMaximumHeight(220)
+        self.setMinimumHeight(180)
 
     def set_entries(
         self,

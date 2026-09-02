@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -64,9 +65,9 @@ class DashboardPage(QWidget):
 
         root = QVBoxLayout(content)
 
-        root.setContentsMargins(12, 4, 12, 12)
+        root.setContentsMargins(14, 8, 14, 14)
 
-        root.setSpacing(12)
+        root.setSpacing(10)
 
         scroll.setWidget(content)
 
@@ -74,6 +75,7 @@ class DashboardPage(QWidget):
 
         # Top Row containing Current Application and Tracking & Sync Status
         top_row = QHBoxLayout()
+        top_row.setSpacing(10)
 
         # ==============================================================
         # Current Application
@@ -86,6 +88,15 @@ class DashboardPage(QWidget):
         current_layout = QVBoxLayout(
             current_group
         )
+
+        current_layout.setContentsMargins(
+            12,
+            10,
+            12,
+            10,
+        )
+
+        current_layout.setSpacing(4)
 
         self.current_app_label = QLabel(
             "Not tracking"
@@ -113,11 +124,11 @@ class DashboardPage(QWidget):
 
         self.current_window_label.setWordWrap(True)
 
-        # These cards only hold a few labels, so they should claim the height
-        # they need and leave the rest of the window to the tables.
+        current_layout.addStretch()
+
         current_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
         )
 
         top_row.addWidget(
@@ -133,9 +144,19 @@ class DashboardPage(QWidget):
             "Tracking && Sync Status"
         )
 
-        status_layout = QVBoxLayout(
+        status_grid = QGridLayout(
             status_group
         )
+
+        status_grid.setContentsMargins(
+            12,
+            10,
+            12,
+            10,
+        )
+
+        status_grid.setHorizontalSpacing(16)
+        status_grid.setVerticalSpacing(4)
 
         self.tracking_status_label = QLabel(
             "Tracking: Inactive"
@@ -169,16 +190,19 @@ class DashboardPage(QWidget):
         self.idle_time_label.setObjectName("StatusLabel")
         self.version_label.setObjectName("StatusLabel")
 
-        status_layout.addWidget(self.tracking_status_label)
-        status_layout.addWidget(self.sync_status_label)
-        status_layout.addWidget(self.last_sync_label)
-        status_layout.addWidget(self.unsynced_records_label)
-        status_layout.addWidget(self.idle_time_label)
-        status_layout.addWidget(self.version_label)
+        # Column 0
+        status_grid.addWidget(self.tracking_status_label, 0, 0)
+        status_grid.addWidget(self.sync_status_label, 1, 0)
+        status_grid.addWidget(self.last_sync_label, 2, 0)
+
+        # Column 1
+        status_grid.addWidget(self.idle_time_label, 0, 1)
+        status_grid.addWidget(self.unsynced_records_label, 1, 1)
+        status_grid.addWidget(self.version_label, 2, 1)
 
         status_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
         )
 
         top_row.addWidget(
@@ -193,6 +217,7 @@ class DashboardPage(QWidget):
         # ==============================================================
 
         middle_row = QHBoxLayout()
+        middle_row.setSpacing(10)
 
         # --------------------------------------------------------------
         # Today's Time
@@ -206,6 +231,15 @@ class DashboardPage(QWidget):
             today_group
         )
 
+        today_layout.setContentsMargins(
+            12,
+            10,
+            12,
+            10,
+        )
+
+        today_layout.setSpacing(6)
+
         self.today_total_label = QLabel(
             "0m"
         )
@@ -217,12 +251,6 @@ class DashboardPage(QWidget):
         self.today_total_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-
-        today_layout.addWidget(
-            self.today_total_label
-        )
-
-        today_layout.addSpacing(6)
 
         self.weekly_timeline_button = QPushButton(
             "Weekly Timeline →"
@@ -239,16 +267,23 @@ class DashboardPage(QWidget):
         self.weekly_timeline_button.clicked.connect(
             self.weekly_timeline_requested.emit
         )
+
+        today_layout.addStretch(1)
+        today_layout.addWidget(
+            self.today_total_label
+        )
+        today_layout.addSpacing(4)
         today_layout.addWidget(
             self.weekly_timeline_button
         )
+        today_layout.addStretch(1)
+
+        today_group.setMinimumWidth(180)
+        today_group.setMaximumWidth(210)
 
         middle_row.addWidget(
             today_group,
-            stretch=1,
         )
-
-        today_group.setMinimumWidth(220)
 
         # --------------------------------------------------------------
         # Applications
@@ -268,6 +303,7 @@ class DashboardPage(QWidget):
             10,
             8,
         )
+        usage_layout.setSpacing(0)
 
         self.usage_table = ApplicationUsageTable()
 
@@ -277,12 +313,12 @@ class DashboardPage(QWidget):
 
         middle_row.addWidget(
             usage_group,
-            stretch=2,
+            stretch=1,
         )
 
         root.addLayout(
             middle_row,
-            stretch=2,
+            stretch=1,
         )
 
         # ==============================================================
@@ -316,7 +352,7 @@ class DashboardPage(QWidget):
 
         root.addWidget(
             timeline_group,
-            stretch=3,
+            stretch=2,
         )
 
     def update_tracker_state(
