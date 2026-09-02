@@ -29,23 +29,24 @@ PROJECT_ROOT = (
     Path(__file__).resolve().parent.parent
 )
 
-SCREENSHOT_DIR = (
-    PROJECT_ROOT / "screenshots"
-)
 
-try:
-    SCREENSHOT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+def get_destination_directory() -> Path:
+    """Return a guaranteed writable per-user directory for saving screenshots."""
+    try:
+        from utils.paths import get_screenshots_directory
+        dir_path = get_screenshots_directory()
+        dir_path.mkdir(parents=True, exist_ok=True)
+        return dir_path
+    except Exception:
+        fallback = PROJECT_ROOT / "screenshots"
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return fallback
 
-except OSError:
-    # Never raise while importing: a missing directory must not stop the
-    # application from starting. capture_screenshot() reports it instead.
-    logger.exception(
-        "Could not create the screenshot directory: %s",
-        SCREENSHOT_DIR,
-    )
+
+SCREENSHOT_DIR = get_destination_directory()
 
 
 # Captures smaller than this are stored exactly as grabbed; larger ones are
@@ -87,6 +88,106 @@ def _ensure_dpi_awareness() -> None:
     _dpi_awareness_applied = True
 
 
+def _grab_screen_image() -> Image.Image | None:
+    """
+    Grab the screen using a robust multi-tiered fallback chain:
+    1. PySide6 QGuiApplication (uses native Windows DWM/QPA compositor; works where GDI BitBlt fails)
+    2. PIL ImageGrab (with all_screens=True if supported)
+    3. Win32 GDI BitBlt
+    4. mss
+    """
+    # Tier 1: PySide6 QGuiApplication
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtCore import QBuffer, QIODevice
+
+        app = QApplication.instance()
+        if app is None:
+            try:
+                app = QApplication(sys.argv)
+            except Exception:
+                pass
+
+        if app is not None:
+            screens = QGuiApplication.screens()
+            if screens:
+                primary = QGuiApplication.primaryScreen() or screens[0]
+                pixmap = primary.grabWindow(0)
+                if not pixmap.isNull() and pixmap.width() > 0 and pixmap.height() > 0:
+                    qbuffer = QBuffer()
+                    qbuffer.open(QIODevice.OpenModeFlag.ReadWrite)
+                    if pixmap.save(qbuffer, "PNG"):
+                        png_bytes = bytes(qbuffer.data())
+                        qbuffer.close()
+                        if len(png_bytes) > 0:
+                            img = Image.open(io.BytesIO(png_bytes))
+                            img.load()
+                            return img
+    except Exception as e:
+        logger.debug("Tier 1 (PySide6) screen capture failed: %s", e)
+
+    # Tier 2: PIL.ImageGrab
+    try:
+        _ensure_dpi_awareness()
+        try:
+            img = ImageGrab.grab(all_screens=True)
+        except Exception:
+            img = ImageGrab.grab()
+        if img is not None and img.size[0] > 0 and img.size[1] > 0:
+            return img
+    except Exception as e:
+        logger.debug("Tier 2 (PIL.ImageGrab) screen capture failed: %s", e)
+
+    # Tier 3: Win32 GDI BitBlt
+    try:
+        import win32gui
+        import win32ui
+        import win32con
+        import win32api
+
+        hwin = win32gui.GetDesktopWindow()
+        width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN) or win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+        height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN) or win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+        left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN) if win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN) else 0
+        top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN) if win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN) else 0
+
+        hwindc = win32gui.GetWindowDC(hwin)
+        srcdc = win32ui.CreateDCFromHandle(hwindc)
+        memdc = srcdc.CreateCompatibleDC()
+        bmp = win32ui.CreateBitmap()
+        bmp.CreateCompatibleBitmap(srcdc, width, height)
+        memdc.SelectObject(bmp)
+        memdc.BitBlt((0, 0), (width, height), srcdc, (left, top), win32con.SRCCOPY)
+
+        bmpinfo = bmp.GetInfo()
+        bmpstr = bmp.GetBitmapBits(True)
+        img = Image.frombuffer("RGB", (bmpinfo["bmWidth"], bmpinfo["bmHeight"]), bmpstr, "raw", "BGRX", 0, 1)
+
+        memdc.DeleteDC()
+        win32gui.DeleteObject(bmp.GetHandle())
+        srcdc.DeleteDC()
+        win32gui.ReleaseDC(hwin, hwindc)
+
+        if img is not None and img.size[0] > 0 and img.size[1] > 0:
+            return img
+    except Exception as e:
+        logger.debug("Tier 3 (Win32 GDI) screen capture failed: %s", e)
+
+    # Tier 4: mss
+    try:
+        import mss
+        with mss.mss() as sct:
+            mon = sct.monitors[0]
+            sct_img = sct.grab(mon)
+            if sct_img:
+                return Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+    except Exception as e:
+        logger.debug("Tier 4 (mss) screen capture failed: %s", e)
+
+    return None
+
+
 # ==============================================================
 # CAPTURE SCREENSHOT
 # ==============================================================
@@ -123,8 +224,9 @@ def capture_screenshot(
             f"screenshot_{timestamp}.png"
         )
 
+    target_dir = get_destination_directory()
     filepath = (
-        SCREENSHOT_DIR / filename
+        target_dir / filename
     )
 
     # ----------------------------------------------------------
@@ -132,7 +234,7 @@ def capture_screenshot(
     # ----------------------------------------------------------
 
     try:
-        SCREENSHOT_DIR.mkdir(
+        target_dir.mkdir(
             parents=True,
             exist_ok=True,
         )
@@ -142,26 +244,22 @@ def capture_screenshot(
             "Screenshot directory is not writable, cannot capture "
             "screenshot for session=%s: %s",
             activity_session_id,
-            SCREENSHOT_DIR,
+            target_dir,
         )
 
         return None
 
     # ----------------------------------------------------------
-    # Grab the screen
+    # Grab the screen using multi-tiered fallback chain
     # ----------------------------------------------------------
 
-    _ensure_dpi_awareness()
+    image = _grab_screen_image()
 
-    try:
-        image = ImageGrab.grab()
-
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "Screen capture failed for session=%s",
+    if image is None:
+        logger.error(
+            "All screen capture methods failed for session=%s",
             activity_session_id,
         )
-
         return None
 
     # ----------------------------------------------------------

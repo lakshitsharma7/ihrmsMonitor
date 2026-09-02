@@ -160,10 +160,13 @@ class SyncService:
                     tracking_enabled = settings_data.get("tracking_enabled", True)
                     idle_threshold = settings_data.get("idle_threshold_seconds", 300)
 
+                    # Ensure capture_on_switch is enabled unless explicitly disabled
+                    capture_on_switch = True if capture_mode != "disabled" else False
+
                     repo.update(
                         screenshot_custom_interval=capture_interval,
                         screenshot_interval_type="custom",
-                        capture_on_switch=(capture_mode == "activity_with_screenshots"),
+                        capture_on_switch=capture_on_switch,
                         tracking_enabled=tracking_enabled,
                         idle_threshold=idle_threshold,
                     )
@@ -785,28 +788,23 @@ class SyncService:
 
             POST /tracking/upload_screenshot
         """
-        # Only call this API when capture_mode is activity_with_screenshots
-        db_session = get_session()
-        try:
-            from database.repository import SettingsRepository
-            repo = SettingsRepository(db_session)
-            settings_record = repo.get_or_create()
-            if settings_record and not settings_record.capture_on_switch:
-                logger.info("Screenshot upload skipped (capture_mode is not activity_with_screenshots)")
-                return True
-        except Exception as err:
-            logger.error("Failed to check capture_mode in settings db: %s", err)
-        finally:
-            db_session.close()
-
         screenshot_path = Path(
             screenshot_path
         )
 
-        # The capture service writes the file before returning its path, so
-        # a missing file here means it was removed or never written - waiting
-        # for it cannot help. (This used to poll for 5 seconds because
-        # capture ran on a background thread.)
+        # Multi-location resolution: check given path, then check per-user screenshots dir, then project root
+        if not screenshot_path.exists():
+            try:
+                from utils.paths import get_screenshots_directory
+                alt1 = get_screenshots_directory() / screenshot_path.name
+                alt2 = Path(__file__).resolve().parent.parent / "screenshots" / screenshot_path.name
+                if alt1.exists():
+                    screenshot_path = alt1
+                elif alt2.exists():
+                    screenshot_path = alt2
+            except Exception as resolve_err:
+                logger.debug("Failed to resolve alternative screenshot paths: %s", resolve_err)
+
         if not screenshot_path.exists():
 
             logger.error(

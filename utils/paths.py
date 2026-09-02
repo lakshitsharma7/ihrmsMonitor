@@ -83,3 +83,18 @@ def get_logs_directory() -> Path:
 def get_log_file_path() -> Path:
     """Return the full path to the application log file."""
     return get_logs_directory() / "activity_tracker.log"
+
+
+def get_screenshots_directory() -> Path:
+    """Return the per-user screenshots directory, creating it if needed."""
+    directory = get_app_data_directory() / "screenshots"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def get_updates_directory() -> Path:
+    """Return the per-user updates download directory, creating it if needed."""
+    directory = get_app_data_directory() / "updates"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+

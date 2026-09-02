@@ -231,6 +231,15 @@ class LoginWindow(QMainWindow):
             hero_layout.addSpacing(18)
 
         hero_layout.addStretch(1)
+
+        # Application version display on hero panel
+        from config.settings import APP_VERSION
+        hero_version = QLabel(f"Version {APP_VERSION}")
+        hero_version.setObjectName("LoginHeroVersion")
+        hero_version.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        hero_version.setStyleSheet("color: rgba(255, 255, 255, 0.45); font-size: 11px; font-weight: 500;")
+        hero_layout.addWidget(hero_version)
+
         return hero
 
     def _build_form_panel(self) -> QWidget:
@@ -449,6 +458,27 @@ class LoginWindow(QMainWindow):
 
         panel_layout.addStretch(1)
 
+        # Footer version & update status row on form panel
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 8, 0, 0)
+
+        from config.settings import APP_VERSION
+        self.version_label = QLabel(f"Version {APP_VERSION}")
+        self.version_label.setObjectName("LoginVersion")
+        self.version_label.setStyleSheet("color: #9aa0a6; font-size: 11px; font-weight: 500;")
+        footer_layout.addWidget(self.version_label)
+        footer_layout.addStretch()
+
+        self.update_status_label = QLabel("")
+        self.update_status_label.setObjectName("LoginUpdateStatus")
+        self.update_status_label.setStyleSheet("color: #1a73e8; font-size: 11px; font-weight: 600; text-decoration: underline;")
+        self.update_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_status_label.setVisible(False)
+        self.update_status_label.mousePressEvent = self._on_update_status_clicked
+        footer_layout.addWidget(self.update_status_label)
+
+        panel_layout.addLayout(footer_layout)
+
         return panel
 
     def show_and_clear(self) -> None:
@@ -492,6 +522,23 @@ class LoginWindow(QMainWindow):
         self._set_password_visible(
             self.password_input.echoMode() == QLineEdit.EchoMode.Password
         )
+
+    def _on_update_status_clicked(self, event: object) -> None:
+        """Open update dialog when clicking update status on login screen."""
+        try:
+            from services.update_service import UpdateService
+            service = UpdateService()
+            if service.available_version:
+                from ui.update_dialog import UpdateDialog
+                dialog = UpdateDialog(
+                    version=service.available_version,
+                    is_force=service.is_force_update,
+                    installer_path=service._downloaded_installer,
+                    parent=self,
+                )
+                dialog.exec()
+        except Exception as err:
+            logger.warning("Could not open update dialog from login screen: %s", err)
 
     def _on_consent_toggled(self, checked: bool) -> None:
         """Clear the consent validation message once the box is ticked."""
@@ -793,6 +840,31 @@ class LoginWindow(QMainWindow):
                         version_json.get("version_code"),
                         version_json.get("force_update")
                     )
+
+                    # Trigger update check if newer version detected
+                    if version_json.get("status") == 1:
+                        from services.update_service import is_newer_version, UpdateService
+                        from config.settings import APP_VERSION
+                        server_ver = str(version_json.get("version_code", "")).strip()
+                        if is_newer_version(server_ver, APP_VERSION):
+                            logger.info("Newer version %s detected on login. Initiating background update.", server_ver)
+
+                            def on_progress(percent: int, down: int, total: int):
+                                self.update_status_label.setText(f"Updating ({percent}%)...")
+                                self.update_status_label.setVisible(True)
+
+                            def on_completed(path: str, ver: str, force: bool):
+                                self.update_status_label.setText(f"Restart to install v{ver}")
+                                self.update_status_label.setVisible(True)
+
+                            UpdateService().check_for_updates(
+                                api_url=api_url,
+                                indo_code=indo_code,
+                                api_key=api_key,
+                                auto_download=True,
+                                on_progress=on_progress,
+                                on_completed=on_completed,
+                            )
                 except Exception as version_err:
                     logger.warning("Check version API call failed: %s", version_err)
 

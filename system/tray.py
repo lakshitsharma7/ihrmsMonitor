@@ -40,6 +40,7 @@ class TrayController:
         on_show_today_activity,
         on_show_settings,
         on_exit,
+        on_check_updates=None,
     ) -> None:
         self._parent = parent
         import os
@@ -84,6 +85,11 @@ class TrayController:
         self.settings_action = QAction("Settings", parent)
         self.settings_action.triggered.connect(on_show_settings)
         menu.addAction(self.settings_action)
+
+        if on_check_updates:
+            self.update_action = QAction("Check for Updates", parent)
+            self.update_action.triggered.connect(on_check_updates)
+            menu.addAction(self.update_action)
 
         menu.addSeparator()
 

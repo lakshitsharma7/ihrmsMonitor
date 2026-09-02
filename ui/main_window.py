@@ -520,6 +520,16 @@ class MainWindow(QMainWindow):
         else:
             logger.info("Auto-starting tracking skipped due to RBAC permissions.")
 
+        # Update system state
+        self._update_dialog = None
+        self._latest_installer_path: str | None = None
+        self._latest_version: str | None = None
+        self._is_force_update: bool = False
+
+        # Trigger background automatic update check shortly after startup
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2000, self._check_for_updates)
+
     # ==========================================================
     # BUILD UI
     # ==========================================================
@@ -632,6 +642,16 @@ class MainWindow(QMainWindow):
             self._show_user_device_info
         )
         header_layout.addWidget(self.user_button)
+
+        self.update_button = QPushButton("🚀 Update Available")
+        self.update_button.setObjectName("PrimaryButton")
+        self.update_button.setVisible(False)
+        self.update_button.setStyleSheet(
+            "background-color: #1a73e8; color: #ffffff; font-weight: 600; "
+            "border-radius: 4px; padding: 5px 12px; margin-right: 6px;"
+        )
+        self.update_button.clicked.connect(self._on_update_button_clicked)
+        header_layout.addWidget(self.update_button)
 
         self.logout_button = QPushButton("Logout")
         self.logout_button.setObjectName("SecondaryButton")
@@ -863,6 +883,7 @@ class MainWindow(QMainWindow):
                 self._show_settings
             ),
             on_exit=self._exit_application,
+            on_check_updates=lambda: self._check_for_updates(manual=True),
         )
 
         self.tray.show()
@@ -1275,4 +1296,112 @@ class MainWindow(QMainWindow):
         self._thread.wait(
             3000
         )
+
+    # ==========================================================
+    # AUTOMATIC UPDATES
+    # ==========================================================
+
+    def _check_for_updates(self, manual: bool = False) -> None:
+        """Trigger background version check from update API."""
+        try:
+            from config.api_config import ApiConfig
+            from services.session_service import SessionService
+            from services.update_service import UpdateService
+
+            api_config = ApiConfig()
+            api_url = api_config.api_url
+            session = SessionService().current_user
+            indo_code = session.indo_code if session else None
+            api_key = session.api_key if session else None
+
+            def on_available(version: str, download_url: str, force: bool):
+                logger.info("Update available: v%s (force=%s)", version, force)
+                self._latest_version = version
+                self._is_force_update = force
+                self.update_button.setVisible(True)
+                self.update_button.setText(f"🚀 Update v{version}")
+                if hasattr(self, "tray") and self.tray:
+                    self.tray.show_message(
+                        "iHRMS Monitor Update",
+                        f"A new version (v{version}) is downloading in the background.",
+                    )
+                if manual:
+                    self._show_update_dialog(version, force, None)
+
+            def on_progress(percent: int, downloaded: int, total: int):
+                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+                    self._update_dialog.update_progress(percent, downloaded, total)
+
+            def on_completed(installer_path: str, version: str, force: bool):
+                logger.info("Update installer downloaded: %s", installer_path)
+                self._latest_installer_path = installer_path
+                self._latest_version = version
+                self._is_force_update = force
+
+                self.update_button.setVisible(True)
+                self.update_button.setText(f"Restart & Install v{version}")
+                self.update_button.setStyleSheet(
+                    "background-color: #0f9d58; color: #ffffff; font-weight: 700; "
+                    "border-radius: 4px; padding: 5px 12px; margin-right: 6px;"
+                )
+
+                if hasattr(self, "tray") and self.tray:
+                    self.tray.show_message(
+                        "iHRMS Monitor Update Ready",
+                        f"Version {version} is ready to install. Click to restart and update.",
+                    )
+
+                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+                    self._update_dialog.set_download_complete(installer_path)
+                elif force or manual:
+                    self._show_update_dialog(version, force, installer_path)
+
+            def on_error(err_msg: str):
+                logger.warning("Update check failed: %s", err_msg)
+                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+                    self._update_dialog.set_error(err_msg)
+                elif manual:
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Check for Updates", f"Could not check for updates:\n{err_msg}")
+
+            UpdateService().check_for_updates(
+                api_url=api_url,
+                indo_code=indo_code,
+                api_key=api_key,
+                auto_download=True,
+                on_available=on_available,
+                on_progress=on_progress,
+                on_completed=on_completed,
+                on_error=on_error,
+            )
+
+        except Exception as err:
+            logger.exception("Failed to start update check: %s", err)
+
+    def _show_update_dialog(self, version: str, is_force: bool, installer_path: str | None = None) -> None:
+        """Display the update dialog."""
+        from ui.update_dialog import UpdateDialog
+
+        if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+            self._update_dialog.raise_()
+            self._update_dialog.activateWindow()
+            return
+
+        self._update_dialog = UpdateDialog(
+            version=version,
+            is_force=is_force,
+            installer_path=installer_path,
+            parent=self,
+        )
+        self._update_dialog.show()
+
+    def _on_update_button_clicked(self) -> None:
+        """Handle header update button click."""
+        version = self._latest_version or "Latest"
+        self._show_update_dialog(
+            version=version,
+            is_force=self._is_force_update,
+            installer_path=self._latest_installer_path,
+        )
+
         
