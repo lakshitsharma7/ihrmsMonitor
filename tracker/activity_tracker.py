@@ -661,6 +661,10 @@ class ActivityTracker:
                 )
             )
 
+            from services.session_service import SessionService
+            curr_user = SessionService().current_user
+            emp_id = curr_user.employee_id if curr_user else None
+
             record = (
                 repository.create_session(
                     application_name=(
@@ -671,6 +675,7 @@ class ActivityTracker:
                     ),
                     window_title=title,
                     started_at=now,
+                    employee_id=emp_id,
                 )
             )
 

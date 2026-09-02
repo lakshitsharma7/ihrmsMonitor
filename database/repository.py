@@ -105,11 +105,20 @@ class ActivityRepository:
         window_title: str | None,
         started_at: datetime,
         idle_seconds: int = 0,
+        employee_id: str | None = None,
     ) -> ActivitySession:
         """Create a new open activity session."""
 
         try:
             started_at = _to_utc(started_at)
+            if employee_id is None:
+                try:
+                    from services.session_service import SessionService
+                    u = SessionService().current_user
+                    if u and u.employee_id:
+                        employee_id = str(u.employee_id)
+                except Exception:
+                    pass
 
             record = ActivitySession(
                 application_name=application_name,
@@ -119,6 +128,7 @@ class ActivityRepository:
                 ended_at=None,
                 duration_seconds=0,
                 idle_seconds=max(0, int(idle_seconds)),
+                employee_id=employee_id,
             )
 
             self._session.add(record)
@@ -513,29 +523,33 @@ class ActivityRepository:
     # GET UNSYNCED CLOSED SESSIONS
     # ==========================================================
 
-    def get_unsynced_closed_sessions(self) -> list[ActivitySession]:
+    def get_unsynced_closed_sessions(self, employee_id: str | None = None) -> list[ActivitySession]:
         """Return all closed sessions or sessions with captured screenshots that need to be synced."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.ended_at.is_not(None))
             .where(ActivitySession.server_session_id.is_(None))
-            .order_by(ActivitySession.started_at.asc())
         )
+        if employee_id is not None:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        stmt = stmt.order_by(ActivitySession.started_at.asc())
         return list(self._session.execute(stmt).scalars().all())
 
     # ==========================================================
     # GET SESSIONS WITH UNUPLOADED SCREENSHOTS
     # ==========================================================
 
-    def get_sessions_with_unuploaded_screenshots(self) -> list[ActivitySession]:
+    def get_sessions_with_unuploaded_screenshots(self, employee_id: str | None = None) -> list[ActivitySession]:
         """Return all sessions with captured screenshots that haven't been successfully uploaded yet."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.screenshot_path.is_not(None))
             .where(ActivitySession.screenshot_uploaded.is_(False))
             .where(ActivitySession.server_session_id.is_not(None))
-            .order_by(ActivitySession.started_at.asc())
         )
+        if employee_id is not None:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        stmt = stmt.order_by(ActivitySession.started_at.asc())
         return list(self._session.execute(stmt).scalars().all())
 
     # ==========================================================
@@ -546,6 +560,7 @@ class ActivityRepository:
         self,
         start: datetime,
         end: datetime,
+        employee_id: str | None = None,
     ) -> list[ActivitySession]:
         """
         Return activity sessions overlapping the requested interval.
@@ -571,9 +586,11 @@ class ActivityRepository:
                     ActivitySession.ended_at > start
                 )
             )
-            .order_by(
-                ActivitySession.started_at.asc()
-            )
+        )
+        if employee_id is not None:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        stmt = stmt.order_by(
+            ActivitySession.started_at.asc()
         )
 
         return list(
@@ -589,6 +606,7 @@ class ActivityRepository:
 
     def get_all_sessions(
         self,
+        employee_id: str | None = None,
     ) -> list[ActivitySession]:
         """
         Return ALL activity sessions stored in the database.
@@ -602,9 +620,11 @@ class ActivityRepository:
 
         stmt = (
             select(ActivitySession)
-            .order_by(
-                ActivitySession.started_at.desc()
-            )
+        )
+        if employee_id is not None:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        stmt = stmt.order_by(
+            ActivitySession.started_at.desc()
         )
 
         sessions = list(
@@ -630,6 +650,7 @@ class ActivityRepository:
         page: int = 1,
         page_size: int = 50,
         newest_first: bool = True,
+        employee_id: str | None = None,
     ) -> PaginatedSessions:
         """
         Return all activity sessions using pagination.
@@ -657,6 +678,8 @@ class ActivityRepository:
         count_stmt = select(
             func.count(ActivitySession.id)
         )
+        if employee_id is not None:
+            count_stmt = count_stmt.where(ActivitySession.employee_id == employee_id)
 
         total = (
             self._session
@@ -697,6 +720,11 @@ class ActivityRepository:
 
         stmt = (
             select(ActivitySession)
+        )
+        if employee_id is not None:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+        stmt = (
+            stmt
             .order_by(order_clause)
             .offset(offset)
             .limit(page_size)
@@ -787,6 +815,7 @@ class ActivityRepository:
         self,
         start: datetime,
         end: datetime,
+        employee_id: str | None = None,
     ) -> int:
         """Return total duration of active tracked time overlapping [start, end].
 
@@ -799,6 +828,7 @@ class ActivityRepository:
         sessions = self.get_sessions_between(
             start_utc,
             end_utc,
+            employee_id=employee_id,
         )
 
         now_utc = datetime.now(timezone.utc)
@@ -824,12 +854,14 @@ class ActivityRepository:
         self,
         start: datetime,
         end: datetime,
+        employee_id: str | None = None,
     ) -> list[ApplicationUsage]:
         """Return usage grouped by application."""
 
         sessions = self.get_sessions_between(
             start,
             end,
+            employee_id=employee_id,
         )
 
         totals: dict[str, int] = {}

@@ -180,13 +180,17 @@ class SyncService:
         db_session = get_session()
         try:
             repository = ActivityRepository(db_session)
-            # Retrieve all closed sessions that have not been synced yet
-            unsynced_sessions = repository.get_unsynced_closed_sessions()
+            from services.session_service import SessionService
+            curr_user = SessionService().current_user
+            current_emp_id = curr_user.employee_id if curr_user else None
+
+            # Retrieve all closed sessions that have not been synced yet for this user
+            unsynced_sessions = repository.get_unsynced_closed_sessions(employee_id=current_emp_id)
 
             if unsynced_sessions:
                 SyncService.last_sync_status = "Sending"
                 SyncService.records_currently_sending = len(unsynced_sessions)
-                logger.info("Syncing %d unsynced closed sessions in batches", len(unsynced_sessions))
+                logger.info("Syncing %d unsynced closed sessions in batches for user %s", len(unsynced_sessions), current_emp_id)
 
                 BATCH_SIZE = 100
                 for i in range(0, len(unsynced_sessions), BATCH_SIZE):
@@ -262,12 +266,12 @@ class SyncService:
                         SyncService.records_currently_sending = max(0, SyncService.records_currently_sending - len(page_sessions))
                         logger.info("%d/%d records processed", uploaded_count, len(batch))
             else:
-                logger.info("No new unsynced activities to sync.")
+                logger.info("No new unsynced activities to sync for user %s.", current_emp_id)
 
-            # Now sync any unuploaded screenshots for already-synced sessions
-            unuploaded = repository.get_sessions_with_unuploaded_screenshots()
+            # Now sync any unuploaded screenshots for already-synced sessions for this user
+            unuploaded = repository.get_sessions_with_unuploaded_screenshots(employee_id=current_emp_id)
             if unuploaded:
-                logger.info("Found %d unuploaded screenshots. Processing screenshot uploads...", len(unuploaded))
+                logger.info("Found %d unuploaded screenshots for user %s. Processing screenshot uploads...", len(unuploaded), current_emp_id)
                 for session in unuploaded:
                     success = self.upload_screenshot_now(
                         screenshot_path=session.screenshot_path,

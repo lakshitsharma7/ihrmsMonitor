@@ -38,6 +38,7 @@ class ActivitySession(Base):
     screenshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     server_session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     screenshot_uploaded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

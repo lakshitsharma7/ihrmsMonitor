@@ -73,6 +73,13 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
+
+    if "--test-screenshot" in sys.argv:
+        from services.screenshot import capture_screenshot
+        path = capture_screenshot()
+        print(f"TEST_SCREENSHOT_RESULT: {path}", flush=True)
+        return 0 if path else 1
+
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(APP_STYLESHEET)
 

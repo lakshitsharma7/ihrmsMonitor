@@ -1184,6 +1184,14 @@ class MainWindow(QMainWindow):
         self.stop_tracking()
         self._shutdown()
 
+        # Flush pending activities and screenshots for this user before clearing session
+        try:
+            from services.sync_service import SyncService
+            logger.info("Flushing pending activity and screenshots for user before logout...")
+            SyncService().sync_activity_now()
+        except Exception as flush_err:
+            logger.warning("Could not flush sync on logout: %s", flush_err)
+
         from services.session_service import SessionService
         SessionService().logout()
 
@@ -1199,6 +1207,7 @@ class MainWindow(QMainWindow):
             self.tray.tray_icon.hide()
 
         if self._login_window:
+            self._login_window.main_window = None
             self._login_window.show_and_clear()
         else:
             from ui.login_window import LoginWindow

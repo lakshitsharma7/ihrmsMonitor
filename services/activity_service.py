@@ -38,6 +38,15 @@ class ActivityService:
             db_session
         )
 
+    @staticmethod
+    def _current_employee_id() -> str | None:
+        try:
+            from services.session_service import SessionService
+            user = SessionService().current_user
+            return user.employee_id if user else None
+        except Exception:
+            return None
+
     def get_day_total_seconds(
         self,
         target_date: date,
@@ -72,6 +81,7 @@ class ActivityService:
             ).get_total_duration_seconds(
                 start_utc,
                 end_utc,
+                employee_id=self._current_employee_id(),
             )
         finally:
             db_session.close()
@@ -184,6 +194,7 @@ class ActivityService:
             ).get_application_usage(
                 start,
                 end,
+                employee_id=self._current_employee_id(),
             )
         finally:
             db_session.close()
@@ -224,6 +235,7 @@ class ActivityService:
                 ).get_sessions_between(
                     start,
                     end,
+                    employee_id=self._current_employee_id(),
                 )
             )
 
