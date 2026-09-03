@@ -50,7 +50,26 @@ class SyncService:
     last_sync_status: str = "Sent"  # Sending / Sent / Failed
     last_successful_sync_time: str = "Never"
     records_currently_sending: int = 0
-    current_sync_interval_seconds: int = 2 * 60 * 60  # Default 2 hours (7200 seconds)
+    current_sync_interval_seconds: int = 300  # Default 300 seconds until first API settings load
+    current_idle_threshold_seconds: int = 300  # Default 300 seconds until first API settings load
+
+    @staticmethod
+    def _save_cached_setting(key: str, value: Any) -> None:
+        try:
+            from PySide6.QtCore import QSettings
+            settings = QSettings("Indovision", "iHRMSMonitor")
+            settings.setValue(f"api_settings/{key}", value)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _load_cached_setting(key: str) -> Any:
+        try:
+            from PySide6.QtCore import QSettings
+            settings = QSettings("Indovision", "iHRMSMonitor")
+            return settings.value(f"api_settings/{key}")
+        except Exception:
+            return None
 
     def __init__(
         self,
@@ -67,10 +86,134 @@ class SyncService:
         self._api_url = api_url.rstrip("/")
         self._synced_session_ids = set()
 
+        # Restore last successfully received settings from persistent cache
+        cached_sync = self._load_cached_setting("sync_interval_seconds")
+        if cached_sync is not None:
+            try:
+                val = int(cached_sync)
+                if val > 0:
+                    self.current_sync_interval_seconds = val
+            except (ValueError, TypeError):
+                pass
+
+        cached_idle = self._load_cached_setting("idle_threshold_seconds")
+        if cached_idle is not None:
+            try:
+                val = int(cached_idle)
+                if val > 0:
+                    self.current_idle_threshold_seconds = val
+            except (ValueError, TypeError):
+                pass
+        else:
+            try:
+                from database.database import get_session
+                from database.repository import SettingsRepository
+                db_session = get_session()
+                saved_st = SettingsRepository(db_session).get_or_create()
+                self.current_idle_threshold_seconds = saved_st.idle_threshold
+                db_session.close()
+            except Exception:
+                pass
+
         logger.info(
-            "SyncService initialized: %s",
+            "SyncService initialized: %s (sync_interval_seconds=%d, idle_threshold_seconds=%d)",
             self._api_url,
+            self.current_sync_interval_seconds,
+            self.current_idle_threshold_seconds,
         )
+
+    def fetch_settings(self) -> dict:
+        """
+        Fetch latest configuration from tracking/get_settings at the beginning of each sync cycle
+        and apply the returned values directly without using overriding hardcoded fallbacks.
+        """
+        device_token = self._require_device_token()
+        if not device_token:
+            return {}
+
+        try:
+            response = requests.post(
+                f"{self._api_url}/tracking/get_settings",
+                data={"device_token": device_token},
+                timeout=5,
+            )
+            response.raise_for_status()
+            res_data = response.json()
+            settings_data = {}
+            if res_data.get("response") == "Success" and "data" in res_data:
+                settings_data = res_data.get("data", {})
+            elif res_data.get("status") == 1:
+                settings_data = res_data.get("settings", {}) or res_data.get("data", {})
+
+            if settings_data:
+                logger.info("Fetched configuration from Sync API (get_settings): %s", settings_data)
+
+                # 1. sync_interval_seconds: use exact API-returned value
+                server_sync = settings_data.get("sync_interval_seconds")
+                if server_sync is None:
+                    server_sync = settings_data.get("sync_interval")
+                if server_sync is not None:
+                    try:
+                        sync_val = int(server_sync)
+                        if sync_val > 0:
+                            self.current_sync_interval_seconds = sync_val
+                            self._save_cached_setting("sync_interval_seconds", sync_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                # 2. idle_threshold_seconds: use exact API-returned value
+                server_idle = settings_data.get("idle_threshold_seconds")
+                if server_idle is None:
+                    server_idle = settings_data.get("idle_threshold")
+                if server_idle is not None:
+                    try:
+                        idle_val = int(server_idle)
+                        if idle_val > 0:
+                            self.current_idle_threshold_seconds = idle_val
+                            self._save_cached_setting("idle_threshold_seconds", idle_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                # 3. Update local database settings
+                db_session = get_session()
+                try:
+                    from database.repository import SettingsRepository
+                    repo = SettingsRepository(db_session)
+                    update_kwargs = {}
+                    if self.current_idle_threshold_seconds:
+                        update_kwargs["idle_threshold"] = self.current_idle_threshold_seconds
+
+                    capture_interval = settings_data.get("capture_interval")
+                    if capture_interval is not None:
+                        update_kwargs["screenshot_custom_interval"] = int(capture_interval)
+                        update_kwargs["screenshot_interval_type"] = "custom"
+
+                    capture_mode = settings_data.get("capture_mode")
+                    if capture_mode is not None:
+                        update_kwargs["capture_on_switch"] = True if capture_mode != "disabled" else False
+
+                    tracking_enabled = settings_data.get("tracking_enabled")
+                    if tracking_enabled is not None:
+                        update_kwargs["tracking_enabled"] = bool(tracking_enabled)
+
+                    if update_kwargs:
+                        repo.update(**update_kwargs)
+                except Exception as db_err:
+                    logger.error("Failed to update database settings from get_settings response: %s", db_err)
+                finally:
+                    db_session.close()
+
+                return settings_data
+        except Exception as err:
+            logger.warning(
+                "Could not reach Sync API (tracking/get_settings); preserving last successfully received settings "
+                "(sync_interval_seconds=%d, idle_threshold_seconds=%d): %s",
+                self.current_sync_interval_seconds,
+                self.current_idle_threshold_seconds,
+                err,
+            )
+
+        return {}
 
     @classmethod
     def reset_sync_state(cls) -> None:
@@ -140,59 +283,22 @@ class SyncService:
         if not device_token:
             SyncService.last_sync_status = "Failed"
             SyncService.records_currently_sending = 0
+            logger.error("Sync FAILURE: No device token available - device is not enrolled.")
             return False
 
-        try:
-            response = requests.post(
-                f"{self._api_url}/tracking/get_settings",
-                data={"device_token": device_token},
-                timeout=5,
-            )
-            response.raise_for_status()
-            res_data = response.json()
-            settings_data = {}
-            if res_data.get("response") == "Success" and "data" in res_data:
-                settings_data = res_data.get("data", {})
-            elif res_data.get("status") == 1:
-                settings_data = res_data.get("settings", {})
+        # Fetch latest settings from existing API and apply returned values
+        self.fetch_settings()
 
-            if settings_data:
-                logger.info("Fetched configuration from Sync API (get_settings): %s", settings_data)
+        from datetime import datetime, timedelta
+        next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
+        next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                # Sync interval: default to 2 hours (7200 seconds) per requirement
-                server_sync_interval = settings_data.get("sync_interval_seconds") or settings_data.get("sync_interval")
-                if server_sync_interval and int(server_sync_interval) >= 7200:
-                    self.current_sync_interval_seconds = int(server_sync_interval)
-                else:
-                    self.current_sync_interval_seconds = 2 * 60 * 60
-
-                # Update local database settings
-                db_session = get_session()
-                try:
-                    from database.repository import SettingsRepository
-                    repo = SettingsRepository(db_session)
-
-                    capture_interval = settings_data.get("capture_interval", 180)
-                    capture_mode = settings_data.get("capture_mode", "activity_with_screenshots")
-                    tracking_enabled = settings_data.get("tracking_enabled", True)
-                    idle_threshold = settings_data.get("idle_threshold_seconds", 300)
-
-                    # Ensure capture_on_switch is enabled unless explicitly disabled
-                    capture_on_switch = True if capture_mode != "disabled" else False
-
-                    repo.update(
-                        screenshot_custom_interval=capture_interval,
-                        screenshot_interval_type="custom",
-                        capture_on_switch=capture_on_switch,
-                        tracking_enabled=tracking_enabled,
-                        idle_threshold=idle_threshold,
-                    )
-                except Exception as err:
-                    logger.error("Failed to update database settings from get_settings response: %s", err)
-                finally:
-                    db_session.close()
-        except Exception as err:
-            logger.warning("Could not reach Sync API (tracking/get_settings); continuing with local configuration: %s", err)
+        logger.info(
+            "Sync Cycle Started | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s",
+            self.current_sync_interval_seconds,
+            self.current_idle_threshold_seconds,
+            next_sync_str,
+        )
 
         db_session = get_session()
         try:
@@ -207,7 +313,12 @@ class SyncService:
             if unsynced_sessions:
                 SyncService.last_sync_status = "Sending"
                 SyncService.records_currently_sending = len(unsynced_sessions)
-                logger.info("Syncing %d unsynced closed sessions in batches for user %s", len(unsynced_sessions), current_emp_id)
+                logger.info(
+                    "Sync Records Sending | records_currently_sending=%d | user=%s | sync_interval_seconds=%d",
+                    len(unsynced_sessions),
+                    current_emp_id,
+                    self.current_sync_interval_seconds,
+                )
 
                 BATCH_SIZE = 100
                 for i in range(0, len(unsynced_sessions), BATCH_SIZE):
@@ -283,7 +394,8 @@ class SyncService:
                         SyncService.records_currently_sending = max(0, SyncService.records_currently_sending - len(page_sessions))
                         logger.info("%d/%d records processed", uploaded_count, len(batch))
             else:
-                logger.info("No new unsynced activities to sync for user %s.", current_emp_id)
+                SyncService.records_currently_sending = 0
+                logger.info("Sync Records Sending | records_currently_sending=0 | user=%s | (no unsynced activities)", current_emp_id)
 
             # Now sync any unuploaded screenshots for already-synced sessions for this user
             unuploaded = repository.get_sessions_with_unuploaded_screenshots(employee_id=current_emp_id)
@@ -303,10 +415,21 @@ class SyncService:
                     else:
                         logger.error("Screenshot upload failed or deferred for local session ID %d", session.id)
 
-            from datetime import datetime
+            from datetime import datetime, timedelta
             SyncService.last_sync_status = "Sent"
             SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             SyncService.records_currently_sending = 0
+
+            next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
+            next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            logger.info(
+                "Sync SUCCESS | records_uploaded=%d | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s",
+                uploaded_count if 'uploaded_count' in locals() else len(unsynced_sessions),
+                self.current_sync_interval_seconds,
+                self.current_idle_threshold_seconds,
+                next_sync_str,
+            )
             try:
                 from services.device_registry_service import DeviceRegistryService
                 DeviceRegistryService().record_sync_success()
@@ -315,9 +438,21 @@ class SyncService:
             return True
 
         except Exception as exc:
-            logger.exception("Unexpected error during activity sync: %s", exc)
+            logger.exception("Sync FAILURE: Unexpected error during activity sync: %s", exc)
             SyncService.last_sync_status = "Failed"
             SyncService.records_currently_sending = 0
+
+            next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
+            next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            logger.error(
+                "Sync FAILURE | user=%s | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s | error=%s",
+                current_emp_id if 'current_emp_id' in locals() else 'unknown',
+                self.current_sync_interval_seconds,
+                self.current_idle_threshold_seconds,
+                next_sync_str,
+                exc,
+            )
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(

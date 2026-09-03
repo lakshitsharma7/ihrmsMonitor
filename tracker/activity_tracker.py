@@ -15,7 +15,6 @@ from platform_support.base import (
 from tracker.activity_session import CurrentSession
 from utils.logger import get_logger
 
-from config.settings import SYNC_INTERVAL_SECONDS
 from services.screenshot import capture_screenshot
 
 
@@ -117,8 +116,9 @@ class ActivityTracker:
 
         self._last_screenshot_time = None
 
-        # Drives the periodic activity sync (see SYNC_INTERVAL_SECONDS).
+        # Drives the periodic activity sync dynamically from API (sync_interval_seconds)
         self._last_sync_time = None
+        self._last_settings_fetch_time = None
 
         # Tracks wall-clock timestamp between polls to detect system sleep / hibernate
         self._last_poll_time = None
@@ -203,6 +203,7 @@ class ActivityTracker:
         # (no connection, or the machine was shut down). Push those now
         # rather than making them wait a full cycle.
         self._last_sync_time = self._clock()
+        self._last_settings_fetch_time = self._clock()
 
         self._sync_activity()
 
@@ -283,6 +284,22 @@ class ActivityTracker:
                 idle_seconds
             )
 
+            # Dynamically adopt API-driven idle threshold from SyncService
+            if self._sync_service is not None:
+                api_idle = getattr(self._sync_service, "current_idle_threshold_seconds", None)
+                if api_idle is not None:
+                    try:
+                        api_idle_int = int(api_idle)
+                        if api_idle_int > 0 and api_idle_int != self._idle_threshold_seconds:
+                            logger.info(
+                                "ActivityTracker: Updating idle_threshold_seconds from API: %d seconds (previous: %d seconds)",
+                                api_idle_int,
+                                self._idle_threshold_seconds,
+                            )
+                            self._idle_threshold_seconds = api_idle_int
+                    except (ValueError, TypeError):
+                        pass
+
             was_idle = self._is_idle
 
             now_idle = (
@@ -347,16 +364,32 @@ class ActivityTracker:
             now = self._clock()
             sync_interval = self._get_sync_interval_seconds()
 
+            # Refresh dynamic settings periodically from API so changes like 300s -> 60s
+            # are adopted promptly without waiting for a lengthy sync cycle or rebuilding.
+            if self._sync_service is not None:
+                if self._last_settings_fetch_time is None:
+                    self._last_settings_fetch_time = now
+                elif (now - self._last_settings_fetch_time).total_seconds() >= min(sync_interval, 60.0):
+                    self._last_settings_fetch_time = now
+                    try:
+                        self._sync_service.fetch_settings()
+                        sync_interval = self._get_sync_interval_seconds()
+                    except Exception as fetch_err:
+                        logger.debug("Periodic settings fetch deferred: %s", fetch_err)
+
             if self._last_sync_time is None:
                 self._last_sync_time = now
 
             elif (now - self._last_sync_time).total_seconds() >= sync_interval:
                 self._last_sync_time = now
 
+                from datetime import timedelta
+                next_sync_dt = now + timedelta(seconds=sync_interval)
                 logger.info(
-                    "Activity sync interval reached (%d seconds / %.1f hours)",
+                    "Activity sync interval reached (%d seconds / %.1f min). Next sync scheduled for %s",
                     sync_interval,
-                    sync_interval / 3600.0,
+                    sync_interval / 60.0,
+                    next_sync_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 )
 
                 self._sync_activity()
@@ -879,12 +912,28 @@ class ActivityTracker:
     # ==========================================================
 
     def _get_sync_interval_seconds(self) -> int:
-        """Return the current sync interval in seconds (default 2 hours)."""
+        """Return the current sync interval in seconds dynamically from SyncService."""
         if self._sync_service is not None:
             configured = getattr(self._sync_service, "current_sync_interval_seconds", None)
-            if configured and int(configured) > 0:
-                return int(configured)
-        return SYNC_INTERVAL_SECONDS
+            if configured is not None:
+                try:
+                    val = int(configured)
+                    if val > 0:
+                        return val
+                except (ValueError, TypeError):
+                    pass
+            # Try to load cached API setting if not yet loaded in memory
+            cached_fn = getattr(self._sync_service, "_load_cached_setting", None)
+            if callable(cached_fn):
+                val = cached_fn("sync_interval_seconds")
+                if val is not None:
+                    try:
+                        val_int = int(val)
+                        if val_int > 0:
+                            return val_int
+                    except (ValueError, TypeError):
+                        pass
+        return 60
 
     def _sync_activity(
         self,

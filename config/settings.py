@@ -43,11 +43,10 @@ def get_running_app_version() -> str:
 # How often (in seconds) the tracker worker polls for the active application.
 POLL_INTERVAL_SECONDS = 1.0
 
-# How often collected activity logs are sent to the Log API. Logs are always
-# written to the local database first, so nothing is lost between cycles: a
-# failed send simply leaves the records unsynced and the next cycle retries
-# them.
-SYNC_INTERVAL_SECONDS = 2 * 60 * 60  # 2 hours (7200 seconds)
+# How often collected activity logs are sent to the Log API.
+# This value is fully dynamic from the API (sync_interval_seconds) and is never hardcoded.
+# SyncService and ActivityTracker dynamically respect the server-configured interval.
+SYNC_INTERVAL_SECONDS = 300  # Initial fallback before first API configuration load
 
 # Default idle threshold, in seconds, before a user is considered idle.
 DEFAULT_IDLE_THRESHOLD_SECONDS = 3 * 60
