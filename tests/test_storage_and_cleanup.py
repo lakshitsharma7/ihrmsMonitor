@@ -240,6 +240,50 @@ class TestLocalStorageAndCleanupFlow(unittest.TestCase):
         self.assertFalse(file_uploaded.exists(), "Uploaded file should be removed by sweep")
         self.assertTrue(file_pending.exists(), "Pending file must NOT be touched by sweep")
 
+    def test_dynamic_records_uploaded_count_on_dashboard(self):
+        """Verify that Dashboard dynamic Records Uploaded only counts confirmed uploaded records."""
+        import sys
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        from services.activity_service import ActivityService
+        from ui.dashboard import DashboardPage
+
+        mock_user = UserSession(
+            username="emp_count_test",
+            role="employee",
+            employee_id="EMP_CNT_99",
+            device_token="DEV_TOKEN_COUNT",
+        )
+        SessionService()._current_user = mock_user
+
+        # Create 2 unuploaded records
+        sess1 = self.repo.create_session("AppA.exe", 10, "A", datetime.now(timezone.utc), employee_id="EMP_CNT_99")
+        self.repo.close_session(sess1.id, datetime.now(timezone.utc), 60)
+
+        sess2 = self.repo.create_session("AppB.exe", 20, "B", datetime.now(timezone.utc), employee_id="EMP_CNT_99")
+        self.repo.close_session(sess2.id, datetime.now(timezone.utc), 60)
+
+        activity_svc = ActivityService(lambda: self.db_session)
+        self.assertEqual(activity_svc.get_uploaded_records_count(), 0)
+
+        dashboard = DashboardPage(activity_svc)
+        self.assertEqual(dashboard.records_uploaded_label.text(), "Records Uploaded: 0")
+
+        # Now simulate server confirmation for sess1
+        self.repo.update_session_server_id(sess1.id, "SRV_991")
+        dashboard.refresh()
+
+        self.assertEqual(activity_svc.get_uploaded_records_count(), 1)
+        self.assertEqual(dashboard.records_uploaded_label.text(), "Records Uploaded: 1")
+
+        # Simulate server confirmation for sess2
+        self.repo.update_session_server_id(sess2.id, "SRV_992")
+        dashboard.refresh()
+
+        self.assertEqual(activity_svc.get_uploaded_records_count(), 2)
+        self.assertEqual(dashboard.records_uploaded_label.text(), "Records Uploaded: 2")
+
 
 if __name__ == "__main__":
     unittest.main()

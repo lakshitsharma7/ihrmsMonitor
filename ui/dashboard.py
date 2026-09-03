@@ -171,6 +171,10 @@ class DashboardPage(QWidget):
             "Last successful API sync: Never"
         )
 
+        self.records_uploaded_label = QLabel(
+            "Records Uploaded: 0"
+        )
+
         self.unsynced_records_label = QLabel(
             "Records uploading: 0"
         )
@@ -191,6 +195,7 @@ class DashboardPage(QWidget):
         self.tracking_status_label.setObjectName("StatusLabel")
         self.sync_status_label.setObjectName("StatusLabel")
         self.last_sync_label.setObjectName("StatusLabel")
+        self.records_uploaded_label.setObjectName("StatusLabel")
         self.unsynced_records_label.setObjectName("StatusLabel")
         self.idle_time_label.setObjectName("StatusLabel")
         self.version_label.setObjectName("StatusLabel")
@@ -200,6 +205,7 @@ class DashboardPage(QWidget):
         status_grid.addWidget(self.tracking_status_label, 0, 0)
         status_grid.addWidget(self.sync_status_label, 1, 0)
         status_grid.addWidget(self.last_sync_label, 2, 0)
+        status_grid.addWidget(self.records_uploaded_label, 3, 0)
 
         # Column 1
         status_grid.addWidget(self.idle_time_label, 0, 1)
@@ -421,8 +427,18 @@ class DashboardPage(QWidget):
         self.last_sync_label.setText(f"Last successful API sync: {SyncService.last_successful_sync_time}")
         self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
 
+        try:
+            uploaded_count = self._service.get_uploaded_records_count()
+            self.set_records_uploaded(uploaded_count)
+        except Exception:
+            pass
+
+    def set_records_uploaded(self, count: int) -> None:
+        """Update the dynamic Records Uploaded count on the dashboard."""
+        self.records_uploaded_label.setText(f"Records Uploaded: {count}")
+
     def refresh(self) -> None:
-        """Reload today's total, applications, and timeline."""
+        """Reload today's total, applications, timeline, and uploaded records count."""
 
         # ==============================================================
         # Today's total
@@ -437,6 +453,12 @@ class DashboardPage(QWidget):
                 total_seconds
             )
         )
+
+        try:
+            uploaded_count = self._service.get_uploaded_records_count()
+            self.set_records_uploaded(uploaded_count)
+        except Exception:
+            pass
 
         # ==============================================================
         # Get today's activity sessions once

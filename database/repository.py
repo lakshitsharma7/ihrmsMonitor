@@ -585,6 +585,28 @@ class ActivityRepository:
         )
         return list(self._session.execute(stmt).scalars().all())
 
+    def get_uploaded_sessions_count(self, employee_id: str | None = None) -> int:
+        """Return the count of activity records confirmed successfully uploaded to the server."""
+        from sqlalchemy import func
+
+        stmt = (
+            select(func.count(ActivitySession.id))
+            .where(ActivitySession.server_session_id.is_not(None))
+        )
+        if employee_id is None:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    employee_id = str(u.employee_id or u.indo_code or u.username or "")
+            except Exception:
+                pass
+
+        if employee_id:
+            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+
+        return self._session.execute(stmt).scalar() or 0
+
     # ==========================================================
     # GET SESSIONS BETWEEN
     # ==========================================================

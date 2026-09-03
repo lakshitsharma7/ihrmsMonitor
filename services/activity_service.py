@@ -253,6 +253,16 @@ class ActivityService:
         finally:
             db_session.close()
 
+    def get_uploaded_records_count(self) -> int:
+        """Return the count of records confirmed successfully uploaded to the server."""
+        db_session = self._session_factory()
+        try:
+            return self._repo(db_session).get_uploaded_sessions_count(
+                employee_id=self._current_employee_id()
+            )
+        finally:
+            db_session.close()
+
     @staticmethod
     def format_duration(
         total_seconds: int,
