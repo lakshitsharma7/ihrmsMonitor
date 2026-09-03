@@ -474,7 +474,7 @@ class UserDeviceDialog(QDialog):
                 host_item = QTableWidgetItem(d.get("hostname") or "Unknown")
                 emp_str = f"{d.get('username') or ''} ({d.get('employee_id') or '-'})".strip()
                 emp_item = QTableWidgetItem(emp_str)
-                inst_ver_item = QTableWidgetItem(d.get("installed_version") or "1.0.0")
+                inst_ver_item = QTableWidgetItem(d.get("installed_version") or get_running_app_version())
                 latest_ver_item = QTableWidgetItem(str(d.get("latest_version") or "N/A"))
 
                 status_text = d.get("update_status", "Unknown")
@@ -586,9 +586,15 @@ class MainWindow(QMainWindow):
         self._latest_installer_path: str | None = None
         self._latest_version: str | None = None
         self._is_force_update: bool = False
+        self._offline_update_pending: bool = False
+
+        # Fast retry timer when offline or update is pending
+        from PySide6.QtCore import QTimer
+        self._offline_update_retry_timer = QTimer(self)
+        self._offline_update_retry_timer.setInterval(30 * 1000)  # 30 seconds
+        self._offline_update_retry_timer.timeout.connect(lambda: self._check_for_updates(manual=False))
 
         # Trigger background automatic update check shortly after startup
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(2000, self._check_for_updates)
 
         # Also schedule recurring update checks every 2 hours for continuously open laptops
@@ -612,6 +618,8 @@ class MainWindow(QMainWindow):
                     my_status = d["update_status"]
                     break
             self.dashboard_page.set_update_status(my_status)
+            if my_status == "Update Pending":
+                self._offline_update_pending = True
         except Exception:
             pass
 
@@ -1219,6 +1227,16 @@ class MainWindow(QMainWindow):
             self.weekly_page.refresh()
         self._apply_rbac_permissions()
 
+        # If an update check was pending/deferred due to offline status and sync succeeds, trigger check immediately
+        if getattr(self, "_offline_update_pending", False):
+            from services.sync_service import SyncService
+            if SyncService.last_sync_status == "Sent":
+                logger.info("Internet connection restored via sync. Auto-initiating pending update check.")
+                self._offline_update_pending = False
+                if getattr(self, "_offline_update_retry_timer", None) and self._offline_update_retry_timer.isActive():
+                    self._offline_update_retry_timer.stop()
+                self._check_for_updates(manual=False)
+
     # ==========================================================
     # SETTINGS
     # ==========================================================
@@ -1410,13 +1428,40 @@ class MainWindow(QMainWindow):
             from services.update_service import UpdateService
 
             api_config = ApiConfig()
-            api_url = api_config.base_url
+            try:
+                api_url = api_config.base_url
+            except Exception:
+                api_url = ""
             session = SessionService().current_user
             indo_code = session.indo_code if session else None
             api_key = session.api_key if session else None
 
+            def on_phase(phase: str, desc: str):
+                logger.info("Pipeline phase changed: %s (%s)", phase, desc)
+                if phase == "done":
+                    self._offline_update_pending = False
+                    from config.settings import get_running_app_version
+                    self.dashboard_page.set_version(get_running_app_version())
+                    self.dashboard_page.set_update_status("Updated")
+                    self.update_button.setVisible(False)
+                    if getattr(self, "_offline_update_retry_timer", None) and self._offline_update_retry_timer.isActive():
+                        self._offline_update_retry_timer.stop()
+                elif phase == "uploading_pending":
+                    self.dashboard_page.set_update_status("Syncing before update...")
+                elif phase == "downloading":
+                    ver_str = f" v{self._latest_version}" if self._latest_version else ""
+                    self.dashboard_page.set_update_status(f"Downloading{ver_str}...")
+                elif phase == "installing":
+                    self.dashboard_page.set_update_status("Installing update...")
+
+            def on_progress(pct: int, cur: int, tot: int):
+                if 0 <= pct <= 100:
+                    ver_str = f" v{self._latest_version}" if self._latest_version else ""
+                    self.dashboard_page.set_update_status(f"Downloading{ver_str} ({pct}%)")
+
             def on_available(version: str, download_url: str, force: bool):
                 logger.info("Pipeline update available: v%s (force=%s)", version, force)
+                self._offline_update_pending = False
                 self._latest_version = version
                 self._is_force_update = force
                 self.dashboard_page.set_update_status(f"Pending (v{version} available)")
@@ -1448,20 +1493,54 @@ class MainWindow(QMainWindow):
 
             def on_error(phase: str, err_msg: str):
                 logger.warning("Pipeline update error (%s): %s", phase, err_msg)
-                self.dashboard_page.set_update_status("Failed")
-                self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
+                is_offline = any(term in err_msg.lower() for term in ("connect", "timeout", "network", "offline", "unreachable", "name resolution", "temporary failure"))
+                if is_offline:
+                    self._offline_update_pending = True
+                    self.dashboard_page.set_update_status("Update Pending (Offline)")
+                    if getattr(self, "_offline_update_retry_timer", None) and not self._offline_update_retry_timer.isActive():
+                        self._offline_update_retry_timer.start(30000)
+                else:
+                    self.dashboard_page.set_update_status("Failed")
+                    self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
+
+                # Ensure active tracking is running and unaffected by update errors
+                try:
+                    from services.session_service import SessionService
+                    session = SessionService().current_user
+                    if session and session.tracking_permitted:
+                        if not self._tracker or not getattr(self._tracker, "is_tracking", False):
+                            logger.info("Ensuring tracking remains active after update failure.")
+                            self.start_tracking()
+                except Exception as track_err:
+                    logger.debug("Could not verify tracking in update on_error: %s", track_err)
+
                 if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
                     self._update_dialog._on_error_occurred(phase, err_msg)
                 elif manual:
                     from PySide6.QtWidgets import QMessageBox
                     QMessageBox.warning(self, "Check for Updates", f"Update error ({phase}):\n{err_msg}")
 
+            def on_ready_to_install(installer_path: str):
+                logger.info("Pipeline update ready to install received on Main Thread: %s", installer_path)
+                self._latest_installer_path = installer_path
+                self._really_quit = True
+                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
+                    try:
+                        self._update_dialog.close()
+                    except Exception:
+                        pass
+                from services.update_service import install_update_and_restart
+                install_update_and_restart(installer_path, exit_process=True)
+
             self._pipeline_worker = UpdateService().start_pipeline(
                 api_url=api_url,
                 indo_code=indo_code,
                 api_key=api_key,
+                on_phase=on_phase,
+                on_progress=on_progress,
                 on_available=on_available,
                 on_download_completed=on_completed,
+                on_ready_to_install=on_ready_to_install,
                 on_error=on_error,
             )
 

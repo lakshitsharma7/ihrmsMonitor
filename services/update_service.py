@@ -78,6 +78,61 @@ def is_newer_version(server_version: str, current_version: str | None = None) ->
 # ==============================================================
 # UPDATE WORKER THREAD
 # ==============================================================
+# DOWNLOAD CANDIDATE RESOLUTION
+# ==============================================================
+
+def resolve_download_candidates(
+    api_url: str,
+    file_name: str = "",
+    download_url: str = "",
+    activity_tracker_link: str = "",
+) -> list[str]:
+    """Construct an ordered list of candidate download URLs for the update installer."""
+    candidates = []
+
+    # 1. Explicit download URL from API response or configuration
+    if download_url and str(download_url).strip():
+        u = str(download_url).strip()
+        if u.startswith("http://") or u.startswith("https://"):
+            candidates.append(u)
+
+    # 2. If file_name is itself a full URL
+    if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
+        candidates.append(str(file_name).strip())
+
+    # 3. Base domain upload paths derived from api_url
+    if file_name and not str(file_name).startswith("http"):
+        clean_file = str(file_name).strip()
+        parts = api_url.split("/hrms_api")
+        base_domain = parts[0].rstrip("/") if parts else api_url.rstrip("/")
+
+        candidates.append(f"{base_domain}/uploads/{clean_file}")
+        candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
+        candidates.append(f"{base_domain}/uploads/version/{clean_file}")
+        candidates.append(f"{base_domain}/{clean_file}")
+
+    # 4. Activity tracker link if it explicitly references an executable installer
+    if activity_tracker_link and str(activity_tracker_link).strip():
+        atl = str(activity_tracker_link).strip()
+        if atl.lower().endswith(".exe"):
+            candidates.append(atl)
+        elif file_name and not str(file_name).startswith("http"):
+            candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            unique_candidates.append(c)
+
+    return unique_candidates
+
+
+# ==============================================================
+# UPDATE CHECK WORKER
+# ==============================================================
 
 class UpdateCheckWorker(QThread):
     """Background worker thread to check for updates and download installer."""
@@ -99,9 +154,35 @@ class UpdateCheckWorker(QThread):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._api_url = api_url.rstrip("/")
-        self._indo_code = indo_code or "DEFAULT"
-        self._api_key = api_key or "DEFAULT"
+        self._api_url = (api_url or "").rstrip("/")
+        self._indo_code = indo_code
+        self._api_key = api_key
+        if not self._indo_code or not self._api_key:
+            try:
+                from services.session_service import SessionService
+                cur = SessionService().current_user
+                if cur:
+                    self._indo_code = self._indo_code or cur.indo_code
+                    self._api_key = self._api_key or cur.api_key
+            except Exception:
+                pass
+        if not self._indo_code or not self._api_key:
+            try:
+                from services.secure_session import SessionStore
+                sdata = SessionStore().load_session()
+                if sdata:
+                    self._indo_code = self._indo_code or sdata.get("indo_code")
+                    self._api_key = self._api_key or sdata.get("api_key")
+            except Exception:
+                pass
+        if not self._api_url:
+            try:
+                from config.api_config import ApiConfig
+                self._api_url = (ApiConfig().base_url or "").rstrip("/")
+            except Exception:
+                pass
+        self._indo_code = self._indo_code or "DEFAULT"
+        self._api_key = self._api_key or "DEFAULT"
         self._auto_download = auto_download
         self._is_cancelled = False
 
@@ -122,7 +203,7 @@ class UpdateCheckWorker(QThread):
             force_update = False
 
             # ----------------------------------------------------------
-            # 1. AppController Version URL & Configuration Source
+            # 1. AppController Version URL (External Manifest)
             # ----------------------------------------------------------
             try:
                 from config.api_config import ApiConfig
@@ -135,14 +216,13 @@ class UpdateCheckWorker(QThread):
                         timestamp = int(time.time())
                         cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
                         v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                        if v_resp.status_code == 200:
+                        if v_resp.status_code == 200 and v_resp.text.strip():
                             try:
                                 v_data = v_resp.json()
                                 if isinstance(v_data, dict):
                                     server_version = str(
                                         v_data.get("version")
                                         or v_data.get("version_code")
-                                        or v_data.get("activity_tracker_version")
                                         or ""
                                     ).strip()
                                     file_name = str(
@@ -161,19 +241,16 @@ class UpdateCheckWorker(QThread):
                     except Exception as v_err:
                         logger.debug("AppController version URL check request failed: %s", v_err)
 
-                # If version not resolved from URL GET, check direct activity_tracker_version in AppController
-                if not server_version and api_cfg.activity_tracker_version:
-                    server_version = str(api_cfg.activity_tracker_version).strip()
-                    logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
-
                 if not download_url and api_cfg.activity_tracker_link:
-                    download_url = api_cfg.activity_tracker_link
+                    atl = str(api_cfg.activity_tracker_link).strip()
+                    if atl.lower().endswith(".exe"):
+                        download_url = atl
 
             except Exception as ac_err:
                 logger.debug("Error checking AppController version details: %s", ac_err)
 
             # ----------------------------------------------------------
-            # 2. Company Endpoint Fallback (/punch/check_new_version)
+            # 2. Company Endpoint (/punch/check_new_version)
             # ----------------------------------------------------------
             if not server_version or server_version.upper() == "NA":
                 check_url = f"{self._api_url}/punch/check_new_version"
@@ -186,15 +263,28 @@ class UpdateCheckWorker(QThread):
                 try:
                     cb_check_url = f"{check_url}?_t={int(time.time())}"
                     resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                    if resp.status_code == 200:
+                    if resp.status_code == 200 and resp.text.strip():
                         data = resp.json()
                         logger.info("Version check response from punch/check_new_version: %s", data)
                         if data.get("status") == 1:
                             server_version = str(data.get("version_code", "")).strip()
                             file_name = str(data.get("file_name", "")).strip()
+                            if data.get("download_url"):
+                                download_url = str(data.get("download_url")).strip()
                             force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
                 except Exception as punch_err:
                     logger.debug("Punch check_new_version failed: %s", punch_err)
+
+            # ----------------------------------------------------------
+            # 3. Direct AppController Fallback (activity_tracker_version)
+            # ----------------------------------------------------------
+            if not server_version or server_version.upper() == "NA":
+                try:
+                    if api_cfg.activity_tracker_version:
+                        server_version = str(api_cfg.activity_tracker_version).strip()
+                        logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
+                except Exception:
+                    pass
 
             if not server_version or server_version.upper() == "NA":
                 logger.info("No newer version reported. Application is up to date.")
@@ -219,7 +309,7 @@ class UpdateCheckWorker(QThread):
             logger.info(
                 "Newer version available: v%s (current: v%s). Download target: %s (force=%s)",
                 server_version,
-                APP_VERSION,
+                installed_version,
                 download_url,
                 force_update,
             )
@@ -254,7 +344,7 @@ class UpdateCheckWorker(QThread):
                     error_type="UPDATE_CHECK_ERROR",
                     error_message=f"Update check failed: {err}",
                     exc=err,
-                    extra_context={"current_version": APP_VERSION, "api_url": self._api_url},
+                    extra_context={"current_version": installed_version, "api_url": self._api_url},
                 )
             except Exception:
                 pass
@@ -264,63 +354,134 @@ class UpdateCheckWorker(QThread):
         if file_name.startswith("http://") or file_name.startswith("https://"):
             return file_name
 
-        # Deriving from api_url base domain
-        # e.g. https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api -> https://softdev.indovisionservices.in/ihrms84
         parts = self._api_url.split("/hrms_api")
         base_domain = parts[0] if parts else self._api_url
         return f"{base_domain}/uploads/{file_name}"
 
-    def _download_installer(self, download_url: str, version: str, force_update: bool) -> None:
+    def _download_installer(self, download_url: str, version: str, force_update: bool, file_name: str = "") -> None:
         """Download installer file with streaming progress to updates directory."""
         updates_dir = get_updates_directory()
-        installer_path = updates_dir / f"iHRMSMonitorSetup_v{version}.exe"
+        safe_name = f"iHRMSMonitorSetup_v{version}.exe"
+        installer_path = updates_dir / safe_name
+        temp_path = updates_dir / f"{safe_name}.tmp"
+
+        # Remove 0-byte or corrupted installer file if previously left behind
+        if installer_path.exists() and installer_path.stat().st_size < 1024 * 100:
+            try:
+                installer_path.unlink()
+            except Exception:
+                pass
 
         # Check if already downloaded and verified
-        if installer_path.exists() and installer_path.stat().st_size > 1024 * 1024:
-            logger.info("Installer already downloaded at: %s", installer_path)
-            self.download_progress.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
-            self.download_completed.emit(str(installer_path), version, force_update)
-            self.check_completed.emit(True)
-            return
+        if installer_path.exists() and installer_path.stat().st_size >= 1024 * 100:
+            try:
+                with open(installer_path, "rb") as vf:
+                    if vf.read(2) == b"MZ":
+                        logger.info("Installer already downloaded at: %s", installer_path)
+                        self.download_progress.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
+                        self.download_completed.emit(str(installer_path), version, force_update)
+                        self.check_completed.emit(True)
+                        return
+            except Exception:
+                pass
 
-        temp_path = updates_dir / f"iHRMSMonitorSetup_v{version}.tmp"
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
         self.status_changed.emit(f"Downloading update v{version}...")
-        logger.info("Downloading update installer from %s to %s", download_url, temp_path)
+
+        candidates = resolve_download_candidates(
+            api_url=self._api_url,
+            file_name=file_name,
+            download_url=download_url,
+        )
 
         try:
-            with requests.get(download_url, stream=True, timeout=60) as r:
-                if r.status_code != 200:
-                    logger.warning("Failed to download installer (HTTP %d)", r.status_code)
-                    self.error_occurred.emit(f"Download failed with HTTP {r.status_code}")
+            download_successful = False
+            for cand_url in candidates:
+                if self._is_cancelled:
                     return
+                logger.info("Downloading update installer from %s to %s", cand_url, temp_path)
+                try:
+                    with requests.get(cand_url, stream=True, timeout=60) as r:
+                        if r.status_code != 200:
+                            logger.warning("Candidate %s returned HTTP %d", cand_url, r.status_code)
+                            continue
+                        ct = r.headers.get("content-type", "").lower()
+                        if "text/html" in ct or "text/plain" in ct:
+                            logger.warning("Candidate %s returned HTML body", cand_url)
+                            continue
 
-                total_size = int(r.headers.get("content-length", 0))
-                downloaded = 0
-                chunk_size = 64 * 1024  # 64 KB chunks
+                        total_size = int(r.headers.get("content-length", 0))
+                        downloaded = 0
+                        is_valid_header = None
 
-                with open(temp_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=chunk_size):
-                        if self._is_cancelled:
-                            logger.info("Update download cancelled by user.")
-                            f.close()
+                        with open(temp_path, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=64 * 1024):
+                                if self._is_cancelled:
+                                    f.close()
+                                    if temp_path.exists():
+                                        temp_path.unlink()
+                                    return
+                                if chunk:
+                                    if is_valid_header is None:
+                                        if chunk[:2] != b"MZ":
+                                            is_valid_header = False
+                                            break
+                                        is_valid_header = True
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    if total_size > 0:
+                                        percent = int((downloaded / total_size) * 100)
+                                        self.download_progress.emit(percent, downloaded, total_size)
+
+                        if is_valid_header is False:
                             if temp_path.exists():
                                 temp_path.unlink()
-                            return
+                            continue
 
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0:
-                                percent = int((downloaded / total_size) * 100)
-                                self.download_progress.emit(percent, downloaded, total_size)
+                    if temp_path.exists() and temp_path.stat().st_size >= 1024 * 100:
+                        if installer_path.exists():
+                            installer_path.unlink()
+                        temp_path.rename(installer_path)
+                        download_successful = True
+                        logger.info("Download completed successfully: %s (%d bytes)", installer_path, installer_path.stat().st_size)
+                        break
+                except Exception as cand_err:
+                    logger.debug("Candidate download error: %s", cand_err)
+                    if temp_path.exists():
+                        try:
+                            temp_path.unlink()
+                        except Exception:
+                            pass
 
-            # Atomic rename from .tmp to .exe
-            if temp_path.exists():
-                if installer_path.exists():
-                    installer_path.unlink()
-                temp_path.rename(installer_path)
+            # Dev / local test fallback
+            if not download_successful:
+                local_candidates = [
+                    Path("dist/installer/iHRMSMonitorSetup.exe"),
+                    Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "iHRMS Monitor" / "iHRMSMonitorSetup.exe",
+                ]
+                for loc_p in local_candidates:
+                    if loc_p.exists() and loc_p.stat().st_size >= 1024 * 100:
+                        try:
+                            with open(loc_p, "rb") as lf:
+                                if lf.read(2) == b"MZ":
+                                    import shutil
+                                    shutil.copyfile(loc_p, installer_path)
+                                    download_successful = True
+                                    logger.info("Using local installer package from %s (%d bytes)", loc_p, installer_path.stat().st_size)
+                                    break
+                        except Exception:
+                            pass
 
-            logger.info("Download completed successfully: %s (%d bytes)", installer_path, installer_path.stat().st_size)
+            if not download_successful or not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
+                err_msg = f"Update installer for v{version} could not be downloaded."
+                self.error_occurred.emit(err_msg)
+                return
+
             self.download_progress.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
             self.download_completed.emit(str(installer_path), version, force_update)
             self.check_completed.emit(True)
@@ -352,6 +513,7 @@ class UpdateCheckWorker(QThread):
 def flush_pending_data_before_update(
     max_retries: int = 2,
     on_progress=None,
+    stop_tracker: bool = False,
 ) -> bool:
     """
     Upload all pending activity logs and pending screenshots before updating.
@@ -369,18 +531,26 @@ def flush_pending_data_before_update(
 
     logger.info("Verifying pending activity logs and screenshots before update...")
 
-    # Finalize active tracking session if tracker is running
-    try:
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance()
-        if app:
-            for widget in app.topLevelWidgets():
-                if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
-                    logger.info("Stopping active tracking to record session before update.")
-                    widget.stop_tracking()
-                    time.sleep(0.5)
-    except Exception as stop_err:
-        logger.debug("Could not auto-stop active tracker: %s", stop_err)
+    # Finalize active tracking session ONLY if stopping is explicitly requested (right before restart)
+    if stop_tracker:
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import QMetaObject, Qt, QObject
+            app = QApplication.instance()
+            if app:
+                for widget in app.topLevelWidgets():
+                    if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
+                        logger.info("Stopping active tracking to record session before update.")
+                        try:
+                            if isinstance(widget, QObject):
+                                QMetaObject.invokeMethod(widget, "stop_tracking", Qt.ConnectionType.QueuedConnection)
+                            else:
+                                widget.stop_tracking()
+                        except Exception:
+                            widget.stop_tracking()
+                        time.sleep(0.5)
+        except Exception as stop_err:
+            logger.debug("Could not auto-stop active tracker: %s", stop_err)
 
     emp_id = None
     try:
@@ -494,14 +664,10 @@ def flush_pending_data_before_update(
 # SAFE INSTALLATION & RESTART
 # ==============================================================
 
-def install_update_and_restart(installer_path: str) -> bool:
+def install_update_and_restart(installer_path: str, exit_process: bool = True) -> bool:
     """
     Safely execute the Inno Setup installer in silent/unattended upgrade mode and relaunch the updated app.
-
-    Inno Setup flags:
-    /SILENT: Show progress window without interactive wizard pages.
-    /SP-: Skip initial 'This will install...' prompt.
-    /CLOSEAPPLICATIONS: Gracefully close running app processes.
+    Prevents any UI hang or "Not Responding" state by cleanly releasing file locks and terminating immediately.
     """
     path = Path(installer_path)
     if not path.exists():
@@ -528,15 +694,42 @@ def install_update_and_restart(installer_path: str) -> bool:
 
     updates_dir = get_updates_directory()
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    target_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+    default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+    target_exe = Path(sys.executable) if getattr(sys, "frozen", False) else default_exe
+    current_pid = os.getpid()
+
+    from PySide6.QtCore import QDir
+    lock_file_path = Path(QDir.tempPath()) / "ihrms_monitor.lock"
 
     bat_path = updates_dir / "silent_update.bat"
     bat_content = f"""@echo off
-timeout /t 2 /nobreak > NUL
-start "" /wait "{path}" /SILENT /SP- /CLOSEAPPLICATIONS
+setlocal
+rem 1. Wait for parent process to exit and release file handles
+timeout /t 1 /nobreak > NUL
+
+rem 2. Terminate running instance if still shutting down
+taskkill /F /IM "iHRMS Monitor.exe" > NUL 2>&1
+
+rem 3. Brief wait for file unlock
+timeout /t 1 /nobreak > NUL
+
+rem 4. Clear single-instance lock file so new app starts without delay
+if exist "{lock_file_path}" del /f /q "{lock_file_path}" > NUL 2>&1
+
+rem 5. Execute Inno Setup installer silently
+start "" /wait "{path}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-
+
+rem 6. Wait for installer completion
+timeout /t 1 /nobreak > NUL
+
+rem 7. Launch updated application
 if exist "{target_exe}" (
     start "" "{target_exe}"
+) else if exist "{default_exe}" (
+    start "" "{default_exe}"
 )
+
+rem 8. Self-delete update script
 del "%~f0"
 """
     try:
@@ -554,15 +747,53 @@ del "%~f0"
             subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
             logger.info("Spawned detached silent update script: %s", bat_path)
         else:
-            cmd = f'cmd.exe /c start "" "{path}" /SILENT /SP- /CLOSEAPPLICATIONS'
+            cmd = f'cmd.exe /c start "" "{path}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-'
             subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
 
-        logger.info("Installer launched. Quitting current application cleanly.")
+        logger.info("Installer launched. Exiting application process cleanly to release file locks.")
 
-        # Cleanly quit application
-        app = QApplication.instance()
-        if app:
-            app.quit()
+        # 1. Close Qt windows and stop UI gracefully (safely on main thread or queued)
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import QCoreApplication, QThread
+            app = QApplication.instance()
+            if app:
+                is_main_thread = (QThread.currentThread() == app.thread())
+                for widget in app.topLevelWidgets():
+                    if hasattr(widget, "_really_quit"):
+                        widget._really_quit = True
+                    try:
+                        if is_main_thread:
+                            widget.close()
+                        else:
+                            widget.hide()
+                    except Exception:
+                        pass
+                if is_main_thread:
+                    app.quit()
+                    QCoreApplication.processEvents()
+        except Exception as q_err:
+            logger.debug("Error closing Qt application: %s", q_err)
+
+        # 2. Release lock file in Python
+        try:
+            if lock_file_path.exists():
+                lock_file_path.unlink()
+        except Exception:
+            pass
+
+        # 3. Flush and shut down logger
+        try:
+            import logging
+            logging.shutdown()
+        except Exception:
+            pass
+
+        # 4. Immediate, definitive exit - releases all OS file locks immediately
+        is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+        if exit_process and not is_running_tests:
+            os._exit(0)
+
         return True
     except Exception as err:
         logger.exception("Failed to spawn update installer: %s", err)
@@ -603,9 +834,35 @@ class UpdatePipelineWorker(QThread):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._api_url = api_url.rstrip("/")
-        self._indo_code = indo_code or "DEFAULT"
-        self._api_key = api_key or "DEFAULT"
+        self._api_url = (api_url or "").rstrip("/")
+        self._indo_code = indo_code
+        self._api_key = api_key
+        if not self._indo_code or not self._api_key:
+            try:
+                from services.session_service import SessionService
+                cur = SessionService().current_user
+                if cur:
+                    self._indo_code = self._indo_code or cur.indo_code
+                    self._api_key = self._api_key or cur.api_key
+            except Exception:
+                pass
+        if not self._indo_code or not self._api_key:
+            try:
+                from services.secure_session import SessionStore
+                sdata = SessionStore().load_session()
+                if sdata:
+                    self._indo_code = self._indo_code or sdata.get("indo_code")
+                    self._api_key = self._api_key or sdata.get("api_key")
+            except Exception:
+                pass
+        if not self._api_url:
+            try:
+                from config.api_config import ApiConfig
+                self._api_url = (ApiConfig().base_url or "").rstrip("/")
+            except Exception:
+                pass
+        self._indo_code = self._indo_code or "DEFAULT"
+        self._api_key = self._api_key or "DEFAULT"
         self._is_cancelled = False
         self._installer_path: str | None = None
         self._server_version: str | None = None
@@ -629,7 +886,9 @@ class UpdatePipelineWorker(QThread):
             download_url = ""
             force_update = False
 
-            # AppController
+            # --------------------------------------------------
+            # 1. AppController Version URL (External Manifest)
+            # --------------------------------------------------
             try:
                 from config.api_config import ApiConfig
                 api_cfg = ApiConfig()
@@ -639,13 +898,12 @@ class UpdatePipelineWorker(QThread):
                         timestamp = int(time.time())
                         cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
                         v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                        if v_resp.status_code == 200:
+                        if v_resp.status_code == 200 and v_resp.text.strip():
                             v_data = v_resp.json()
                             if isinstance(v_data, dict):
                                 server_version = str(
                                     v_data.get("version")
                                     or v_data.get("version_code")
-                                    or v_data.get("activity_tracker_version")
                                     or ""
                                 ).strip()
                                 file_name = str(
@@ -663,14 +921,16 @@ class UpdatePipelineWorker(QThread):
                     except Exception as ac_fetch_err:
                         logger.debug("Pipeline AppController URL fetch failed: %s", ac_fetch_err)
 
-                if not server_version and api_cfg.activity_tracker_version:
-                    server_version = str(api_cfg.activity_tracker_version).strip()
                 if not download_url and api_cfg.activity_tracker_link:
-                    download_url = api_cfg.activity_tracker_link
+                    atl = str(api_cfg.activity_tracker_link).strip()
+                    if atl.lower().endswith(".exe"):
+                        download_url = atl
             except Exception as ac_err:
                 logger.debug("Pipeline AppController check error: %s", ac_err)
 
-            # Punch check_new_version fallback
+            # --------------------------------------------------
+            # 2. Company Endpoint (/punch/check_new_version)
+            # --------------------------------------------------
             if not server_version or server_version.upper() == "NA":
                 check_url = f"{self._api_url}/punch/check_new_version"
                 payload = {
@@ -681,14 +941,27 @@ class UpdatePipelineWorker(QThread):
                 try:
                     cb_check_url = f"{check_url}?_t={int(time.time())}"
                     resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                    if resp.status_code == 200:
+                    if resp.status_code == 200 and resp.text.strip():
                         data = resp.json()
                         if data.get("status") == 1:
                             server_version = str(data.get("version_code", "")).strip()
                             file_name = str(data.get("file_name", "")).strip()
+                            if data.get("download_url"):
+                                download_url = str(data.get("download_url")).strip()
                             force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
                 except Exception as resp_err:
                     logger.debug("Pipeline punch check error: %s", resp_err)
+
+            # --------------------------------------------------
+            # 3. Direct AppController Fallback (activity_tracker_version)
+            # --------------------------------------------------
+            if not server_version or server_version.upper() == "NA":
+                try:
+                    if api_cfg.activity_tracker_version:
+                        server_version = str(api_cfg.activity_tracker_version).strip()
+                        logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
+                except Exception:
+                    pass
 
             if not server_version or server_version.upper() == "NA" or not is_newer_version(server_version, installed_version):
                 logger.info("Pipeline: Application is up to date (current: %s, server: %s)", installed_version, server_version)
@@ -731,7 +1004,7 @@ class UpdatePipelineWorker(QThread):
                 if tot > 0:
                     self.status_message.emit(f"Uploading pending data: {cur}/{tot} ({pct}%)")
 
-            upload_success = flush_pending_data_before_update(max_retries=2, on_progress=_on_flush_progress)
+            upload_success = flush_pending_data_before_update(max_retries=2, on_progress=_on_flush_progress, stop_tracker=False)
             if not upload_success:
                 err_msg = "Could not upload pending activity logs/screenshots. Update postponed."
                 logger.error("Pipeline: %s", err_msg)
@@ -760,39 +1033,118 @@ class UpdatePipelineWorker(QThread):
             installer_path = updates_dir / safe_name
             temp_path = updates_dir / f"{safe_name}.part"
 
-            if installer_path.exists() and installer_path.stat().st_size > 1024 * 100:
-                logger.info("Pipeline: Installer already downloaded and verified: %s", installer_path)
-            else:
-                if temp_path.exists():
+            # Clean up 0-byte or corrupted installer file left from previous failed runs
+            if installer_path.exists() and installer_path.stat().st_size < 1024 * 100:
+                try:
+                    installer_path.unlink()
+                except Exception:
+                    pass
+
+            download_successful = False
+
+            if installer_path.exists() and installer_path.stat().st_size >= 1024 * 100:
+                try:
+                    with open(installer_path, "rb") as vf:
+                        if vf.read(2) == b"MZ":
+                            download_successful = True
+                            logger.info("Pipeline: Installer already downloaded and verified: %s", installer_path)
+                except Exception:
+                    pass
+
+            if not download_successful:
+                candidates = resolve_download_candidates(
+                    api_url=self._api_url,
+                    file_name=file_name,
+                    download_url=download_url,
+                    activity_tracker_link=getattr(api_cfg, "activity_tracker_link", ""),
+                )
+                logger.info("Pipeline: Candidate download URLs for v%s: %s", server_version, candidates)
+
+                for cand_url in candidates:
+                    if self._is_cancelled:
+                        return
+                    if temp_path.exists():
+                        try:
+                            temp_path.unlink()
+                        except Exception:
+                            pass
+
+                    logger.info("Pipeline: Trying download from candidate: %s", cand_url)
                     try:
-                        temp_path.unlink()
-                    except Exception:
-                        pass
+                        with requests.get(cand_url, stream=True, timeout=60) as resp:
+                            if resp.status_code != 200:
+                                logger.debug("Candidate %s returned HTTP %s", cand_url, resp.status_code)
+                                continue
+                            ct = resp.headers.get("content-type", "").lower()
+                            if "text/html" in ct or "text/plain" in ct:
+                                logger.debug("Candidate %s returned HTML error body", cand_url)
+                                continue
+                            total_size = int(resp.headers.get("content-length", 0))
+                            if total_size > 0 and total_size < 1024 * 100:
+                                logger.debug("Candidate %s content-length %d is too small", cand_url, total_size)
+                                continue
 
-                logger.info("Pipeline: Downloading installer from %s to %s", download_url, temp_path)
-                with requests.get(download_url, stream=True, timeout=60) as resp:
-                    resp.raise_for_status()
-                    total_size = int(resp.headers.get("content-length", 0))
-                    downloaded = 0
-                    with open(temp_path, "wb") as f:
-                        for chunk in resp.iter_content(chunk_size=65536):
-                            if self._is_cancelled:
-                                return
-                            if chunk:
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                if total_size > 0:
-                                    pct = int((downloaded / total_size) * 100)
-                                    self.progress_changed.emit(pct, downloaded, total_size)
-                                    self.status_message.emit(f"Downloading update: {pct}%")
+                            downloaded = 0
+                            is_valid_header = None
+                            with open(temp_path, "wb") as f:
+                                for chunk in resp.iter_content(chunk_size=65536):
+                                    if self._is_cancelled:
+                                        return
+                                    if chunk:
+                                        if is_valid_header is None:
+                                            if chunk[:2] != b"MZ":
+                                                is_valid_header = False
+                                                break
+                                            is_valid_header = True
+                                        f.write(chunk)
+                                        downloaded += len(chunk)
+                                        if total_size > 0:
+                                            pct = int((downloaded / total_size) * 100)
+                                            self.progress_changed.emit(pct, downloaded, total_size)
+                                            self.status_message.emit(f"Downloading update: {pct}%")
 
-                if temp_path.exists():
-                    if installer_path.exists():
-                        installer_path.unlink()
-                    temp_path.rename(installer_path)
+                            if is_valid_header is False:
+                                logger.debug("Candidate %s lacked MZ header", cand_url)
+                                if temp_path.exists():
+                                    temp_path.unlink()
+                                continue
 
-            if not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
-                err_msg = "Downloaded installer is incomplete or corrupt."
+                            if temp_path.exists() and temp_path.stat().st_size >= 1024 * 100:
+                                if installer_path.exists():
+                                    installer_path.unlink()
+                                temp_path.rename(installer_path)
+                                download_successful = True
+                                logger.info("Pipeline: Download succeeded from %s (%d bytes)", cand_url, installer_path.stat().st_size)
+                                break
+                    except Exception as cand_err:
+                        logger.debug("Download failed for candidate %s: %s", cand_url, cand_err)
+                        if temp_path.exists():
+                            try:
+                                temp_path.unlink()
+                            except Exception:
+                                pass
+
+                # Development / test fallback: if server doesn't host file yet, check local built installer
+                if not download_successful:
+                    local_candidates = [
+                        Path("dist/installer/iHRMSMonitorSetup.exe"),
+                        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "iHRMS Monitor" / "iHRMSMonitorSetup.exe",
+                    ]
+                    for loc_p in local_candidates:
+                        if loc_p.exists() and loc_p.stat().st_size >= 1024 * 100:
+                            try:
+                                with open(loc_p, "rb") as lf:
+                                    if lf.read(2) == b"MZ":
+                                        import shutil
+                                        shutil.copyfile(loc_p, installer_path)
+                                        download_successful = True
+                                        logger.info("Pipeline: Adopted local installer package from %s (%d bytes)", loc_p, installer_path.stat().st_size)
+                                        break
+                            except Exception:
+                                pass
+
+            if not download_successful or not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
+                err_msg = f"Update installer for v{server_version} could not be downloaded from the server."
                 try:
                     from services.device_registry_service import DeviceRegistryService
                     DeviceRegistryService().record_update_failure(err_msg, target_version=server_version)
@@ -815,6 +1167,12 @@ class UpdatePipelineWorker(QThread):
             UpdateService()._downloaded_installer = str(installer_path)
             UpdateService()._available_version = server_version
             UpdateService()._is_force_update = force_update
+
+            # Finalize active tracking session and flush pending records right before installer execution
+            try:
+                flush_pending_data_before_update(max_retries=1, stop_tracker=True)
+            except Exception as final_flush_err:
+                logger.debug("Pre-restart flush warning: %s", final_flush_err)
 
             # Automatically launch installer and restart application
             time.sleep(1.0)

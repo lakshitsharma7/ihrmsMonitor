@@ -21,8 +21,9 @@ def parse_version_tuple(v_str: str) -> tuple[int, int, int, int]:
     return tuple(parts[:4])  # type: ignore
 
 
-def generate_version_info(target_file: str = "file_version_info.txt") -> str:
-    v_tuple = parse_version_tuple(APP_VERSION)
+def generate_version_info(target_file: str = "file_version_info.txt", version_str: str | None = None) -> str:
+    ver = version_str or str(APP_VERSION)
+    v_tuple = parse_version_tuple(ver)
     v_str = f"{v_tuple[0]}.{v_tuple[1]}.{v_tuple[2]}.{v_tuple[3]}"
 
     content = f"""# UTF-8
@@ -65,9 +66,10 @@ VSVersionInfo(
     out_path = PROJECT_ROOT / target_file
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Generated {out_path} for version {APP_VERSION} ({v_str})")
+    print(f"Generated {out_path} for version {ver} ({v_str})")
     return str(out_path)
 
 
 if __name__ == "__main__":
-    generate_version_info()
+    cli_ver = sys.argv[1] if len(sys.argv) > 1 else None
+    generate_version_info(version_str=cli_ver)

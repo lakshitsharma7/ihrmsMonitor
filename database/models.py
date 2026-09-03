@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from config.settings import get_running_app_version
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -102,7 +104,7 @@ class EnrolledDevice(Base):
     employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    installed_version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
+    installed_version: Mapped[str] = mapped_column(String(50), nullable=False, default=get_running_app_version)
     latest_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     update_status: Mapped[str] = mapped_column(String(50), nullable=False, default="Update Pending")
     failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)

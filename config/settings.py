@@ -8,36 +8,115 @@ accessed through ``services.settings_service.SettingsService``.
 
 from __future__ import annotations
 
+
+import os
 import sys
+from pathlib import Path
 
 APP_NAME = "iHRMS Monitor"
-APP_VERSION = "1.0.0"
 ORG_NAME = "iHRMSMonitorApp"
+
+
+def _read_pe_file_version(exe_path: str | Path) -> str | None:
+    """Helper to extract FileVersion directly from a Windows PE binary."""
+    try:
+        import win32api
+
+        info = win32api.GetFileVersionInfo(str(exe_path), "\\")
+        ms = info.get("FileVersionMS", 0)
+        ls = info.get("FileVersionLS", 0)
+        v1, v2 = ms >> 16, ms & 0xFFFF
+        v3, v4 = ls >> 16, ls & 0xFFFF
+        if v1 == 0 and v2 == 0 and v3 == 0 and v4 == 0:
+            return None
+        if v4 == 0:
+            return f"{v1}.{v2}.{v3}"
+        return f"{v1}.{v2}.{v3}.{v4}"
+    except Exception:
+        return None
 
 
 def get_running_app_version() -> str:
     """
-    Return the authoritative running application version.
+    Return the authoritative running application version automatically.
 
-    If running as a compiled Windows EXE (PyInstaller), inspects the embedded
-    binary metadata via win32api.GetFileVersionInfo. Otherwise returns APP_VERSION.
+    1. If running as a frozen executable (PyInstaller), inspects the embedded
+       binary metadata of the current executable via win32api.GetFileVersionInfo.
+    2. If running uncompiled (development / test), automatically checks the installed
+       binary in %LOCALAPPDATA%\\Programs\\iHRMS Monitor\\iHRMS Monitor.exe, the local
+       dist build, or VERSION / version.txt build descriptors.
+    3. Never requires manual version maintenance in code or Settings.
     """
+    # 1. Authoritative check on the running executable when frozen
     if getattr(sys, "frozen", False):
-        try:
-            import win32api
+        v = _read_pe_file_version(sys.executable)
+        if v:
+            return v
 
-            exe_path = sys.executable
-            info = win32api.GetFileVersionInfo(exe_path, "\\")
-            ms = info.get("FileVersionMS", 0)
-            ls = info.get("FileVersionLS", 0)
-            v1, v2 = ms >> 16, ms & 0xFFFF
-            v3, v4 = ls >> 16, ls & 0xFFFF
-            if v4 == 0:
-                return f"{v1}.{v2}.{v3}"
-            return f"{v1}.{v2}.{v3}.{v4}"
+    project_root = Path(__file__).resolve().parent.parent
+
+    # 2. Check workspace build descriptor files (VERSION, version.txt)
+    for ver_file in ("VERSION", "version.txt"):
+        vf = project_root / ver_file
+        if vf.exists():
+            try:
+                txt = vf.read_text(encoding="utf-8").strip()
+                if txt:
+                    return txt
+            except Exception:
+                pass
+
+    # 3. Check workspace dist binary build
+    dist_exe = project_root / "dist" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+    if dist_exe.exists():
+        v = _read_pe_file_version(dist_exe)
+        if v:
+            return v
+
+    # 4. Check file_version_info.txt
+    fvi = project_root / "file_version_info.txt"
+    if fvi.exists():
+        try:
+            import re
+            m = re.search(r"FileVersion',\s*'([\d.]+)'", fvi.read_text(encoding="utf-8"))
+            if m:
+                parts = [p for p in m.group(1).split(".") if p]
+                while len(parts) > 3 and parts[-1] == "0":
+                    parts.pop()
+                return ".".join(parts)
         except Exception:
             pass
-    return APP_VERSION
+
+    # 5. Check installed application binary
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        installed_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+        if installed_exe.exists():
+            v = _read_pe_file_version(installed_exe)
+            if v:
+                return v
+
+    return "2.0.0"
+
+
+class _DynamicAppVersion(str):
+    """Dynamically resolves application version whenever accessed as a string."""
+
+    def __str__(self) -> str:
+        return get_running_app_version()
+
+    def __repr__(self) -> str:
+        return f"'{get_running_app_version()}'"
+
+    def __eq__(self, other: object) -> bool:
+        return str(self) == str(other)
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+
+# Dynamically resolved application version (never requires manual updates)
+APP_VERSION = _DynamicAppVersion("2.0.0")
 
 
 # How often (in seconds) the tracker worker polls for the active application.
