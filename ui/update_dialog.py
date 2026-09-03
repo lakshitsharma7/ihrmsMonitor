@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config.settings import APP_VERSION
+from config.settings import get_running_app_version
 from services.update_service import UpdateService, install_update_and_restart
 
 
@@ -79,7 +79,7 @@ class UpdateDialog(QDialog):
         title_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #1a1a1a; background: transparent;")
         title_col.addWidget(title_label)
 
-        version_sub = QLabel(f"Version {self._version} is ready to install (Current: v{APP_VERSION})")
+        version_sub = QLabel(f"Version {self._version} is ready to install (Current: v{get_running_app_version()})")
         version_sub.setStyleSheet("font-size: 12px; color: #5f6368; background: transparent;")
         title_col.addWidget(version_sub)
         header_layout.addLayout(title_col)

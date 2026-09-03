@@ -97,6 +97,22 @@ def _icon_label(name: str, size: int) -> QLabel:
     return label
 
 
+class _LoginErrorLabel(QLabel):
+    """Error label that automatically hides and collapses to 0 height when empty."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setVisible(bool(text and text.strip()))
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(text)
+        self.setVisible(bool(text and text.strip()))
+
+    def clear(self) -> None:
+        super().clear()
+        self.setVisible(False)
+
+
 class LoginWindow(QMainWindow):
     """Secure, offline login screen for iHRMS Monitor."""
 
@@ -233,14 +249,24 @@ class LoginWindow(QMainWindow):
         hero_layout.addStretch(1)
 
         # Application version display on hero panel
-        from config.settings import APP_VERSION
-        hero_version = QLabel(f"Version {APP_VERSION}")
-        hero_version.setObjectName("LoginHeroVersion")
-        hero_version.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        hero_version.setStyleSheet("color: rgba(255, 255, 255, 0.45); font-size: 11px; font-weight: 500;")
-        hero_layout.addWidget(hero_version)
+        from config.settings import get_running_app_version
+        self.hero_version_label = QLabel(f"Version {get_running_app_version()}")
+        self.hero_version_label.setObjectName("LoginHeroVersion")
+        self.hero_version_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.hero_version_label.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 500;")
+        hero_layout.addWidget(self.hero_version_label)
 
         return hero
+
+    def set_version(self, version: str) -> None:
+        """Update the version displayed on the hero panel."""
+        clean_v = str(version or "").strip()
+        if clean_v.lower().startswith("version"):
+            clean_v = clean_v[7:].strip()
+        if clean_v.startswith("v") or clean_v.startswith("V"):
+            clean_v = clean_v[1:].strip()
+        if hasattr(self, "hero_version_label") and self.hero_version_label:
+            self.hero_version_label.setText(f"Version {clean_v}")
 
     def _build_form_panel(self) -> QWidget:
         """White panel holding the brand logo and the credential form."""
@@ -270,13 +296,18 @@ class LoginWindow(QMainWindow):
 
         # ── Company Code ──────────────────────────────────────────
         self.company_code_input = QLineEdit()
+        self.company_code_input.setObjectName("CompanyCodeInput")
         self.company_code_input.setPlaceholderText("Company Code")
         self.company_code_input.setMinimumHeight(42)
         # Prevent autofill
         self.company_code_input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.company_code_input.addAction(
-            _load_icon("shield"), QLineEdit.ActionPosition.LeadingPosition
+            _load_icon("building"), QLineEdit.ActionPosition.LeadingPosition
         )
+        self.company_code_check_action = self.company_code_input.addAction(
+            _load_icon("check-verified"), QLineEdit.ActionPosition.TrailingPosition
+        )
+        self.company_code_check_action.setVisible(False)
         panel_layout.addWidget(self.company_code_input)
 
         # ── Verified company details (from the verification API) ───
@@ -311,7 +342,7 @@ class LoginWindow(QMainWindow):
         self.credentials_container.setObjectName("CredentialsContainer")
         self.credentials_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         credentials_layout = QVBoxLayout(self.credentials_container)
-        credentials_layout.setContentsMargins(0, 0, 0, 0)
+        credentials_layout.setContentsMargins(0, 8, 0, 8)
         credentials_layout.setSpacing(12)
 
         # ── Username (Employee ID / Username / Email) ──────────────────────────────────────────────
@@ -346,7 +377,6 @@ class LoginWindow(QMainWindow):
         credentials_layout.addWidget(self.password_input)
 
         panel_layout.addWidget(self.credentials_container)
-        panel_layout.addSpacing(12)
 
         self.login_step = 1
         self.credentials_container.setVisible(False)
@@ -359,15 +389,13 @@ class LoginWindow(QMainWindow):
         # Connect text changes of company code to reset step
         self.company_code_input.textChanged.connect(self._on_company_code_changed)
 
-        # Error label
-        self.error_label = QLabel("")
+        # Error label (auto-collapses to 0 height when empty)
+        self.error_label = _LoginErrorLabel("")
         self.error_label.setObjectName("LoginError")
         self.error_label.setWordWrap(True)
         panel_layout.addWidget(self.error_label)
 
         # ── Consent (must be accepted before logging in) ──────────
-        panel_layout.addSpacing(14)
-
         consent_row = QWidget()
         consent_row.setObjectName("LoginConsentRow")
         # The panel behind it is white; without this the row inherits the
@@ -426,6 +454,14 @@ class LoginWindow(QMainWindow):
         consent_text = QLabel(CONSENT_TEXT)
         consent_text.setObjectName("LoginConsentText")
         consent_text.setWordWrap(True)
+        consent_text.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _on_consent_label_clicked(_event):
+            self.consent_checkbox.toggle()
+
+        consent_text.mousePressEvent = _on_consent_label_clicked
+        consent_row.setCursor(Qt.CursorShape.PointingHandCursor)
+        consent_row.mousePressEvent = _on_consent_label_clicked
         consent_layout.addWidget(consent_text, 1)
 
         # Consent only becomes relevant once a company has been verified,
@@ -439,7 +475,7 @@ class LoginWindow(QMainWindow):
         self.consent_checkbox.toggled.connect(self._on_consent_toggled)
 
         # Login button
-        panel_layout.addSpacing(10)
+        panel_layout.addSpacing(14)
         self.login_button = QPushButton("Verify Company" if self.login_step == 1 else "Login")
         self.login_button.setObjectName("LoginButton")
         self.login_button.setMinimumHeight(44)
@@ -449,15 +485,9 @@ class LoginWindow(QMainWindow):
 
         panel_layout.addStretch(1)
 
-        # Footer version & update status row on form panel
+        # Footer update status row on form panel
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 8, 0, 0)
-
-        from config.settings import APP_VERSION
-        self.version_label = QLabel(f"Version {APP_VERSION}")
-        self.version_label.setObjectName("LoginVersion")
-        self.version_label.setStyleSheet("color: #9aa0a6; font-size: 11px; font-weight: 500;")
-        footer_layout.addWidget(self.version_label)
         footer_layout.addStretch()
 
         self.update_status_label = QLabel("")
@@ -485,6 +515,8 @@ class LoginWindow(QMainWindow):
         self.username_input.clear()
         self.password_input.clear()
         self.consent_checkbox.setChecked(False)
+        self.company_code_check_action.setVisible(False)
+        self.company_code_input.setReadOnly(False)
         self.company_code_input.setEnabled(True)
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
@@ -566,6 +598,11 @@ class LoginWindow(QMainWindow):
         ApiConfig().reset()
 
         self._verified_company_code = None
+
+        if hasattr(self, "company_code_check_action"):
+            self.company_code_check_action.setVisible(False)
+        if hasattr(self, "company_code_input"):
+            self.company_code_input.setReadOnly(False)
 
         self.login_step = 1
         self.credentials_container.setVisible(False)
@@ -680,6 +717,13 @@ class LoginWindow(QMainWindow):
 
             self._show_company_details()
 
+            # Show verification check mark on the right side of Company Code field
+            self.company_code_check_action.setVisible(True)
+
+            # Lock Company Code field so it cannot be edited/changed once verified
+            self.company_code_input.setReadOnly(True)
+            self.company_code_input.setEnabled(True)
+
             # Consent applies to signing in, which is now possible.
             self.consent_row.setVisible(True)
 
@@ -689,7 +733,6 @@ class LoginWindow(QMainWindow):
             self.password_input.clear()
             self.login_button.setText("Login")
             self.login_button.setEnabled(True)
-            self.company_code_input.setEnabled(True)
             self.error_label.clear()
 
             self.username_input.setFocus()
@@ -700,6 +743,8 @@ class LoginWindow(QMainWindow):
             # Leave no trace of any previously verified company.
             self._reset_company_context()
 
+            self.company_code_check_action.setVisible(False)
+            self.company_code_input.setReadOnly(False)
             self.login_button.setEnabled(True)
             self.company_code_input.setEnabled(True)
 
@@ -879,26 +924,25 @@ class LoginWindow(QMainWindow):
                     # Trigger update check if newer version detected
                     if version_json.get("status") == 1:
                         from services.update_service import is_newer_version, UpdateService
-                        from config.settings import APP_VERSION
+                        from config.settings import get_running_app_version
                         server_ver = str(version_json.get("version_code", "")).strip()
-                        if is_newer_version(server_ver, APP_VERSION):
-                            logger.info("Newer version %s detected on login. Initiating background update.", server_ver)
+                        if is_newer_version(server_ver, get_running_app_version()):
+                            logger.info("Newer version %s detected on login. Initiating background update pipeline.", server_ver)
 
                             def on_progress(percent: int, down: int, total: int):
                                 self.update_status_label.setText(f"Updating ({percent}%)...")
                                 self.update_status_label.setVisible(True)
 
                             def on_completed(path: str, ver: str, force: bool):
-                                self.update_status_label.setText(f"Restart to install v{ver}")
+                                self.update_status_label.setText(f"Restarting to install v{ver}...")
                                 self.update_status_label.setVisible(True)
 
-                            UpdateService().check_for_updates(
+                            UpdateService().start_pipeline(
                                 api_url=api_url,
                                 indo_code=indo_code,
                                 api_key=api_key,
-                                auto_download=True,
                                 on_progress=on_progress,
-                                on_completed=on_completed,
+                                on_download_completed=on_completed,
                             )
                 except Exception as version_err:
                     logger.warning("Check version API call failed: %s", version_err)

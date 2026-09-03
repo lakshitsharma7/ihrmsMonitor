@@ -30,7 +30,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
 
-from config.settings import APP_NAME, APP_VERSION
+from config.settings import APP_NAME, APP_VERSION, get_running_app_version
 from utils.logger import get_logger
 from utils.paths import get_log_file_path
 
@@ -192,7 +192,7 @@ class ErrorReportService:
 
         return {
             "app_name": APP_NAME,
-            "app_version": APP_VERSION,
+            "app_version": get_running_app_version(),
             "error_type": error_type,
             "error_message": sanitize_text(error_message),
             "traceback": sanitize_text(traceback_str),
@@ -260,7 +260,7 @@ class ErrorReportService:
     def _dispatch_email(self, context: dict[str, Any]) -> bool:
         """Send the formatted error report via SMTP in the background."""
         error_type = context.get("error_type", "ERROR")
-        version = context.get("app_version", "1.0.0")
+        version = context.get("app_version") or get_running_app_version()
         hostname = context.get("device_details", {}).get("hostname", "Unknown")
         emp_id = context.get("user_details", {}).get("employee_id", "N/A")
 

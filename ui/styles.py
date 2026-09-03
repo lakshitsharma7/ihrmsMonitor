@@ -303,6 +303,10 @@ QLineEdit:focus {
     color: #aebdcb;
 }
 
+#LoginHero #LoginHeroVersion {
+    color: #ffffff;
+}
+
 #LoginFormPanel {
     background-color: #ffffff;
     border-top-right-radius: 14px;
@@ -334,6 +338,13 @@ QLineEdit:focus {
 #LoginCard QLineEdit:disabled {
     background-color: #f5f6fa;
     color: #9aa0a6;
+}
+
+#LoginCard QLineEdit:read-only {
+    background-color: #ffffff;
+    border: 2px solid #00a0c6;
+    padding: 8px 11px;
+    color: #202124;
 }
 
 #LoginButton {
