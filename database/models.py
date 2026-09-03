@@ -88,3 +88,35 @@ class User(Base):
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"<User id={self.id} username={self.username!r} role={self.role}>"
 
+
+class EnrolledDevice(Base):
+    """Enrolled Windows/desktop devices tracked for application updates and activity."""
+
+    __tablename__ = "enrolled_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_identifier: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hostname: Mapped[str] = mapped_column(String(255), nullable=False)
+    platform: Mapped[str] = mapped_column(String(100), nullable=False, default="Windows")
+    os_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    installed_version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
+    latest_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    update_status: Mapped[str] = mapped_column(String(50), nullable=False, default="Update Pending")
+    failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    last_sync: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging helper
+        return (
+            f"<EnrolledDevice id={self.id} hostname={self.hostname!r} "
+            f"version={self.installed_version} status={self.update_status}>"
+        )
+
+

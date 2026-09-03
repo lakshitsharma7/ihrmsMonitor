@@ -7,13 +7,18 @@ import platform
 
 from PySide6.QtCore import QMetaObject, Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -295,6 +300,12 @@ def get_user_device_info() -> dict[str, str]:
         name = username
         email = ""
 
+    from config.settings import get_running_app_version
+    from utils.device import get_device_identifier
+
+    app_version = get_running_app_version()
+    device_id = get_device_identifier()
+
     return {
         "name": name or "Not available",
         "email": email or "Not available",
@@ -302,6 +313,8 @@ def get_user_device_info() -> dict[str, str]:
         "device": device_name,
         "platform": platform_name,
         "os_version": os_version,
+        "app_version": app_version,
+        "device_identifier": device_id,
     }
 
 
@@ -311,7 +324,7 @@ def get_user_device_info() -> dict[str, str]:
 
 
 class UserDeviceDialog(QDialog):
-    """Dialog showing user and device information."""
+    """Dialog showing user, device, and fleet update verification status."""
 
     def __init__(
         self,
@@ -320,132 +333,176 @@ class UserDeviceDialog(QDialog):
     ) -> None:
         super().__init__(parent)
 
-        self.setWindowTitle(
-            "User & Device Information"
-        )
-
-        self.setMinimumWidth(
-            480
-        )
+        self.setWindowTitle("User, Device & Fleet Update Verification")
+        self.resize(820, 560)
+        self.setMinimumWidth(680)
 
         # ------------------------------------------------------
         # Main layout
         # ------------------------------------------------------
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(14)
 
-        root = QVBoxLayout(
-            self
-        )
-
-        root.setContentsMargins(
-            20,
-            20,
-            20,
-            20,
-        )
-
-        root.setSpacing(
-            18
-        )
-
-        # ------------------------------------------------------
         # Title
-        # ------------------------------------------------------
+        title = QLabel("Device & Fleet Update Status")
+        title.setObjectName("DialogTitle")
+        root.addWidget(title)
 
-        title = QLabel(
-            "User & Device Information"
-        )
+        # Tabs: Current Device | All Enrolled Laptops
+        tabs = QTabWidget(self)
 
-        title.setObjectName(
-            "DialogTitle"
-        )
-
-        root.addWidget(
-            title
-        )
-
-        # ------------------------------------------------------
-        # Form
-        # ------------------------------------------------------
+        # --- Tab 1: Current Laptop ---
+        tab_current = QWidget()
+        current_layout = QVBoxLayout(tab_current)
+        current_layout.setContentsMargins(15, 15, 15, 15)
+        current_layout.setSpacing(10)
 
         form = QFormLayout()
+        form.setHorizontalSpacing(25)
+        form.setVerticalSpacing(10)
 
-        form.setHorizontalSpacing(
-            25
-        )
+        form.addRow("Name:", QLabel(information.get("name", "Not available")))
+        form.addRow("Email:", QLabel(information.get("email", "Not available")))
+        form.addRow("Username:", QLabel(information.get("username", "Not available")))
+        form.addRow("Device / Hostname:", QLabel(information.get("device", "Not available")))
+        form.addRow("Platform:", QLabel(information.get("platform", "Not available")))
+        form.addRow("OS Version:", QLabel(information.get("os_version", "Not available")))
+        form.addRow("Device ID:", QLabel(information.get("device_identifier", "Not available")))
 
-        form.setVerticalSpacing(
-            12
-        )
+        app_ver = information.get("app_version", get_running_app_version())
+        ver_lbl = QLabel(f"{app_ver} (authoritative build)")
+        ver_lbl.setStyleSheet("font-weight: bold; color: #3b82f6;")
+        form.addRow("Installed Version:", ver_lbl)
 
-        form.addRow(
-            "Name:",
-            QLabel(
-                information["name"]
-            ),
-        )
+        # Status badge for this device
+        from services.device_registry_service import DeviceRegistryService
+        cur_status = "Updated"
+        try:
+            cur_dev = None
+            for d in DeviceRegistryService().get_all_devices():
+                if d["device_identifier"] == information.get("device_identifier"):
+                    cur_dev = d
+                    break
+            if cur_dev:
+                cur_status = cur_dev["update_status"]
+        except Exception:
+            pass
 
-        form.addRow(
-            "Email:",
-            QLabel(
-                information["email"]
-            ),
-        )
+        status_lbl = QLabel(cur_status)
+        if cur_status == "Updated":
+            status_lbl.setStyleSheet("font-weight: bold; color: #10b981;")
+        elif "Pending" in cur_status:
+            status_lbl.setStyleSheet("font-weight: bold; color: #f59e0b;")
+        elif "Failed" in cur_status:
+            status_lbl.setStyleSheet("font-weight: bold; color: #ef4444;")
+        else:
+            status_lbl.setStyleSheet("color: #6b7280;")
+        form.addRow("Update Status:", status_lbl)
 
-        form.addRow(
-            "Username:",
-            QLabel(
-                information["username"]
-            ),
-        )
+        current_layout.addLayout(form)
+        current_layout.addStretch()
+        tabs.addTab(tab_current, "This Laptop")
 
-        form.addRow(
-            "Device:",
-            QLabel(
-                information["device"]
-            ),
-        )
+        # --- Tab 2: Enrolled Laptops Fleet Status ---
+        tab_fleet = QWidget()
+        fleet_layout = QVBoxLayout(tab_fleet)
+        fleet_layout.setContentsMargins(15, 15, 15, 15)
+        fleet_layout.setSpacing(10)
 
-        form.addRow(
-            "Platform:",
-            QLabel(
-                information["platform"]
-            ),
-        )
+        # Summary Badges Row
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet("font-weight: bold; font-size: 13px; padding: 8px; background: #f3f4f6; border-radius: 4px;")
+        fleet_layout.addWidget(self.summary_label)
 
-        form.addRow(
-            "OS Version:",
-            QLabel(
-                information["os_version"]
-            ),
-        )
+        # Table
+        self.fleet_table = QTableWidget()
+        self.fleet_table.setColumnCount(6)
+        self.fleet_table.setHorizontalHeaderLabels([
+            "Hostname / Laptop",
+            "User / Emp ID",
+            "Installed Version",
+            "Latest Server",
+            "Update Status",
+            "Last Seen / Sync",
+        ])
+        self.fleet_table.horizontalHeader().setStretchLastSection(True)
+        self.fleet_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.fleet_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.fleet_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.fleet_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        fleet_layout.addWidget(self.fleet_table)
 
-        root.addLayout(
-            form
-        )
+        # Refresh Fleet Button
+        fleet_btn_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Fleet Status")
+        refresh_btn.clicked.connect(self._populate_fleet_table)
+        fleet_btn_row.addWidget(refresh_btn)
+        fleet_btn_row.addStretch()
+        fleet_layout.addLayout(fleet_btn_row)
 
-        # ------------------------------------------------------
+        tabs.addTab(tab_fleet, "All Enrolled Laptops")
+        root.addWidget(tabs)
+
+        self._populate_fleet_table()
+
         # Close button
-        # ------------------------------------------------------
-
         buttons = QHBoxLayout()
-
         buttons.addStretch()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
 
-        close_button = QPushButton(
-            "Close"
-        )
+    def _populate_fleet_table(self) -> None:
+        try:
+            from services.device_registry_service import DeviceRegistryService
+            svc = DeviceRegistryService()
+            summary = svc.get_device_summary()
+            self.summary_label.setText(
+                f"Total Laptops: {summary['total']}  |  "
+                f"Updated: {summary['updated']}  |  "
+                f"Pending: {summary['pending']}  |  "
+                f"Failed: {summary['failed']}  |  "
+                f"Offline: {summary['offline']}"
+            )
 
-        close_button.clicked.connect(
-            self.accept
-        )
+            devices = svc.get_all_devices()
+            self.fleet_table.setRowCount(len(devices))
 
-        buttons.addWidget(
-            close_button
-        )
+            for row, d in enumerate(devices):
+                host_item = QTableWidgetItem(d.get("hostname") or "Unknown")
+                emp_str = f"{d.get('username') or ''} ({d.get('employee_id') or '-'})".strip()
+                emp_item = QTableWidgetItem(emp_str)
+                inst_ver_item = QTableWidgetItem(d.get("installed_version") or "1.0.0")
+                latest_ver_item = QTableWidgetItem(str(d.get("latest_version") or "N/A"))
 
-        root.addLayout(
-            buttons
-        )
+                status_text = d.get("update_status", "Unknown")
+                status_item = QTableWidgetItem(status_text)
+                if status_text == "Updated":
+                    status_item.setForeground(Qt.GlobalColor.darkGreen)
+                elif "Pending" in status_text:
+                    status_item.setForeground(Qt.GlobalColor.darkYellow)
+                elif "Failed" in status_text:
+                    status_item.setForeground(Qt.GlobalColor.red)
+                    if d.get("failure_reason"):
+                        status_item.setToolTip(f"Failure Reason: {d['failure_reason']}")
+                else:
+                    status_item.setForeground(Qt.GlobalColor.gray)
+
+                last_str = d.get("last_seen") or d.get("last_sync") or "Never"
+                if "T" in str(last_str):
+                    last_str = last_str.split(".")[0].replace("T", " ")
+                last_item = QTableWidgetItem(str(last_str))
+
+                self.fleet_table.setItem(row, 0, host_item)
+                self.fleet_table.setItem(row, 1, emp_item)
+                self.fleet_table.setItem(row, 2, inst_ver_item)
+                self.fleet_table.setItem(row, 3, latest_ver_item)
+                self.fleet_table.setItem(row, 4, status_item)
+                self.fleet_table.setItem(row, 5, last_item)
+        except Exception as e:
+            logger.debug("Failed to populate fleet table: %s", e)
 
 
 # ==============================================================
@@ -539,6 +596,24 @@ class MainWindow(QMainWindow):
         self._periodic_update_timer.setInterval(2 * 60 * 60 * 1000)
         self._periodic_update_timer.timeout.connect(lambda: self._check_for_updates(manual=False))
         self._periodic_update_timer.start()
+
+        # Record device heartbeat with current running app version
+        try:
+            from services.device_registry_service import DeviceRegistryService
+            from utils.device import get_device_identifier
+            DeviceRegistryService().record_heartbeat(
+                employee_id=getattr(session, "employee_id", None),
+                username=getattr(session, "username", None),
+                device_token=getattr(session, "device_token", None),
+            )
+            my_status = "Updated"
+            for d in DeviceRegistryService().get_all_devices():
+                if d["device_identifier"] == get_device_identifier():
+                    my_status = d["update_status"]
+                    break
+            self.dashboard_page.set_update_status(my_status)
+        except Exception:
+            pass
 
     # ==========================================================
     # BUILD UI
@@ -1344,6 +1419,7 @@ class MainWindow(QMainWindow):
                 logger.info("Pipeline update available: v%s (force=%s)", version, force)
                 self._latest_version = version
                 self._is_force_update = force
+                self.dashboard_page.set_update_status(f"Pending (v{version} available)")
                 self.update_button.setVisible(True)
                 self.update_button.setText(f"🚀 Updating v{version}...")
                 if hasattr(self, "tray") and self.tray:
@@ -1358,6 +1434,7 @@ class MainWindow(QMainWindow):
                 self._latest_installer_path = installer_path
                 self._latest_version = version
                 self._is_force_update = force
+                self.dashboard_page.set_update_status(f"Ready to Restart (v{version})")
 
                 self.update_button.setVisible(True)
                 self.update_button.setText(f"Restarting v{version}...")
@@ -1371,6 +1448,7 @@ class MainWindow(QMainWindow):
 
             def on_error(phase: str, err_msg: str):
                 logger.warning("Pipeline update error (%s): %s", phase, err_msg)
+                self.dashboard_page.set_update_status("Failed")
                 self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
                 if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
                     self._update_dialog._on_error_occurred(phase, err_msg)

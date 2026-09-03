@@ -183,6 +183,10 @@ class DashboardPage(QWidget):
             f"Version: {get_running_app_version()}"
         )
 
+        self.update_status_label = QLabel(
+            "Status: Updated"
+        )
+
         # Give them StatusLabel object names
         self.tracking_status_label.setObjectName("StatusLabel")
         self.sync_status_label.setObjectName("StatusLabel")
@@ -190,6 +194,7 @@ class DashboardPage(QWidget):
         self.unsynced_records_label.setObjectName("StatusLabel")
         self.idle_time_label.setObjectName("StatusLabel")
         self.version_label.setObjectName("StatusLabel")
+        self.update_status_label.setObjectName("StatusLabel")
 
         # Column 0
         status_grid.addWidget(self.tracking_status_label, 0, 0)
@@ -200,6 +205,7 @@ class DashboardPage(QWidget):
         status_grid.addWidget(self.idle_time_label, 0, 1)
         status_grid.addWidget(self.unsynced_records_label, 1, 1)
         status_grid.addWidget(self.version_label, 2, 1)
+        status_grid.addWidget(self.update_status_label, 3, 1)
 
         status_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -468,3 +474,16 @@ class DashboardPage(QWidget):
             if not v_str.lower().startswith("version"):
                 v_str = f"Version: {v_str}"
             self.version_label.setText(v_str)
+
+    def set_update_status(self, status: str) -> None:
+        """Dynamically update the displayed device update verification status."""
+        if status:
+            self.update_status_label.setText(f"Status: {status}")
+            if "Updated" in status:
+                self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
+            elif "Pending" in status:
+                self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
+            elif "Failed" in status:
+                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+            else:
+                self.update_status_label.setStyleSheet("")

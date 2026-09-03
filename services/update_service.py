@@ -692,6 +692,11 @@ class UpdatePipelineWorker(QThread):
 
             if not server_version or server_version.upper() == "NA" or not is_newer_version(server_version, installed_version):
                 logger.info("Pipeline: Application is up to date (current: %s, server: %s)", installed_version, server_version)
+                try:
+                    from services.device_registry_service import DeviceRegistryService
+                    DeviceRegistryService().record_update_success(installed_version)
+                except Exception:
+                    pass
                 self.status_message.emit("Application is up to date.")
                 self.phase_changed.emit("done", "Application is up to date.")
                 return
@@ -703,6 +708,12 @@ class UpdatePipelineWorker(QThread):
 
             self._server_version = server_version
             self._is_force = force_update
+            try:
+                from services.device_registry_service import DeviceRegistryService
+                DeviceRegistryService().record_update_pending(server_version)
+            except Exception:
+                pass
+
             self.update_available.emit(server_version, download_url, force_update)
             logger.info("Pipeline: Update available: v%s at %s", server_version, download_url)
 
@@ -724,6 +735,11 @@ class UpdatePipelineWorker(QThread):
             if not upload_success:
                 err_msg = "Could not upload pending activity logs/screenshots. Update postponed."
                 logger.error("Pipeline: %s", err_msg)
+                try:
+                    from services.device_registry_service import DeviceRegistryService
+                    DeviceRegistryService().record_update_failure(err_msg, target_version=server_version)
+                except Exception:
+                    pass
                 self.error_occurred.emit("uploading_pending", err_msg)
                 return
 
@@ -735,37 +751,32 @@ class UpdatePipelineWorker(QThread):
                 return
 
             # --------------------------------------------------
-            # Phase 3: Update Download
+            # Phase 3: Download Installer
             # --------------------------------------------------
             self.phase_changed.emit("downloading", f"Downloading update v{server_version}...")
+            self.status_message.emit(f"Downloading update v{server_version}...")
             updates_dir = get_updates_directory()
-            installer_path = updates_dir / f"iHRMSMonitorSetup_v{server_version}.exe"
-            self._installer_path = str(installer_path)
+            safe_name = f"iHRMSMonitorSetup_v{server_version}.exe"
+            installer_path = updates_dir / safe_name
+            temp_path = updates_dir / f"{safe_name}.part"
 
-            if installer_path.exists() and installer_path.stat().st_size > 1024 * 1024:
+            if installer_path.exists() and installer_path.stat().st_size > 1024 * 100:
                 logger.info("Pipeline: Installer already downloaded and verified: %s", installer_path)
-                self.progress_changed.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
             else:
-                temp_path = updates_dir / f"iHRMSMonitorSetup_v{server_version}.tmp"
-                self.progress_changed.emit(0, 0, 0)
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
+
                 logger.info("Pipeline: Downloading installer from %s to %s", download_url, temp_path)
-
-                with requests.get(download_url, stream=True, timeout=60) as r:
-                    if r.status_code != 200:
-                        err_msg = f"Failed to download update (HTTP {r.status_code})"
-                        self.error_occurred.emit("downloading", err_msg)
-                        return
-
-                    total_size = int(r.headers.get("content-length", 0))
+                with requests.get(download_url, stream=True, timeout=60) as resp:
+                    resp.raise_for_status()
+                    total_size = int(resp.headers.get("content-length", 0))
                     downloaded = 0
-                    chunk_size = 64 * 1024
-
                     with open(temp_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=chunk_size):
+                        for chunk in resp.iter_content(chunk_size=65536):
                             if self._is_cancelled:
-                                f.close()
-                                if temp_path.exists():
-                                    temp_path.unlink()
                                 return
                             if chunk:
                                 f.write(chunk)
@@ -773,9 +784,7 @@ class UpdatePipelineWorker(QThread):
                                 if total_size > 0:
                                     pct = int((downloaded / total_size) * 100)
                                     self.progress_changed.emit(pct, downloaded, total_size)
-                                    mb_down = downloaded / (1024 * 1024)
-                                    mb_tot = total_size / (1024 * 1024)
-                                    self.status_message.emit(f"Downloading update: {mb_down:.1f} MB / {mb_tot:.1f} MB ({pct}%)")
+                                    self.status_message.emit(f"Downloading update: {pct}%")
 
                 if temp_path.exists():
                     if installer_path.exists():
@@ -784,6 +793,11 @@ class UpdatePipelineWorker(QThread):
 
             if not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
                 err_msg = "Downloaded installer is incomplete or corrupt."
+                try:
+                    from services.device_registry_service import DeviceRegistryService
+                    DeviceRegistryService().record_update_failure(err_msg, target_version=server_version)
+                except Exception:
+                    pass
                 self.error_occurred.emit("downloading", err_msg)
                 return
 
@@ -808,6 +822,11 @@ class UpdatePipelineWorker(QThread):
 
         except Exception as err:
             logger.exception("Update pipeline error: %s", err)
+            try:
+                from services.device_registry_service import DeviceRegistryService
+                DeviceRegistryService().record_update_failure(str(err))
+            except Exception:
+                pass
             self.error_occurred.emit("pipeline", str(err))
 
 

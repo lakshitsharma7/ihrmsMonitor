@@ -307,6 +307,11 @@ class SyncService:
             SyncService.last_sync_status = "Sent"
             SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             SyncService.records_currently_sending = 0
+            try:
+                from services.device_registry_service import DeviceRegistryService
+                DeviceRegistryService().record_sync_success()
+            except Exception:
+                pass
             return True
 
         except Exception as exc:

@@ -198,6 +198,17 @@ def main() -> int:
 
             logger.info("Session restored successfully for user: %s", saved_session.get("username"))
 
+            # Record device heartbeat with current running app version
+            try:
+                from services.device_registry_service import DeviceRegistryService
+                DeviceRegistryService().record_heartbeat(
+                    employee_id=saved_session.get("employee_id"),
+                    username=saved_session.get("username"),
+                    device_token=saved_session.get("device_token"),
+                )
+            except Exception as reg_err:
+                logger.debug("Could not record device heartbeat on session restore: %s", reg_err)
+
             # Open main window directly and display the Dashboard
             from ui.main_window import MainWindow
             main_window = MainWindow(login_window=None)

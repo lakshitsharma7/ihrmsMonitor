@@ -1021,6 +1021,19 @@ class LoginWindow(QMainWindow):
                 except Exception as save_err:
                     logger.warning("Could not persist session: %s", save_err)
 
+                # Record device enrollment in DeviceRegistryService
+                try:
+                    from services.device_registry_service import DeviceRegistryService
+                    DeviceRegistryService().record_heartbeat(
+                        device_identifier=device_info.get("device_identifier"),
+                        hostname=device_info.get("hostname"),
+                        employee_id=str(employee_id) if employee_id is not None else None,
+                        username=username,
+                        device_token=device_token,
+                    )
+                except Exception as reg_err:
+                    logger.debug("Could not record device enrollment in registry: %s", reg_err)
+
                 # Open existing main window and present Dashboard directly
                 from ui.main_window import MainWindow
 
