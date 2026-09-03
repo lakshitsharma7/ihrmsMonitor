@@ -576,6 +576,15 @@ class ActivityRepository:
         stmt = stmt.order_by(ActivitySession.started_at.asc())
         return list(self._session.execute(stmt).scalars().all())
 
+    def get_sessions_with_uploaded_screenshots_for_cleanup(self) -> list[ActivitySession]:
+        """Return all sessions whose screenshots have been successfully confirmed uploaded."""
+        stmt = (
+            select(ActivitySession)
+            .where(ActivitySession.screenshot_path.is_not(None))
+            .where(ActivitySession.screenshot_uploaded.is_(True))
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
     # ==========================================================
     # GET SESSIONS BETWEEN
     # ==========================================================

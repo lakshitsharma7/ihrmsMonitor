@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "ActivityTracker"
+APP_NAME = "iHRMS Monitor"
 
 
 def is_windows() -> bool:
@@ -44,9 +44,9 @@ def get_app_data_directory() -> Path:
     """Return the per-user application data directory, creating it if needed.
 
     Windows:
-        %LOCALAPPDATA%\\ActivityTracker
+        %LOCALAPPDATA%\\iHRMS Monitor
     macOS:
-        ~/Library/Application Support/ActivityTracker
+        ~/Library/Application Support/iHRMS Monitor
 
     Raises:
         RuntimeError: if called on an unsupported operating system.
@@ -68,9 +68,33 @@ def get_app_data_directory() -> Path:
     return directory
 
 
+def get_data_directory() -> Path:
+    """Return the data directory for pending activity/log database, creating it if needed."""
+    directory = get_app_data_directory() / "data"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 def get_database_path() -> Path:
-    """Return the full path to the SQLite database file."""
-    return get_app_data_directory() / "activity_tracker.db"
+    """Return the full path to the SQLite database file in data directory."""
+    target = get_data_directory() / "activity_tracker.db"
+
+    # Smooth automatic migration from legacy locations if target doesn't exist yet
+    if not target.exists():
+        legacy_candidates = [
+            get_app_data_directory() / "activity_tracker.db",
+            Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "ActivityTracker" / "activity_tracker.db",
+        ]
+        for leg in legacy_candidates:
+            if leg.exists():
+                try:
+                    import shutil
+                    shutil.copy2(leg, target)
+                    break
+                except Exception:
+                    pass
+
+    return target
 
 
 def get_logs_directory() -> Path:

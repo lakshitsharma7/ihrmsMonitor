@@ -415,6 +415,12 @@ class SyncService:
                     else:
                         logger.error("Screenshot upload failed or deferred for local session ID %d", session.id)
 
+            # Sweep any previously uploaded screenshots that remain on local disk
+            try:
+                self.cleanup_uploaded_screenshots()
+            except Exception as cleanup_err:
+                logger.debug("Periodic screenshot cleanup error: %s", cleanup_err)
+
             from datetime import datetime, timedelta
             SyncService.last_sync_status = "Sent"
             SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1133,6 +1139,21 @@ class SyncService:
                 finally:
                     db_session.close()
 
+            # Clean up local screenshot file immediately after verified server confirmation
+            try:
+                if screenshot_path.exists():
+                    screenshot_path.unlink()
+                    logger.info(
+                        "Local screenshot file deleted after verified server upload: %s",
+                        screenshot_path.name,
+                    )
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Could not delete uploaded local screenshot file %s: %s",
+                    screenshot_path,
+                    cleanup_err,
+                )
+
             return True
 
         except requests.RequestException as exc:
@@ -1172,6 +1193,34 @@ class SyncService:
                 pass
 
             return False
+
+    def cleanup_uploaded_screenshots(self) -> int:
+        """
+        Sweep local storage and delete any screenshot files that have already
+        been successfully confirmed and uploaded to the server.
+        Never deletes unuploaded or pending screenshots.
+        """
+        cleaned_count = 0
+        db_session = get_session()
+        try:
+            repo = ActivityRepository(db_session)
+            uploaded_sessions = repo.get_sessions_with_uploaded_screenshots_for_cleanup()
+            for s in uploaded_sessions:
+                if s.screenshot_path:
+                    p = Path(s.screenshot_path)
+                    if p.exists():
+                        try:
+                            p.unlink()
+                            cleaned_count += 1
+                            logger.info("Cleanup sweep removed uploaded screenshot: %s", p.name)
+                        except Exception as del_err:
+                            logger.warning("Failed to delete uploaded screenshot %s: %s", p, del_err)
+        except Exception as sweep_err:
+            logger.error("Error during uploaded screenshots cleanup sweep: %s", sweep_err)
+        finally:
+            db_session.close()
+
+        return cleaned_count
 
     # ==============================================================
     # HELPERS
