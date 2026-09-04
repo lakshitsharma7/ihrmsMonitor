@@ -203,6 +203,108 @@ class SyncService:
                 finally:
                     db_session.close()
 
+                # 4. Extract and apply dynamic permissions from server
+                from services.session_service import SessionService
+                session_svc = SessionService()
+
+                def _parse_bool_permission(val: Any) -> bool | None:
+                    if val is None:
+                        return None
+                    if isinstance(val, bool):
+                        return val
+                    if isinstance(val, (int, float)):
+                        return bool(val)
+                    if isinstance(val, str):
+                        s = val.strip().lower()
+                        if s in ("true", "1", "yes", "t", "y", "enable", "enabled"):
+                            return True
+                        if s in ("false", "0", "no", "f", "n", "disable", "disabled"):
+                            return False
+                    return None
+
+                def _extract_permission(data: dict, keys: list[str]) -> bool | None:
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            res = _parse_bool_permission(data[k])
+                            if res is not None:
+                                return res
+                    return None
+
+                # Logout control permission
+                server_allow_logout = _extract_permission(
+                    settings_data,
+                    ["allow_logout", "logout_permitted", "can_logout", "allow_user_logout", "enable_logout"]
+                )
+                if server_allow_logout is not None:
+                    self._save_cached_setting("allow_logout", server_allow_logout)
+
+                # User / Device control permission
+                server_allow_user_device = _extract_permission(
+                    settings_data,
+                    [
+                        "allow_user_device",
+                        "allow_user_device_info",
+                        "allow_device_info",
+                        "allow_device",
+                        "allow_user_device_modal",
+                        "allow_user_info",
+                        "show_user_device",
+                        "user_device_allowed",
+                        "user_device_permitted",
+                        "user_device_enabled",
+                        "device_info_enabled",
+                        "can_view_user_device",
+                    ]
+                )
+                if server_allow_user_device is not None:
+                    self._save_cached_setting("allow_user_device", server_allow_user_device)
+
+                # Tracking permitted
+                server_allow_tracking = _extract_permission(
+                    settings_data,
+                    ["allow_start_stop_activity_tracking", "tracking_permitted", "allow_tracking"]
+                )
+                if server_allow_tracking is not None:
+                    self._save_cached_setting("tracking_permitted", server_allow_tracking)
+
+                # Update session permissions dynamically
+                perm_kwargs = {}
+                if server_allow_logout is not None:
+                    perm_kwargs["allow_logout"] = server_allow_logout
+                if server_allow_user_device is not None:
+                    perm_kwargs["allow_user_device"] = server_allow_user_device
+                if server_allow_tracking is not None:
+                    perm_kwargs["tracking_permitted"] = server_allow_tracking
+
+                if perm_kwargs:
+                    session_svc.update_permissions(**perm_kwargs)
+
+                # Persist updated permissions to SessionStore if active session exists
+                try:
+                    from services.secure_session import SessionStore
+                    store = SessionStore()
+                    saved = store.load_session()
+                    if saved and session_svc.current_user:
+                        curr = session_svc.current_user
+                        store.save_session(
+                            company_code=saved.get("company_code") or curr.company_code or "",
+                            indo_code=saved.get("indo_code") or curr.indo_code or "",
+                            api_key=saved.get("api_key") or curr.api_key or "",
+                            device_token=saved.get("device_token") or curr.device_token or "",
+                            username=saved.get("username") or curr.username,
+                            full_name=saved.get("full_name") or curr.full_name,
+                            user_type=saved.get("user_type") or curr.user_type,
+                            employee_id=saved.get("employee_id") or curr.employee_id,
+                            device_info=saved.get("device_info") or curr.device_info or {},
+                            tracking_permitted=curr.tracking_permitted,
+                            base_url=saved.get("base_url"),
+                            company_id=saved.get("company_id"),
+                            allow_user_device=curr.allow_user_device,
+                            allow_logout=curr.allow_logout,
+                        )
+                except Exception as perm_save_err:
+                    logger.debug("Could not persist updated session permissions: %s", perm_save_err)
+
                 return settings_data
         except Exception as err:
             logger.warning(

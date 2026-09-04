@@ -457,6 +457,10 @@ class MainWindow(QMainWindow):
         # Apply RBAC permissions on UI controls first
         self._apply_rbac_permissions()
 
+        # Listen for dynamic permission updates pushed from backend
+        from services.session_service import SessionService
+        SessionService().register_permission_listener(self._apply_rbac_permissions)
+
         # Ensure startup registration matches settings
         initial_settings = self._settings_service.get_settings()
         from system import startup
@@ -513,6 +517,21 @@ class MainWindow(QMainWindow):
                 self._offline_update_pending = True
         except Exception:
             pass
+
+        # Trigger initial backend settings sync and setup periodic refresh timer
+        QTimer.singleShot(500, self._sync_permissions_from_backend)
+        self._periodic_settings_timer = QTimer(self)
+        self._periodic_settings_timer.setInterval(60 * 1000)
+        self._periodic_settings_timer.timeout.connect(self._sync_permissions_from_backend)
+        self._periodic_settings_timer.start()
+
+    def _sync_permissions_from_backend(self) -> None:
+        """Fetch latest backend configuration to dynamically apply permission changes."""
+        try:
+            from services.sync_service import SyncService
+            SyncService().fetch_settings()
+        except Exception as err:
+            logger.debug("Background settings sync encountered: %s", err)
 
     # ==========================================================
     # BUILD UI
@@ -716,6 +735,11 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """Detect and display current user/device information."""
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not getattr(session, "allow_user_device", True):
+            logger.warning("User/Device view requested but blocked by backend permission.")
+            return
 
         information = (
             get_user_device_info()
@@ -879,7 +903,15 @@ class MainWindow(QMainWindow):
         self.tray.show()
 
     def _apply_rbac_permissions(self) -> None:
-        """Enforce RBAC permissions on Start/Stop tracking buttons and tray menu."""
+        """Enforce RBAC permissions on Start/Stop tracking, User/Device, and Logout controls."""
+        from PySide6.QtCore import QThread
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app and QThread.currentThread() != app.thread():
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self._apply_rbac_permissions)
+            return
+
         from services.session_service import SessionService
         session = SessionService().current_user
 
@@ -902,6 +934,25 @@ class MainWindow(QMainWindow):
             self.status_badge.show()
             if hasattr(self, "tray") and self.tray:
                 self.tray.start_action.setVisible(True)
+
+        # Dynamic User / Device control visibility and access
+        allow_user_device = getattr(session, "allow_user_device", True) if session else True
+        if hasattr(self, "user_button") and self.user_button:
+            self.user_button.setVisible(allow_user_device)
+            self.user_button.setEnabled(allow_user_device)
+        if hasattr(self, "user_label") and self.user_label:
+            if allow_user_device:
+                self.user_label.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.user_label.setToolTip("Click to view User & Device information")
+            else:
+                self.user_label.setCursor(Qt.CursorShape.ArrowCursor)
+                self.user_label.setToolTip("")
+
+        # Dynamic Logout control visibility and access
+        allow_logout = getattr(session, "allow_logout", True) if session else True
+        if hasattr(self, "logout_button") and self.logout_button:
+            self.logout_button.setVisible(allow_logout)
+            self.logout_button.setEnabled(allow_logout)
 
     def _update_status_icon(self) -> None:
         """Update the Shield+Pulse icon based on the current tracking/idle state."""
@@ -1179,6 +1230,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def logout(self) -> None:
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not getattr(session, "allow_logout", True):
+            logger.warning("Logout requested but blocked by backend permission.")
+            return
+
         logger.info("Logging out user")
         self.stop_tracking()
         self._shutdown()
@@ -1291,6 +1348,14 @@ class MainWindow(QMainWindow):
         logger.info(
             "Shutting down application"
         )
+
+        try:
+            if hasattr(self, "_periodic_settings_timer") and self._periodic_settings_timer.isActive():
+                self._periodic_settings_timer.stop()
+            from services.session_service import SessionService
+            SessionService().unregister_permission_listener(self._apply_rbac_permissions)
+        except Exception:
+            pass
 
         try:
             QMetaObject.invokeMethod(

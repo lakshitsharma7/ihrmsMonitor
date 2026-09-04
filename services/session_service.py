@@ -14,6 +14,8 @@ class UserSession:
     # ── RBAC / permission fields from server ──────────────────
     user_type: str = ""                # from login API (e.g. "Joined")
     tracking_permitted: bool = True    # from enroll_device / get_settings
+    allow_user_device: bool = True     # dynamic from server / DB (User/Device modal)
+    allow_logout: bool = True          # dynamic from server / DB (Logout control)
     # ── Auth data returned dynamically by the login API ───────
     indo_code: str | None = None       # employee code from login
     api_key: str | None = None         # auth token from login
@@ -33,6 +35,7 @@ class SessionService:
             cls._instance = super().__new__(cls)
             cls._instance._current_user = None
             cls._instance.device_token = None
+            cls._instance._permission_listeners = []
         return cls._instance
 
     @property
@@ -47,6 +50,8 @@ class SessionService:
         *,
         user_type: str = "",
         tracking_permitted: bool = True,
+        allow_user_device: bool = True,
+        allow_logout: bool = True,
         indo_code: str | None = None,
         api_key: str | None = None,
         employee_id: str | None = None,
@@ -63,6 +68,8 @@ class SessionService:
             full_name=full_name,
             user_type=user_type,
             tracking_permitted=tracking_permitted,
+            allow_user_device=allow_user_device,
+            allow_logout=allow_logout,
             indo_code=indo_code,
             api_key=api_key,
             employee_id=employee_id,
@@ -70,6 +77,7 @@ class SessionService:
             device_token=device_token,
             raw_login_data=raw_login_data or {},
         )
+        self.notify_permission_listeners()
 
     def restore_session(
         self,
@@ -79,6 +87,8 @@ class SessionService:
         *,
         user_type: str = "",
         tracking_permitted: bool = True,
+        allow_user_device: bool = True,
+        allow_logout: bool = True,
         indo_code: str | None = None,
         api_key: str | None = None,
         employee_id: str | None = None,
@@ -95,6 +105,8 @@ class SessionService:
             full_name=full_name,
             user_type=user_type,
             tracking_permitted=tracking_permitted,
+            allow_user_device=allow_user_device,
+            allow_logout=allow_logout,
             indo_code=indo_code,
             api_key=api_key,
             employee_id=employee_id,
@@ -126,14 +138,59 @@ class SessionService:
 
         return payload
 
+    def register_permission_listener(self, callback: Any) -> None:
+        """Register a callback invoked whenever permissions change."""
+        if not hasattr(self, "_permission_listeners"):
+            self._permission_listeners = []
+        if callback not in self._permission_listeners:
+            self._permission_listeners.append(callback)
+
+    def unregister_permission_listener(self, callback: Any) -> None:
+        """Unregister a previously registered permission listener."""
+        if hasattr(self, "_permission_listeners") and callback in self._permission_listeners:
+            self._permission_listeners.remove(callback)
+
+    def notify_permission_listeners(self) -> None:
+        """Notify all listeners that permissions or session state have been updated."""
+        if not hasattr(self, "_permission_listeners"):
+            self._permission_listeners = []
+            return
+        for cb in list(self._permission_listeners):
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def update_permissions(
+        self,
+        *,
+        tracking_permitted: bool | None = None,
+        allow_user_device: bool | None = None,
+        allow_logout: bool | None = None,
+    ) -> None:
+        """Update permission flags dynamically (called when server pushes new settings)."""
+        changed = False
+        if self._current_user is not None:
+            if tracking_permitted is not None and self._current_user.tracking_permitted != tracking_permitted:
+                self._current_user.tracking_permitted = tracking_permitted
+                changed = True
+            if allow_user_device is not None and self._current_user.allow_user_device != allow_user_device:
+                self._current_user.allow_user_device = allow_user_device
+                changed = True
+            if allow_logout is not None and self._current_user.allow_logout != allow_logout:
+                self._current_user.allow_logout = allow_logout
+                changed = True
+        if changed:
+            self.notify_permission_listeners()
+
     def update_tracking_permitted(self, permitted: bool) -> None:
         """Update the tracking permission flag (called when server pushes new settings)."""
-        if self._current_user is not None:
-            self._current_user.tracking_permitted = permitted
+        self.update_permissions(tracking_permitted=permitted)
 
     def logout(self) -> None:
         self._current_user = None
         self.device_token = None
+        self.notify_permission_listeners()
 
     def clear(self) -> None:
         """Explicitly clear all in-memory user and device token state."""

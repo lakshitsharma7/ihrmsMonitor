@@ -52,6 +52,8 @@ class SessionStore:
     _KEY_DEVICE_INFO = "session/device_info"
     _KEY_TIMESTAMP = "session/timestamp"
     _KEY_TRACKING_PERMITTED = "session/tracking_permitted"
+    _KEY_ALLOW_USER_DEVICE = "session/allow_user_device"
+    _KEY_ALLOW_LOGOUT = "session/allow_logout"
     _KEY_ENCRYPTED_CHECKSUM = "session/checksum"
 
     def __init__(self) -> None:
@@ -127,6 +129,8 @@ class SessionStore:
         tracking_permitted: bool,
         base_url: str | None = None,
         company_id: str | None = None,
+        allow_user_device: bool = True,
+        allow_logout: bool = True,
     ) -> bool:
         """Save session data securely.
         
@@ -143,6 +147,8 @@ class SessionStore:
             tracking_permitted: Whether user can be tracked
             base_url: Resolved API backend URL
             company_id: Resolved company ID
+            allow_user_device: Whether User/Device control is enabled
+            allow_logout: Whether Logout control is enabled
             
         Returns:
             True if session was saved successfully
@@ -160,6 +166,8 @@ class SessionStore:
             self.settings.setValue(self._KEY_USER_TYPE, user_type)
             self.settings.setValue(self._KEY_EMPLOYEE_ID, employee_id or "")
             self.settings.setValue(self._KEY_TRACKING_PERMITTED, tracking_permitted)
+            self.settings.setValue(self._KEY_ALLOW_USER_DEVICE, allow_user_device)
+            self.settings.setValue(self._KEY_ALLOW_LOGOUT, allow_logout)
 
             # Store device info as JSON
             device_info_json = json.dumps(device_info)
@@ -259,6 +267,16 @@ class SessionStore:
                 self.settings.value(self._KEY_TRACKING_PERMITTED, True) == "true"
                 or self.settings.value(self._KEY_TRACKING_PERMITTED, True) is True
             )
+            allow_user_device_raw = self.settings.value(self._KEY_ALLOW_USER_DEVICE, True)
+            allow_user_device = (
+                allow_user_device_raw is True
+                or str(allow_user_device_raw).lower() in ("true", "1")
+            )
+            allow_logout_raw = self.settings.value(self._KEY_ALLOW_LOGOUT, True)
+            allow_logout = (
+                allow_logout_raw is True
+                or str(allow_logout_raw).lower() in ("true", "1")
+            )
 
             device_info_json = self.settings.value(self._KEY_DEVICE_INFO, "{}")
             try:
@@ -279,6 +297,8 @@ class SessionStore:
                 "employee_id": employee_id,
                 "device_info": device_info,
                 "tracking_permitted": tracking_permitted,
+                "allow_user_device": allow_user_device,
+                "allow_logout": allow_logout,
             }
 
             logger.info(
@@ -308,6 +328,8 @@ class SessionStore:
             self.settings.remove(self._KEY_DEVICE_INFO)
             self.settings.remove(self._KEY_TIMESTAMP)
             self.settings.remove(self._KEY_TRACKING_PERMITTED)
+            self.settings.remove(self._KEY_ALLOW_USER_DEVICE)
+            self.settings.remove(self._KEY_ALLOW_LOGOUT)
             self.settings.remove(self._KEY_ENCRYPTED_CHECKSUM)
 
             logger.info("Session data cleared")

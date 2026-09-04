@@ -1026,6 +1026,63 @@ class LoginWindow(QMainWindow):
                     settings.setValue("last_username", str(uname_from_api))
                     settings.setValue("last_company_code", str(company_code))
 
+                def _parse_bool_permission(val: Any) -> bool | None:
+                    if val is None:
+                        return None
+                    if isinstance(val, bool):
+                        return val
+                    if isinstance(val, (int, float)):
+                        return bool(val)
+                    if isinstance(val, str):
+                        s = val.strip().lower()
+                        if s in ("true", "1", "yes", "t", "y", "enable", "enabled"):
+                            return True
+                        if s in ("false", "0", "no", "f", "n", "disable", "disabled"):
+                            return False
+                    return None
+
+                def _extract_permission(data: dict, keys: list[str]) -> bool | None:
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            res = _parse_bool_permission(data[k])
+                            if res is not None:
+                                return res
+                    return None
+
+                candidates = [
+                    res_json,
+                    res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {},
+                    res_json.get("permissions", {}) if isinstance(res_json.get("permissions"), dict) else {},
+                    res_json.get("settings", {}) if isinstance(res_json.get("settings"), dict) else {},
+                ]
+
+                allow_logout = True
+                for c in candidates:
+                    perm = _extract_permission(c, ["allow_logout", "logout_permitted", "can_logout", "allow_user_logout", "enable_logout"])
+                    if perm is not None:
+                        allow_logout = perm
+                        break
+
+                allow_user_device = True
+                for c in candidates:
+                    perm = _extract_permission(c, [
+                        "allow_user_device",
+                        "allow_user_device_info",
+                        "allow_device_info",
+                        "allow_device",
+                        "allow_user_device_modal",
+                        "allow_user_info",
+                        "show_user_device",
+                        "user_device_allowed",
+                        "user_device_permitted",
+                        "user_device_enabled",
+                        "device_info_enabled",
+                        "can_view_user_device",
+                    ])
+                    if perm is not None:
+                        allow_user_device = perm
+                        break
+
                 employee_id = emp_code
                 SessionService().login(
                     username,
@@ -1033,6 +1090,8 @@ class LoginWindow(QMainWindow):
                     full_name=full_name,
                     user_type=user_type,
                     tracking_permitted=tracking_permitted,
+                    allow_user_device=allow_user_device,
+                    allow_logout=allow_logout,
                     indo_code=indo_code,
                     api_key=api_key,
                     employee_id=(
@@ -1061,9 +1120,18 @@ class LoginWindow(QMainWindow):
                         tracking_permitted=tracking_permitted,
                         base_url=api_config.base_url,
                         company_id=api_config.company_id,
+                        allow_user_device=allow_user_device,
+                        allow_logout=allow_logout,
                     )
                 except Exception as save_err:
                     logger.warning("Could not persist session: %s", save_err)
+
+                # Query tracking/get_settings immediately so server-side DB permissions are adopted
+                try:
+                    from services.sync_service import SyncService
+                    SyncService().fetch_settings()
+                except Exception as sync_settings_err:
+                    logger.debug("Could not fetch initial settings on login: %s", sync_settings_err)
 
                 # Record device enrollment in DeviceRegistryService
                 try:

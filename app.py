@@ -189,6 +189,8 @@ def main() -> int:
                 full_name=saved_session.get("full_name"),
                 user_type=saved_session.get("user_type", "User"),
                 tracking_permitted=saved_session.get("tracking_permitted", True),
+                allow_user_device=saved_session.get("allow_user_device", True),
+                allow_logout=saved_session.get("allow_logout", True),
                 indo_code=saved_session["indo_code"],
                 api_key=saved_session["api_key"],
                 employee_id=saved_session.get("employee_id"),
