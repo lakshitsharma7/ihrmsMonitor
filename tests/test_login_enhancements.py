@@ -131,6 +131,30 @@ class TestLoginEnhancements(unittest.TestCase):
         self.assertGreaterEqual(gap, 10)
 
 
+    def test_user_device_dialog_opens_and_displays_active_user_information(self):
+        """Verify UserDeviceDialog instantiates cleanly and incorporates active session info without NameError."""
+        from ui.main_window import get_user_device_info, UserDeviceDialog
+        from services.session_service import SessionService
+
+        SessionService().login(
+            username="test_audit_emp",
+            role="Employee",
+            full_name="Sarah Connor",
+            employee_id="EMP_888",
+            company_code="CYBERDYNE",
+            device_token="DEV_TOK_888",
+        )
+
+        info = get_user_device_info()
+        self.assertEqual(info["name"], "Sarah Connor")
+        self.assertEqual(info["username"], "test_audit_emp")
+        self.assertEqual(info["employee_id"], "EMP_888")
+        self.assertEqual(info["company_code"], "CYBERDYNE")
+
+        dialog = UserDeviceDialog(information=info)
+        self.assertEqual(dialog.windowTitle(), "User, Device & Fleet Update Verification")
+
+
 if __name__ == "__main__":
     unittest.main()
 

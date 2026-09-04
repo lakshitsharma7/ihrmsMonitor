@@ -863,17 +863,21 @@ class ActivityTracker:
         last_input_time = now - timedelta(seconds=max(0.0, idle_seconds))
         self._idle_start_time = last_input_time
 
+        idle_app = self._current.application_name if self._current else "Unknown"
         logger.info(
-            "User became idle after %.1fs of inactivity; closing active session at %s",
+            "User became idle in %s after %.1fs of inactivity; closing active session at %s",
+            idle_app,
             idle_seconds,
             last_input_time,
         )
 
         if self._current is not None:
             self._last_active_session_id = self._current.db_id
+            self._idle_application_name = self._current.application_name
             self._close_current_session_at(last_input_time)
         else:
             self._last_active_session_id = None
+            self._idle_application_name = None
 
     # ==========================================================
     # ACTIVE AGAIN
@@ -889,9 +893,12 @@ class ActivityTracker:
         if self._idle_start_time:
             idle_duration = max(0, int((now - self._idle_start_time).total_seconds()))
 
+        app_name = getattr(self, "_idle_application_name", None) or "Unknown"
         logger.info(
-            "User activity resumed after idle. Total idle duration: %ds",
+            "User activity resumed: Application: %s | Status: Idle | Idle Duration: %ds (%s)",
+            app_name,
             idle_duration,
+            ActivityService.format_duration(idle_duration),
         )
 
         if self._last_active_session_id and idle_duration > 0:
@@ -906,6 +913,7 @@ class ActivityTracker:
 
         self._idle_start_time = None
         self._last_active_session_id = None
+        self._idle_application_name = None
 
     # ==========================================================
     # ACTIVITY SYNC

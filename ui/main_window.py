@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 
-from config.settings import APP_NAME
+from config.settings import APP_NAME, get_running_app_version
 from database.database import get_session
 from platform_support import create_activity_provider
 from services.activity_service import ActivityService
@@ -191,24 +191,18 @@ def get_mac_user_info() -> tuple[str, str]:
 
 
 def get_user_device_info() -> dict[str, str]:
-    """
-    Collect user/device information.
+    """Collect user/device information prioritizing active session context.
 
     This function is cross-platform.
-
-    Returns:
-        Dictionary containing:
-        name
-        email
-        username
-        device
-        platform
-        os_version
     """
+    from services.session_service import SessionService
+
+    session = SessionService().current_user
 
     username = (
-        getpass.getuser()
-        or "Not available"
+        session.username
+        if session and session.username
+        else (getpass.getuser() or "Not available")
     )
 
     device_name = (
@@ -226,14 +220,14 @@ def get_user_device_info() -> dict[str, str]:
         or "Not available"
     )
 
-    name = ""
-    email = ""
+    name = session.full_name if session and session.full_name else ""
+    email = getattr(session, "email", "") if session else ""
 
     # ----------------------------------------------------------
     # macOS
     # ----------------------------------------------------------
 
-    if platform_name == "Darwin":
+    if not name and platform_name == "Darwin":
         name, email = (
             get_mac_user_info()
         )
@@ -242,15 +236,7 @@ def get_user_device_info() -> dict[str, str]:
     # Windows
     # ----------------------------------------------------------
 
-    elif platform_name == "Windows":
-
-        # Windows username is available through getpass.
-        username = (
-            getpass.getuser()
-            or "Not available"
-        )
-
-        # Try Windows API for full display name.
+    elif not name and platform_name == "Windows":
         try:
             import ctypes
 
@@ -288,17 +274,8 @@ def get_user_device_info() -> dict[str, str]:
         if not name:
             name = username
 
-        # Windows does not provide a universal
-        # local-account email.
-        email = ""
-
-    # ----------------------------------------------------------
-    # Other platform
-    # ----------------------------------------------------------
-
-    else:
+    if not name:
         name = username
-        email = ""
 
     from config.settings import get_running_app_version
     from utils.device import get_device_identifier
@@ -308,8 +285,11 @@ def get_user_device_info() -> dict[str, str]:
 
     return {
         "name": name or "Not available",
-        "email": email or "Not available",
+        "email": email or (username if "@" in str(username) else "Not available"),
         "username": username,
+        "employee_id": (session.employee_id or session.indo_code) if session else "Not available",
+        "role": (session.role or session.user_type) if session else "Not available",
+        "company_code": session.company_code if session else "Not available",
         "device": device_name,
         "platform": platform_name,
         "os_version": os_version,
@@ -349,7 +329,7 @@ class UserDeviceDialog(QDialog):
         title.setObjectName("DialogTitle")
         root.addWidget(title)
 
-        # Tabs: Current Device | All Enrolled Laptops
+        # Tabs: User & Device Information
         tabs = QTabWidget(self)
 
         # --- Tab 1: Current Laptop ---
@@ -363,11 +343,13 @@ class UserDeviceDialog(QDialog):
         form.setVerticalSpacing(10)
 
         form.addRow("Name:", QLabel(information.get("name", "Not available")))
-        form.addRow("Email:", QLabel(information.get("email", "Not available")))
+        form.addRow("Employee ID:", QLabel(information.get("employee_id", "Not available")))
         form.addRow("Username:", QLabel(information.get("username", "Not available")))
+        form.addRow("Email:", QLabel(information.get("email", "Not available")))
+        form.addRow("Company Code:", QLabel(information.get("company_code", "Not available")))
+        form.addRow("Role / Type:", QLabel(information.get("role", "Not available")))
         form.addRow("Device / Hostname:", QLabel(information.get("device", "Not available")))
-        form.addRow("Platform:", QLabel(information.get("platform", "Not available")))
-        form.addRow("OS Version:", QLabel(information.get("os_version", "Not available")))
+        form.addRow("Platform / OS:", QLabel(f"{information.get('platform', '')} ({information.get('os_version', '')})"))
         form.addRow("Device ID:", QLabel(information.get("device_identifier", "Not available")))
 
         app_ver = information.get("app_version", get_running_app_version())
@@ -402,49 +384,8 @@ class UserDeviceDialog(QDialog):
 
         current_layout.addLayout(form)
         current_layout.addStretch()
-        tabs.addTab(tab_current, "This Laptop")
-
-        # --- Tab 2: Enrolled Laptops Fleet Status ---
-        tab_fleet = QWidget()
-        fleet_layout = QVBoxLayout(tab_fleet)
-        fleet_layout.setContentsMargins(15, 15, 15, 15)
-        fleet_layout.setSpacing(10)
-
-        # Summary Badges Row
-        self.summary_label = QLabel()
-        self.summary_label.setStyleSheet("font-weight: bold; font-size: 13px; padding: 8px; background: #f3f4f6; border-radius: 4px;")
-        fleet_layout.addWidget(self.summary_label)
-
-        # Table
-        self.fleet_table = QTableWidget()
-        self.fleet_table.setColumnCount(6)
-        self.fleet_table.setHorizontalHeaderLabels([
-            "Hostname / Laptop",
-            "User / Emp ID",
-            "Installed Version",
-            "Latest Server",
-            "Update Status",
-            "Last Seen / Sync",
-        ])
-        self.fleet_table.horizontalHeader().setStretchLastSection(True)
-        self.fleet_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.fleet_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.fleet_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.fleet_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        fleet_layout.addWidget(self.fleet_table)
-
-        # Refresh Fleet Button
-        fleet_btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh Fleet Status")
-        refresh_btn.clicked.connect(self._populate_fleet_table)
-        fleet_btn_row.addWidget(refresh_btn)
-        fleet_btn_row.addStretch()
-        fleet_layout.addLayout(fleet_btn_row)
-
-        tabs.addTab(tab_fleet, "All Enrolled Laptops")
+        tabs.addTab(tab_current, "User & Device")
         root.addWidget(tabs)
-
-        self._populate_fleet_table()
 
         # Close button
         buttons = QHBoxLayout()
@@ -453,56 +394,6 @@ class UserDeviceDialog(QDialog):
         close_button.clicked.connect(self.accept)
         buttons.addWidget(close_button)
         root.addLayout(buttons)
-
-    def _populate_fleet_table(self) -> None:
-        try:
-            from services.device_registry_service import DeviceRegistryService
-            svc = DeviceRegistryService()
-            summary = svc.get_device_summary()
-            self.summary_label.setText(
-                f"Total Laptops: {summary['total']}  |  "
-                f"Updated: {summary['updated']}  |  "
-                f"Pending: {summary['pending']}  |  "
-                f"Failed: {summary['failed']}  |  "
-                f"Offline: {summary['offline']}"
-            )
-
-            devices = svc.get_all_devices()
-            self.fleet_table.setRowCount(len(devices))
-
-            for row, d in enumerate(devices):
-                host_item = QTableWidgetItem(d.get("hostname") or "Unknown")
-                emp_str = f"{d.get('username') or ''} ({d.get('employee_id') or '-'})".strip()
-                emp_item = QTableWidgetItem(emp_str)
-                inst_ver_item = QTableWidgetItem(d.get("installed_version") or get_running_app_version())
-                latest_ver_item = QTableWidgetItem(str(d.get("latest_version") or "N/A"))
-
-                status_text = d.get("update_status", "Unknown")
-                status_item = QTableWidgetItem(status_text)
-                if status_text == "Updated":
-                    status_item.setForeground(Qt.GlobalColor.darkGreen)
-                elif "Pending" in status_text:
-                    status_item.setForeground(Qt.GlobalColor.darkYellow)
-                elif "Failed" in status_text:
-                    status_item.setForeground(Qt.GlobalColor.red)
-                    if d.get("failure_reason"):
-                        status_item.setToolTip(f"Failure Reason: {d['failure_reason']}")
-                else:
-                    status_item.setForeground(Qt.GlobalColor.gray)
-
-                last_str = d.get("last_seen") or d.get("last_sync") or "Never"
-                if "T" in str(last_str):
-                    last_str = last_str.split(".")[0].replace("T", " ")
-                last_item = QTableWidgetItem(str(last_str))
-
-                self.fleet_table.setItem(row, 0, host_item)
-                self.fleet_table.setItem(row, 1, emp_item)
-                self.fleet_table.setItem(row, 2, inst_ver_item)
-                self.fleet_table.setItem(row, 3, latest_ver_item)
-                self.fleet_table.setItem(row, 4, status_item)
-                self.fleet_table.setItem(row, 5, last_item)
-        except Exception as e:
-            logger.debug("Failed to populate fleet table: %s", e)
 
 
 # ==============================================================
@@ -696,6 +587,9 @@ class MainWindow(QMainWindow):
 
         self.user_label = QLabel(f"Welcome, {display_name}")
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
+        self.user_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.user_label.setToolTip("Click to view User & Device information")
+        self.user_label.mousePressEvent = lambda event: self._show_user_device_info()
         header_layout.addWidget(self.user_label)
 
         # Tracking status icon next to status badge

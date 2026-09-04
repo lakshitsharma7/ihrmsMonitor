@@ -567,17 +567,31 @@ class SyncService:
             last_end = local_end
 
             idle_seconds = max(0, int(getattr(session, "idle_seconds", 0) or 0))
+            is_idle = idle_seconds > 0
+            idle_status = "Idle" if is_idle else "Active"
 
             # Format the actual local activity start/end time
             # Standard local datetime representation: YYYY-MM-DD HH:MM:SS
             start_time_str = local_start.strftime("%Y-%m-%d %H:%M:%S")
             end_time_str = local_end.strftime("%Y-%m-%d %H:%M:%S") if local_end else start_time_str
 
+            if is_idle and local_end:
+                idle_start_dt = local_end
+                idle_end_dt = local_end + timedelta(seconds=idle_seconds)
+                idle_start_str = idle_start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                idle_end_str = idle_end_dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                idle_start_str = start_time_str
+                idle_end_str = end_time_str
+
             activities.append({
                 "activity_session_id": session.id,
                 "application_name": session.application_name,
                 "window_title": session.window_title or "",
                 "process_id": session.process_id,
+                "status": idle_status,
+                "idle_status": idle_status,
+                "is_idle": is_idle,
                 "start_time": start_time_str,
                 "started_at": start_time_str,
                 "end_time": end_time_str,
@@ -586,6 +600,8 @@ class SyncService:
                 "duration_seconds": duration_seconds,
                 "idle_time": idle_seconds,
                 "idle_duration_seconds": idle_seconds,
+                "idle_start_time": idle_start_str,
+                "idle_end_time": idle_end_str,
             })
 
             totals_map[session.application_name] = totals_map.get(session.application_name, 0) + duration_seconds

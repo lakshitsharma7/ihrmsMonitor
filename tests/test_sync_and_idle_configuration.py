@@ -250,5 +250,47 @@ class TestSyncAndIdleConfiguration(unittest.TestCase):
             self.assertIn("Sync SUCCESS", log_text)
 
 
+    def test_idle_activity_payload_includes_app_status_and_timestamps(self):
+        """Verify activity records sent to API when idle include application name, Status: Idle, idle start/end, and duration."""
+        from database.models import ActivitySession
+
+        db = get_session()
+        try:
+            start_dt = datetime(2026, 9, 4, 10, 0, 0, tzinfo=timezone.utc)
+            end_dt = datetime(2026, 9, 4, 10, 20, 0, tzinfo=timezone.utc)
+            # 5 minutes 32 seconds idle = 332 seconds
+            sess = ActivitySession(
+                application_name="Google Chrome",
+                window_title="HRMS Portal - Google Chrome",
+                process_id=5432,
+                started_at=start_dt,
+                ended_at=end_dt,
+                duration_seconds=1200,
+                idle_seconds=332,
+                employee_id="EMP_IDLE_TEST",
+            )
+            db.add(sess)
+            db.commit()
+            db.refresh(sess)
+
+            # Build payload
+            payload = self.sync_service._build_page_payload([sess], start_dt, end_dt, page=1, page_size=25)
+            self.assertEqual(len(payload["activities"]), 1)
+            act = payload["activities"][0]
+
+            self.assertEqual(act["application_name"], "Google Chrome")
+            self.assertEqual(act["status"], "Idle")
+            self.assertEqual(act["idle_status"], "Idle")
+            self.assertTrue(act["is_idle"])
+            self.assertEqual(act["idle_time"], 332)
+            self.assertEqual(act["idle_duration_seconds"], 332)
+            self.assertIn("idle_start_time", act)
+            self.assertIn("idle_end_time", act)
+            self.assertTrue(len(act["idle_start_time"]) > 0)
+            self.assertTrue(len(act["idle_end_time"]) > 0)
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
