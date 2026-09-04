@@ -470,11 +470,15 @@ class MainWindow(QMainWindow):
         # Start tracking automatically if permitted by RBAC
         from services.session_service import SessionService
         session = SessionService().current_user
-        if session and session.tracking_permitted:
+        if session is None or getattr(session, "tracking_permitted", True):
             logger.info("Auto-starting tracking on login based on RBAC permissions.")
             self.start_tracking()
         else:
             logger.info("Auto-starting tracking skipped due to RBAC permissions.")
+
+        # Post-render check: ensure tracking is definitely active
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(200, self._ensure_tracking_started)
 
         # Update system state
         self._update_dialog = None
@@ -1047,8 +1051,20 @@ class MainWindow(QMainWindow):
             self.tray.set_tracking_state(True)
         if hasattr(self, "settings_page") and self.settings_page:
             self.settings_page.update_capture_status(True)
+        if hasattr(self, "dashboard_page") and self.dashboard_page:
+            self.dashboard_page.tracking_status_label.setText("Tracking: Active")
+            if self.dashboard_page.current_app_label.text() in ("Not tracking", ""):
+                self.dashboard_page.current_app_label.setText("Detecting...")
 
         self._request_start.emit()
+
+    def _ensure_tracking_started(self) -> None:
+        """Verify tracking has started after login; if not, trigger start_tracking."""
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if (session is None or getattr(session, "tracking_permitted", True)) and hasattr(self, "_tracker") and not self._tracker.is_tracking:
+            logger.info("Ensuring tracking is active after login/startup.")
+            self.start_tracking()
 
     @Slot()
     def stop_tracking(

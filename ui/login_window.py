@@ -1083,6 +1083,19 @@ class LoginWindow(QMainWindow):
                         allow_user_device = perm
                         break
 
+                # Dynamic tracking permission from backend candidates
+                for c in candidates:
+                    perm = _extract_permission(c, [
+                        "tracking_enabled",
+                        "tracking_permitted",
+                        "allow_tracking",
+                        "is_tracking_enabled",
+                        "enable_tracking",
+                    ])
+                    if perm is not None:
+                        tracking_permitted = perm
+                        break
+
                 employee_id = emp_code
                 SessionService().login(
                     username,

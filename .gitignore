@@ -12,7 +12,8 @@ venv/
 
 build/
 dist/
-*.spec
+!iHRMS Monitor.spec
+!IHRMS Monitor.spec
 
 
 *.db

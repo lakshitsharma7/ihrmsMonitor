@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import getpass
 import platform
 import socket
@@ -259,10 +261,10 @@ class SyncService:
                 if server_allow_user_device is not None:
                     self._save_cached_setting("allow_user_device", server_allow_user_device)
 
-                # Tracking permitted
+                # Tracking permitted (checks if activity tracking is enabled by backend)
                 server_allow_tracking = _extract_permission(
                     settings_data,
-                    ["allow_start_stop_activity_tracking", "tracking_permitted", "allow_tracking"]
+                    ["tracking_enabled", "tracking_permitted", "allow_tracking", "is_tracking_enabled", "enable_tracking"]
                 )
                 if server_allow_tracking is not None:
                     self._save_cached_setting("tracking_permitted", server_allow_tracking)

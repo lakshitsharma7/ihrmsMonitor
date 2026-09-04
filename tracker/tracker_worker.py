@@ -43,18 +43,25 @@ class TrackerWorker(QObject):
     @Slot()
     def setup(self) -> None:
         """Create the QTimer. Must be called after this object has moved to its thread."""
-        self._timer = QTimer()
-        self._timer.setInterval(self._poll_interval_ms)
-        self._timer.timeout.connect(self._on_tick)
+        if self._timer is None:
+            self._timer = QTimer()
+            self._timer.setInterval(self._poll_interval_ms)
+            self._timer.timeout.connect(self._on_tick)
+        if self._tracker.is_tracking and not self._timer.isActive():
+            self._timer.start()
 
     @Slot()
     def start_tracking(self) -> None:
         try:
+            if self._timer is None:
+                self.setup()
             self._tracker.start()
-            if self._timer is not None:
+            if self._timer is not None and not self._timer.isActive():
                 self._timer.start()
             logger.info("TrackerWorker: tracking started")
             self.tracking_started.emit()
+            # Immediately execute an initial poll so the GUI receives active state instantly
+            self._on_tick()
         except Exception:  # noqa: BLE001
             logger.exception("TrackerWorker failed to start tracking")
 

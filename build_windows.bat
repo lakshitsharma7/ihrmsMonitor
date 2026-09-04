@@ -13,12 +13,21 @@ if errorlevel 1 goto :error
 
 echo.
 echo ===================================================
-echo [2/3] Generating Version Info & Building with PyInstaller...
+echo [2/3] Generating Version Info and Building with PyInstaller...
 echo ===================================================
 python scripts\generate_version_info.py
 if errorlevel 1 goto :error
 
-pyinstaller --noconfirm --clean "IHRMS Monitor.spec"
+set "SPEC_FILE="
+if exist "iHRMS Monitor.spec" set "SPEC_FILE=iHRMS Monitor.spec"
+if exist "IHRMS Monitor.spec" set "SPEC_FILE=IHRMS Monitor.spec"
+if not defined SPEC_FILE (
+    echo Spec file not found. Generating iHRMS Monitor.spec...
+    pyi-makespec --name "iHRMS Monitor" --windowed --icon="assets/ihrms-logo-icon.ico" --version-file="file_version_info.txt" --add-data "assets;assets" --paths=. --hidden-import=config --hidden-import=config.settings app.py
+    set "SPEC_FILE=iHRMS Monitor.spec"
+)
+
+pyinstaller --noconfirm --clean "!SPEC_FILE!"
 if errorlevel 1 goto :error
 
 echo.

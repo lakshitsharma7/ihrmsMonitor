@@ -201,11 +201,13 @@ class ActivityTracker:
 
         # A previous run may have collected logs it never managed to send
         # (no connection, or the machine was shut down). Push those now
-        # rather than making them wait a full cycle.
+        # rather than making them wait a full cycle. Run on a daemon thread
+        # so tracker startup and initial polling are never blocked by network latency.
         self._last_sync_time = self._clock()
         self._last_settings_fetch_time = self._clock()
 
-        self._sync_activity()
+        import threading
+        threading.Thread(target=self._sync_activity, name="StartupActivitySync", daemon=True).start()
 
     # ==========================================================
     # STOP
