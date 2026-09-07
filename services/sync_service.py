@@ -5,6 +5,7 @@ from typing import Any
 import getpass
 import platform
 import socket
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -54,6 +55,7 @@ class SyncService:
     records_currently_sending: int = 0
     current_sync_interval_seconds: int = 300  # Default 300 seconds until first API settings load
     current_idle_threshold_seconds: int = 300  # Default 300 seconds until first API settings load
+    _sync_lock: threading.Lock = threading.Lock()
 
     @staticmethod
     def _save_cached_setting(key: str, value: Any) -> None:
@@ -381,39 +383,49 @@ class SyncService:
 
         It processes records in batches of 100 max, divided into 4 requests of 25 records each.
         """
-        # Call tracking/get_settings at the start of every sync cycle
-        device_token = self._require_device_token()
-
-        if not device_token:
-            SyncService.last_sync_status = "Failed"
-            SyncService.records_currently_sending = 0
-            logger.error("Sync FAILURE: No device token available - device is not enrolled.")
+        if not self._sync_lock.acquire(blocking=False):
+            logger.info("Activity sync already in progress; skipping duplicate trigger.")
             return False
 
-        # Fetch latest settings from existing API and apply returned values
-        self.fetch_settings()
-
-        from datetime import datetime, timedelta
-        next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
-        next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        logger.info(
-            "Sync Cycle Started | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s",
-            self.current_sync_interval_seconds,
-            self.current_idle_threshold_seconds,
-            next_sync_str,
-        )
-
-        db_session = get_session()
+        current_emp_id = "unknown"
         try:
-            repository = ActivityRepository(db_session)
+            # Call tracking/get_settings at the start of every sync cycle
+            device_token = self._require_device_token()
+
+            if not device_token:
+                SyncService.last_sync_status = "Failed"
+                SyncService.records_currently_sending = 0
+                logger.error("Sync FAILURE: No device token available - device is not enrolled.")
+                return False
+
+            # Fetch latest settings from existing API and apply returned values
+            self.fetch_settings()
+
+            from datetime import datetime, timedelta
+            next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
+            next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            logger.info(
+                "Sync Cycle Started | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s",
+                self.current_sync_interval_seconds,
+                self.current_idle_threshold_seconds,
+                next_sync_str,
+            )
+
             from services.session_service import SessionService
             curr_user = SessionService().current_user
-            current_emp_id = curr_user.employee_id if curr_user else None
+            current_emp_id = curr_user.employee_id if curr_user else "unknown"
 
             # Retrieve all closed sessions that have not been synced yet for this user
-            unsynced_sessions = repository.get_unsynced_closed_sessions(employee_id=current_emp_id)
+            db_session = get_session()
+            try:
+                repository = ActivityRepository(db_session)
+                unsynced_sessions = repository.get_unsynced_closed_sessions(employee_id=curr_user.employee_id if curr_user else None)
+                db_session.expunge_all()
+            finally:
+                db_session.close()
 
+            uploaded_count = 0
             if unsynced_sessions:
                 SyncService.last_sync_status = "Sending"
                 SyncService.records_currently_sending = len(unsynced_sessions)
@@ -428,7 +440,6 @@ class SyncService:
                 for i in range(0, len(unsynced_sessions), BATCH_SIZE):
                     batch = unsynced_sessions[i:i + BATCH_SIZE]
                     
-                    uploaded_count = 0
                     # Divide batch of 100 into 4 requests of 25 records each
                     PAGE_SIZE = 25
                     for page_num in range(1, 5): # page 1, 2, 3, 4
@@ -479,19 +490,25 @@ class SyncService:
                             SyncService.records_currently_sending = 0
                             return False
                             
-                        # Process mappings
+                        # Process mappings in a short-lived db session
                         processed_items = res_data.get("data", [])
                         if not isinstance(processed_items, list):
                             processed_items = []
                             
-                        for item in processed_items:
-                            client_ref = item.get("client_session_ref")
-                            server_id = item.get("activity_session_id")
-                            if client_ref is not None and server_id is not None:
-                                try:
-                                    repository.update_session_server_id(int(client_ref), str(server_id))
-                                except Exception as err:
-                                    logger.error("Failed to update server session ID for client ref %s: %s", client_ref, err)
+                        if processed_items:
+                            db_session = get_session()
+                            try:
+                                repository = ActivityRepository(db_session)
+                                for item in processed_items:
+                                    client_ref = item.get("client_session_ref")
+                                    server_id = item.get("activity_session_id")
+                                    if client_ref is not None and server_id is not None:
+                                        try:
+                                            repository.update_session_server_id(int(client_ref), str(server_id))
+                                        except Exception as err:
+                                            logger.error("Failed to update server session ID for client ref %s: %s", client_ref, err)
+                            finally:
+                                db_session.close()
 
                         uploaded_count += len(page_sessions)
                         # Decrement remaining unsynced records
@@ -502,22 +519,38 @@ class SyncService:
                 logger.info("Sync Records Sending | records_currently_sending=0 | user=%s | (no unsynced activities)", current_emp_id)
 
             # Now sync any unuploaded screenshots for already-synced sessions for this user
-            unuploaded = repository.get_sessions_with_unuploaded_screenshots(employee_id=current_emp_id)
-            if unuploaded:
-                logger.info("Found %d unuploaded screenshots for user %s. Processing screenshot uploads...", len(unuploaded), current_emp_id)
+            screenshot_jobs = []
+            db_session = get_session()
+            try:
+                repository = ActivityRepository(db_session)
+                unuploaded = repository.get_sessions_with_unuploaded_screenshots(employee_id=curr_user.employee_id if curr_user else None)
                 for session in unuploaded:
+                    screenshot_jobs.append({
+                        "id": session.id,
+                        "screenshot_path": session.screenshot_path,
+                        "server_session_id": session.server_session_id,
+                        "application_name": session.application_name,
+                        "process_id": session.process_id,
+                        "started_at": session.started_at,
+                    })
+            finally:
+                db_session.close()
+
+            if screenshot_jobs:
+                logger.info("Found %d unuploaded screenshots for user %s. Processing screenshot uploads...", len(screenshot_jobs), current_emp_id)
+                for job in screenshot_jobs:
                     success = self.upload_screenshot_now(
-                        screenshot_path=session.screenshot_path,
-                        activity_session_id=session.server_session_id, # Must use the server side ID
-                        application_name=session.application_name,
-                        process_id=session.process_id,
-                        captured_at=session.started_at,
-                        local_session_id=session.id
+                        screenshot_path=job["screenshot_path"],
+                        activity_session_id=job["server_session_id"], # Must use the server side ID
+                        application_name=job["application_name"],
+                        process_id=job["process_id"],
+                        captured_at=job["started_at"],
+                        local_session_id=job["id"]
                     )
                     if success:
-                        logger.info("Successfully uploaded and confirmed screenshot for local session ID %d", session.id)
+                        logger.info("Successfully uploaded and confirmed screenshot for local session ID %d", job["id"])
                     else:
-                        logger.error("Screenshot upload failed or deferred for local session ID %d", session.id)
+                        logger.error("Screenshot upload failed or deferred for local session ID %d", job["id"])
 
             # Sweep any previously uploaded screenshots that remain on local disk
             try:
@@ -552,12 +585,13 @@ class SyncService:
             SyncService.last_sync_status = "Failed"
             SyncService.records_currently_sending = 0
 
+            from datetime import datetime, timedelta
             next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
             next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
 
             logger.error(
                 "Sync FAILURE | user=%s | sync_interval_seconds=%d | idle_threshold_seconds=%d | next_sync_time=%s | error=%s",
-                current_emp_id if 'current_emp_id' in locals() else 'unknown',
+                current_emp_id,
                 self.current_sync_interval_seconds,
                 self.current_idle_threshold_seconds,
                 next_sync_str,
@@ -575,7 +609,7 @@ class SyncService:
                 pass
             return False
         finally:
-            db_session.close()
+            self._sync_lock.release()
 
     def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> dict | None:
         for attempt in range(1, retries + 1):

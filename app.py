@@ -88,6 +88,9 @@ def _setup_exception_hook() -> None:
 
 
 def main() -> int:
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     _setup_exception_hook()
     _set_windows_app_identity()
 
@@ -136,6 +139,7 @@ def main() -> int:
             APP_NAME,
         )
         return 0
+    app._instance_lock = lock_file
 
     try:
         init_database()

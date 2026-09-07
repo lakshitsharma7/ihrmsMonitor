@@ -120,19 +120,21 @@ def _grab_screen_image() -> Image.Image | None:
         logger.info("Windows session is locked. Screenshot capture deferred until session is unlocked.")
         return None
 
-    # Tier 1: PySide6 QGuiApplication
+    # Tier 1: PySide6 QGuiApplication (Only safe on main GUI thread; non-GUI threads use PIL/Win32)
     try:
+        from PySide6.QtCore import QThread
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QGuiApplication, QPainter, QPixmap, QImage
 
         app = QApplication.instance()
-        if app is None:
-            try:
-                app = QApplication(sys.argv)
-            except Exception:
-                pass
-
+        is_main_thread = False
         if app is not None:
+            try:
+                is_main_thread = (QThread.currentThread() == app.thread())
+            except Exception:
+                is_main_thread = False
+
+        if is_main_thread:
             screens = QGuiApplication.screens()
             if screens:
                 if len(screens) == 1:

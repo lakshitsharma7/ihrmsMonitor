@@ -35,11 +35,25 @@ def init_database(db_path: Path | str | None = None) -> None:
     resolved_path = str(db_path) if db_path is not None else str(get_database_path())
     logger.info("Initializing database at %s", resolved_path)
 
+    from sqlalchemy import event
+
     _engine = create_engine(
         f"sqlite:///{resolved_path}",
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": 30.0},
         future=True,
     )
+
+    @event.listens_for(_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        try:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=30000;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.close()
+        except Exception as e:
+            logger.debug("Could not set SQLite pragmas: %s", e)
+
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
     try:

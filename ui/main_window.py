@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import getpass
 import platform
+import threading
+import time
 
 from PySide6.QtCore import QMetaObject, Qt, Signal, Slot
 from PySide6.QtWidgets import (
@@ -413,6 +415,8 @@ class MainWindow(QMainWindow):
         int,
         bool,
     )
+    _request_system_suspend = Signal()
+    _request_system_resume = Signal()
 
     def __init__(self, login_window=None) -> None:
         super().__init__()
@@ -530,12 +534,17 @@ class MainWindow(QMainWindow):
         self._periodic_settings_timer.start()
 
     def _sync_permissions_from_backend(self) -> None:
-        """Fetch latest backend configuration to dynamically apply permission changes."""
-        try:
-            from services.sync_service import SyncService
-            SyncService().fetch_settings()
-        except Exception as err:
-            logger.debug("Background settings sync encountered: %s", err)
+        """Fetch latest backend configuration to dynamically apply permission changes in a background thread."""
+        def _bg_fetch():
+            try:
+                from services.sync_service import SyncService
+                SyncService().fetch_settings()
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, self._apply_rbac_permissions)
+            except Exception as err:
+                logger.debug("Background settings sync encountered: %s", err)
+
+        threading.Thread(target=_bg_fetch, name="SettingsSyncWorker", daemon=True).start()
 
     # ==========================================================
     # BUILD UI
@@ -880,6 +889,14 @@ class MainWindow(QMainWindow):
             self._worker.apply_settings
         )
 
+        self._request_system_suspend.connect(
+            self._worker.handle_system_suspend
+        )
+
+        self._request_system_resume.connect(
+            self._worker.handle_system_resume
+        )
+
         self._thread.start()
 
     # ==========================================================
@@ -1183,10 +1200,22 @@ class MainWindow(QMainWindow):
 
             self._refresh_badge_style()
 
-        self.dashboard_page.refresh()
-        if hasattr(self, "weekly_page") and self.weekly_page.isVisible():
-            self.weekly_page.refresh()
-        self._apply_rbac_permissions()
+        now_ts = time.time()
+        last_refresh_ts = getattr(self, "_last_table_refresh_ts", 0)
+        last_app = getattr(self, "_last_rendered_app", None)
+        last_idle = getattr(self, "_last_rendered_idle", None)
+
+        app_switched = (state.current_application != last_app) or (state.is_idle != last_idle)
+        time_elapsed = (now_ts - last_refresh_ts) >= 5.0
+
+        if app_switched or time_elapsed:
+            self._last_table_refresh_ts = now_ts
+            self._last_rendered_app = state.current_application
+            self._last_rendered_idle = state.is_idle
+            self.dashboard_page.refresh()
+            if hasattr(self, "weekly_page") and self.weekly_page.isVisible():
+                self.weekly_page.refresh()
+            self._apply_rbac_permissions()
 
         # If an update check was pending/deferred due to offline status and sync succeeds, trigger check immediately
         if getattr(self, "_offline_update_pending", False):
@@ -1355,6 +1384,30 @@ class MainWindow(QMainWindow):
                 APP_NAME,
                 "Still tracking in the background.",
             )
+
+    def nativeEvent(self, eventType, message):
+        """Handle native Windows events including system power suspend and resume."""
+        try:
+            if eventType == b"windows_generic_MSG":
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0218:  # WM_POWERBROADCAST
+                    PBT_APMSUSPEND = 0x0004
+                    PBT_APMRESUMEAUTOMATIC = 0x0012
+                    PBT_APMRESUMESUSPEND = 0x0007
+                    if msg.wParam == PBT_APMSUSPEND:
+                        logger.info("Native WM_POWERBROADCAST: System entering suspend/sleep.")
+                        self._request_system_suspend.emit()
+                    elif msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
+                        logger.info("Native WM_POWERBROADCAST: System resumed from sleep.")
+                        self._request_system_resume.emit()
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(200, self.dashboard_page.refresh)
+                        QTimer.singleShot(200, self._apply_rbac_permissions)
+        except Exception as power_err:
+            logger.debug("Error handling native power event: %s", power_err)
+        return super().nativeEvent(eventType, message)
 
     def _shutdown(
         self,
