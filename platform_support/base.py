@@ -55,3 +55,8 @@ class PlatformActivityProvider:
         title (permissions can still cause it to be ``None`` at runtime).
         """
         return True
+
+    def reset_after_resume(self) -> None:
+        """Reinitialize idle/activity detection after system resume from sleep."""
+        pass
+

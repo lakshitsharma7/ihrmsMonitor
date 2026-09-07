@@ -20,3 +20,7 @@ class WindowsActivityProvider(PlatformActivityProvider):
 
     def supports_window_titles(self) -> bool:
         return True
+
+    def reset_after_resume(self) -> None:
+        idle_detector.reset_after_resume()
+

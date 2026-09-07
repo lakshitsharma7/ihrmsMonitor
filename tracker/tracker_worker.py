@@ -89,6 +89,21 @@ class TrackerWorker(QObject):
             capture_on_switch
         )
 
+    @Slot()
+    def handle_system_suspend(self) -> None:
+        try:
+            self._tracker.handle_system_suspend()
+        except Exception:
+            logger.exception("TrackerWorker failed to handle system suspend")
+
+    @Slot()
+    def handle_system_resume(self) -> None:
+        try:
+            self._tracker.handle_system_resume()
+            self._on_tick()
+        except Exception:
+            logger.exception("TrackerWorker failed to handle system resume")
+
     # -- internal ---------------------------------------------------------------
 
     def _on_tick(self) -> None:

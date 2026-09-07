@@ -259,20 +259,18 @@ class ActivityTracker:
             #
             # The timer polls every ~1s. If the wall-clock elapsed time
             # between polls exceeds 10s, the laptop went to sleep or hibernated.
-            # Close the previous session at the moment the laptop went to sleep
-            # so sleep/offline time is NEVER counted as working time.
+            # Reinitialize state and close pre-sleep session so sleep time is
+            # NEVER counted as working or idle time.
             # --------------------------------------------------
             if self._last_poll_time is not None:
                 gap_seconds = (now - self._last_poll_time).total_seconds()
                 if gap_seconds > 10.0:
                     logger.info(
                         "System sleep / suspend detected: elapsed %.1fs between polls. "
-                        "Closing previous session at last active time.",
+                        "Reinitializing tracker state after resume.",
                         gap_seconds,
                     )
-                    if self._current is not None:
-                        self._close_current_session_at(self._last_poll_time)
-                    self._is_idle = False
+                    self.handle_system_resume(now=now)
 
             self._last_poll_time = now
 
@@ -854,6 +852,55 @@ class ActivityTracker:
             db_session.close()
 
     # ==========================================================
+    # POWER / SLEEP / RESUME MANAGEMENT
+    # ==========================================================
+
+    def handle_system_suspend(self, now: datetime | None = None) -> None:
+        """Handle system entering sleep or hibernate mode."""
+        suspend_time = now or self._clock()
+        logger.info("ActivityTracker: System entering sleep/suspend. Closing active session cleanly at %s", suspend_time)
+
+        if self._current is not None:
+            self._close_current_session_at(suspend_time)
+
+        self._is_idle = False
+        self._idle_start_time = None
+        self._last_active_session_id = None
+        self._idle_application_name = None
+        self._last_poll_time = suspend_time
+
+    def handle_system_resume(self, now: datetime | None = None) -> None:
+        """Handle system resume from sleep or hibernate mode."""
+        resume_time = now or self._clock()
+        logger.info("ActivityTracker: System resumed from sleep/suspend at %s. Resetting idle state.", resume_time)
+
+        # Close previous active session at last active time before sleep so sleep is never counted
+        if self._current is not None:
+            close_at = self._last_poll_time or resume_time
+            self._close_current_session_at(close_at)
+
+        # Reset all stale idle tracking states
+        self._is_idle = False
+        self._idle_start_time = None
+        self._last_active_session_id = None
+        self._idle_application_name = None
+        self._last_idle_seconds = 0.0
+
+        # Reset poll timing marker to current wake time
+        self._last_poll_time = resume_time
+
+        # Reinitialize platform provider / idle detector
+        if hasattr(self._provider, "reset_after_resume"):
+            try:
+                self._provider.reset_after_resume()
+            except Exception as reset_err:
+                logger.debug("Provider reset_after_resume failed: %s", reset_err)
+
+        # Immediately check active application so tracking resumes
+        if self._is_tracking:
+            self._poll_active_application()
+
+    # ==========================================================
     # IDLE
     # ==========================================================
 
@@ -896,6 +943,14 @@ class ActivityTracker:
         idle_duration = 0
         if self._idle_start_time:
             idle_duration = max(0, int((now - self._idle_start_time).total_seconds()))
+            # Sanity clamp: if idle duration spans across sleep/offline (> 2 hours),
+            # discard it so sleep time is never saved as session idle time
+            if idle_duration > 7200:
+                logger.warning(
+                    "Sanitizing anomalous idle duration spanning sleep/offline: %ds -> 0s",
+                    idle_duration,
+                )
+                idle_duration = 0
 
         app_name = getattr(self, "_idle_application_name", None) or "Unknown"
         try:
