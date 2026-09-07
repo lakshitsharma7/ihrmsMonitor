@@ -317,11 +317,70 @@ class ActivityRepository:
             record = self._session.get(ActivitySession, session_id)
             if record is None:
                 return
-            record.idle_seconds = max(0, int(idle_seconds))
+            new_idle = max(0, int(idle_seconds))
+            if record.idle_seconds != new_idle and record.server_session_id is not None:
+                logger.info(
+                    "[DATABASE_UPDATE_RESULT] Resetting server_session_id for session #%s so updated idle (%ds -> %ds) is re-synced",
+                    session_id,
+                    record.idle_seconds,
+                    new_idle,
+                )
+                record.server_session_id = None
+            diff = new_idle - (record.idle_seconds or 0)
+            record.idle_seconds = new_idle
+            if diff > 0 and record.ended_at is not None:
+                record.ended_at = _to_utc(record.ended_at) + timedelta(seconds=diff)
+                if record.started_at is not None:
+                    record.duration_seconds = max(0, int((record.ended_at - _to_utc(record.started_at)).total_seconds()))
             self._session.commit()
+            logger.info("[DATABASE_UPDATE_RESULT] Session #%s idle_seconds set to %ds", session_id, new_idle)
         except Exception:
             self._session.rollback()
             logger.exception("Failed to update idle seconds for session id=%s", session_id)
+
+    def add_session_idle_seconds(
+        self,
+        session_id: int,
+        idle_duration: int,
+    ) -> int:
+        """Accumulate idle duration into an activity session (supporting multiple idle periods in one session)."""
+        try:
+            record = self._session.get(ActivitySession, session_id)
+            if record is None:
+                logger.warning("[DATABASE_UPDATE_RESULT] Cannot add idle seconds: session id=%s not found", session_id)
+                return 0
+            prev_idle = max(0, int(record.idle_seconds or 0))
+            add_sec = max(0, int(idle_duration))
+            new_idle = prev_idle + add_sec
+            record.idle_seconds = new_idle
+            # Extend ended_at and duration_seconds so total session duration includes the idle duration
+            if record.ended_at is not None and add_sec > 0:
+                record.ended_at = _to_utc(record.ended_at) + timedelta(seconds=add_sec)
+                if record.started_at is not None:
+                    record.duration_seconds = max(0, int((record.ended_at - _to_utc(record.started_at)).total_seconds()))
+            # If session was prematurely synced or has server_session_id, reset it so the updated idle is synced
+            if record.server_session_id is not None:
+                logger.info(
+                    "[DATABASE_UPDATE_RESULT] Resetting server_session_id for session #%s so updated idle (%ds -> %ds) is re-synced",
+                    session_id,
+                    prev_idle,
+                    new_idle,
+                )
+                record.server_session_id = None
+            self._session.commit()
+            self._session.refresh(record)
+            logger.info(
+                "[DATABASE_UPDATE_RESULT] Session #%s idle_seconds updated: prev=%ds added=%ds total=%ds",
+                session_id,
+                prev_idle,
+                idle_duration,
+                new_idle,
+            )
+            return new_idle
+        except Exception:
+            self._session.rollback()
+            logger.exception("[DATABASE_UPDATE_RESULT] Failed to add idle seconds for session id=%s", session_id)
+            return 0
 
     # ==========================================================
     # CLOSE SESSION
@@ -389,7 +448,13 @@ class ActivityRepository:
                 "Failed to close session id=%s",
                 session_id,
             )
+            return None
 
+    def get_session_by_id(self, session_id: int) -> ActivitySession | None:
+        """Retrieve a session by its primary key ID."""
+        try:
+            return self._session.get(ActivitySession, session_id)
+        except Exception:
             return None
 
     # ==========================================================
@@ -523,13 +588,21 @@ class ActivityRepository:
     # GET UNSYNCED CLOSED SESSIONS
     # ==========================================================
 
-    def get_unsynced_closed_sessions(self, employee_id: str | None = None) -> list[ActivitySession]:
+    def get_unsynced_closed_sessions(
+        self,
+        employee_id: str | None = None,
+        exclude_session_ids: list[int] | set[int] | None = None,
+    ) -> list[ActivitySession]:
         """Return all closed sessions that need to be synced, strictly scoped to employee_id."""
         stmt = (
             select(ActivitySession)
             .where(ActivitySession.ended_at.is_not(None))
             .where(ActivitySession.server_session_id.is_(None))
         )
+        if exclude_session_ids:
+            exclude_list = [int(sid) for sid in exclude_session_ids if sid is not None]
+            if exclude_list:
+                stmt = stmt.where(ActivitySession.id.not_in(exclude_list))
         if employee_id is None:
             try:
                 from services.session_service import SessionService

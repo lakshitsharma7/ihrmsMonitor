@@ -128,6 +128,17 @@ class ActivityTracker:
         # Tracks idle state and timestamps to calculate and send idle time accurately
         self._idle_start_time = None
         self._last_active_session_id = None
+        self._current_idle_session_id = None
+        self._idle_application_name = None
+        self._idle_process_id = None
+        self._idle_window_title = None
+
+    @property
+    def current_idle_session_id(self) -> int | None:
+        """Return the session ID currently undergoing an unresolved idle state, if any."""
+        if self._is_idle:
+            return self._current_idle_session_id or self._last_active_session_id
+        return None
 
     # ==========================================================
     # CONFIGURATION
@@ -165,6 +176,12 @@ class ActivityTracker:
         """Return whether tracking is currently active."""
 
         return self._is_tracking
+
+    @property
+    def is_idle(self) -> bool:
+        """Return whether the user is currently idle."""
+
+        return self._is_idle
 
     # ==========================================================
     # START
@@ -866,7 +883,10 @@ class ActivityTracker:
         self._is_idle = False
         self._idle_start_time = None
         self._last_active_session_id = None
+        self._current_idle_session_id = None
         self._idle_application_name = None
+        self._idle_process_id = None
+        self._idle_window_title = None
         self._last_poll_time = suspend_time
 
     def handle_system_resume(self, now: datetime | None = None) -> None:
@@ -883,7 +903,10 @@ class ActivityTracker:
         self._is_idle = False
         self._idle_start_time = None
         self._last_active_session_id = None
+        self._current_idle_session_id = None
         self._idle_application_name = None
+        self._idle_process_id = None
+        self._idle_window_title = None
         self._last_idle_seconds = 0.0
 
         # Reset poll timing marker to current wake time
@@ -915,20 +938,30 @@ class ActivityTracker:
         self._idle_start_time = last_input_time
 
         idle_app = self._current.application_name if self._current else "Unknown"
+        session_id = self._current.db_id if self._current else None
         logger.info(
-            "User became idle in %s after %.1fs of inactivity; closing active session at %s",
+            "[IDLE_DETECTED] timestamp=%s last_input_time=%s session_id=%s app=%s idle_seconds=%.1fs threshold=%ss",
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+            last_input_time.strftime("%Y-%m-%d %H:%M:%S"),
+            session_id,
             idle_app,
             idle_seconds,
-            last_input_time,
+            self._idle_threshold_seconds,
         )
 
         if self._current is not None:
             self._last_active_session_id = self._current.db_id
+            self._current_idle_session_id = self._current.db_id
             self._idle_application_name = self._current.application_name
+            self._idle_process_id = self._current.process_id
+            self._idle_window_title = self._current.window_title
             self._close_current_session_at(last_input_time)
         else:
             self._last_active_session_id = None
+            self._current_idle_session_id = None
             self._idle_application_name = None
+            self._idle_process_id = None
+            self._idle_window_title = None
 
     # ==========================================================
     # ACTIVE AGAIN
@@ -941,7 +974,9 @@ class ActivityTracker:
 
         now = self._clock()
         idle_duration = 0
+        idle_start_str = "None"
         if self._idle_start_time:
+            idle_start_str = self._idle_start_time.strftime("%Y-%m-%d %H:%M:%S")
             idle_duration = max(0, int((now - self._idle_start_time).total_seconds()))
             # Sanity clamp: if idle duration spans across sleep/offline (> 2 hours),
             # discard it so sleep time is never saved as session idle time
@@ -953,31 +988,85 @@ class ActivityTracker:
                 idle_duration = 0
 
         app_name = getattr(self, "_idle_application_name", None) or "Unknown"
+        session_id = getattr(self, "_last_active_session_id", None)
         try:
             formatted_duration = ActivityService.format_duration(idle_duration)
         except Exception:
             formatted_duration = f"{idle_duration}s"
 
         logger.info(
-            "User activity resumed: Application: %s | Status: Idle | Idle Duration: %ds (%s)",
-            app_name,
+            "[IDLE_RESUMED] timestamp=%s idle_start=%s resumed_at=%s calculated_idle_duration=%ds (%s) session_id=%s app=%s",
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+            idle_start_str,
+            now.strftime("%Y-%m-%d %H:%M:%S"),
             idle_duration,
             formatted_duration,
+            session_id,
+            app_name,
         )
 
         if self._last_active_session_id and idle_duration > 0:
             db_session = self._session_factory()
             try:
                 repo = ActivityRepository(db_session)
-                repo.update_session_idle_seconds(self._last_active_session_id, idle_duration)
+                repo.add_session_idle_seconds(self._last_active_session_id, idle_duration)
             except Exception as err:
-                logger.error("Failed to update idle seconds for session %s: %s", self._last_active_session_id, err)
+                logger.error("Failed to add idle seconds for session %s: %s", self._last_active_session_id, err)
             finally:
                 db_session.close()
 
+        # Check foreground application immediately upon resumption
+        active = self._safe_get_active_application()
+        title = active.window_title if (active and self._track_window_titles) else None
+
+        # Multiple idle periods in one session:
+        # If the user resumed in the exact same application and process, resume the session
+        # so multiple idle intervals within the same application session accumulate together.
+        same_session = False
+        if (
+            self._last_active_session_id is not None
+            and active is not None
+            and active.application_name == getattr(self, "_idle_application_name", None)
+            and active.process_id == getattr(self, "_idle_process_id", None)
+        ):
+            db_session = self._session_factory()
+            try:
+                from database.models import ActivitySession
+                record = db_session.get(ActivitySession, self._last_active_session_id)
+                if record is not None:
+                    # Re-open the session by clearing ended_at so subsequent work continues in this session
+                    record.ended_at = None
+                    db_session.commit()
+                    self._current = CurrentSession(
+                        db_id=record.id,
+                        application_name=record.application_name,
+                        process_id=record.process_id,
+                        window_title=record.window_title,
+                        started_at=record.started_at,
+                    )
+                    same_session = True
+                    logger.info(
+                        "Resumed ongoing session #%s for app=%s (idle accumulated: %ds)",
+                        record.id,
+                        record.application_name,
+                        record.idle_seconds,
+                    )
+            except Exception as resume_err:
+                logger.debug("Failed to re-open previous session for same app: %s", resume_err)
+            finally:
+                db_session.close()
+
+        if not same_session:
+            # Active application changed while idle or new app was brought forward
+            self._last_active_session_id = None
+
         self._idle_start_time = None
-        self._last_active_session_id = None
         self._idle_application_name = None
+        self._idle_process_id = None
+        self._idle_window_title = None
+        self._current_idle_session_id = None
+        self._is_idle = False
+        self._last_idle_seconds = 0.0
 
     # ==========================================================
     # ACTIVITY SYNC
@@ -1035,9 +1124,17 @@ class ActivityTracker:
                 self._close_current_session_at(now)
                 self._open_new_session(active_app, title)
 
+            exclude_ids = [self.current_idle_session_id] if self.current_idle_session_id else None
+
             def _run_sync():
                 try:
-                    success = self._sync_service.sync_activity_now()
+                    if exclude_ids:
+                        try:
+                            success = self._sync_service.sync_activity_now(exclude_session_ids=exclude_ids)
+                        except TypeError:
+                            success = self._sync_service.sync_activity_now()
+                    else:
+                        success = self._sync_service.sync_activity_now()
                     if success:
                         logger.info("Activity sync completed")
                     else:

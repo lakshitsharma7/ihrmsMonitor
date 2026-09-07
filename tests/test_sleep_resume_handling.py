@@ -46,6 +46,13 @@ class TestSleepResumeHandling(unittest.TestCase):
     def setUp(self):
         init_database()
         self.session_factory = get_session
+        from database.models import ActivitySession
+        db = get_session()
+        try:
+            db.query(ActivitySession).delete()
+            db.commit()
+        finally:
+            db.close()
 
     def test_sleep_gap_in_poll_triggers_resume_and_closes_session_at_sleep_time(self):
         """Verify that a time gap (>5s) between polls closes the pre-sleep session at sleep time."""

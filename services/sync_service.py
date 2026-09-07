@@ -375,7 +375,10 @@ class SyncService:
     # ACTIVITY SYNC
     # ==============================================================
 
-    def sync_activity_now(self) -> bool:
+    def sync_activity_now(
+        self,
+        exclude_session_ids: list[int] | set[int] | None = None,
+    ) -> bool:
         """
         Immediately send activity data for the last 5 minutes.
 
@@ -420,7 +423,10 @@ class SyncService:
             db_session = get_session()
             try:
                 repository = ActivityRepository(db_session)
-                unsynced_sessions = repository.get_unsynced_closed_sessions(employee_id=curr_user.employee_id if curr_user else None)
+                unsynced_sessions = repository.get_unsynced_closed_sessions(
+                    employee_id=curr_user.employee_id if curr_user else None,
+                    exclude_session_ids=exclude_session_ids,
+                )
                 db_session.expunge_all()
             finally:
                 db_session.close()
@@ -502,9 +508,16 @@ class SyncService:
                                 for item in processed_items:
                                     client_ref = item.get("client_session_ref")
                                     server_id = item.get("activity_session_id")
+                                    status = item.get("status")
                                     if client_ref is not None and server_id is not None:
                                         try:
                                             repository.update_session_server_id(int(client_ref), str(server_id))
+                                            logger.info(
+                                                "[DATABASE_UPDATE_RESULT] local_session_id=%s bound to server_session_id=%s status=%s",
+                                                client_ref,
+                                                server_id,
+                                                status,
+                                            )
                                         except Exception as err:
                                             logger.error("Failed to update server session ID for client ref %s: %s", client_ref, err)
                             finally:
@@ -612,6 +625,12 @@ class SyncService:
             self._sync_lock.release()
 
     def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> dict | None:
+        logger.info(
+            "[API_PAYLOAD_SENT] endpoint=/tracking/save_activity_batch page=%d sessions_count=%d payload=%s",
+            page,
+            len(payload.get("sessions", [])),
+            payload,
+        )
         for attempt in range(1, retries + 1):
             try:
                 response = requests.post(
@@ -620,11 +639,11 @@ class SyncService:
                     timeout=15,
                 )
                 logger.info(
-                    "Activity sync page %d HTTP response code: %d, Response body: %s (attempt %d)",
+                    "[API_RESPONSE_RECEIVED] endpoint=/tracking/save_activity_batch page=%d HTTP %d Response body: %s (attempt %d)",
                     page,
                     response.status_code,
                     response.text,
-                    attempt
+                    attempt,
                 )
                 response.raise_for_status()
                 try:
@@ -634,7 +653,7 @@ class SyncService:
                     return None
             except requests.RequestException as exc:
                 logger.warning(
-                    "Activity sync page %d failed (attempt %d/%d): %s",
+                    "[API_RESPONSE_ERROR] Activity sync page %d failed (attempt %d/%d): %s",
                     page,
                     attempt,
                     retries,
@@ -694,13 +713,13 @@ class SyncService:
             if local_end:
                 if local_end < local_start:
                     local_end = local_start
-                duration_seconds = max(0, int((local_end - local_start).total_seconds()))
+                raw_span = max(0, int((local_end - local_start).total_seconds()))
             else:
-                duration_seconds = max(0, int(session.duration_seconds or 0))
-                local_end = local_start + timedelta(seconds=duration_seconds)
+                raw_span = max(0, int(session.duration_seconds or 0))
+                local_end = local_start + timedelta(seconds=raw_span)
                 if local_end > now_local:
                     local_end = now_local
-                    duration_seconds = max(0, int((local_end - local_start).total_seconds()))
+                    raw_span = max(0, int((local_end - local_start).total_seconds()))
 
             last_end = local_end
 
@@ -708,14 +727,28 @@ class SyncService:
             is_idle = idle_seconds > 0
             idle_status = "Idle" if is_idle else "Active"
 
+            # Determine active duration and total session duration accurately
+            if raw_span >= idle_seconds and idle_seconds > 0:
+                active_duration = max(0, raw_span - idle_seconds)
+                total_session_duration = raw_span
+            else:
+                active_duration = raw_span
+                total_session_duration = raw_span + idle_seconds
+
+            duration_seconds = active_duration
+
             # Format the actual local activity start/end time
             # Standard local datetime representation: YYYY-MM-DD HH:MM:SS
             start_time_str = local_start.strftime("%Y-%m-%d %H:%M:%S")
             end_time_str = local_end.strftime("%Y-%m-%d %H:%M:%S") if local_end else start_time_str
 
             if is_idle and local_end:
-                idle_start_dt = local_end
-                idle_end_dt = local_end + timedelta(seconds=idle_seconds)
+                if raw_span >= idle_seconds:
+                    idle_start_dt = local_end - timedelta(seconds=idle_seconds)
+                    idle_end_dt = local_end
+                else:
+                    idle_start_dt = local_end
+                    idle_end_dt = local_end + timedelta(seconds=idle_seconds)
                 idle_start_str = idle_start_dt.strftime("%Y-%m-%d %H:%M:%S")
                 idle_end_str = idle_end_dt.strftime("%Y-%m-%d %H:%M:%S")
             else:
@@ -736,9 +769,15 @@ class SyncService:
                 "ended_at": end_time_str,
                 "duration": duration_seconds,
                 "duration_seconds": duration_seconds,
+                "active_duration": active_duration,
+                "active_duration_seconds": active_duration,
+                "total_duration": total_session_duration,
+                "total_duration_seconds": total_session_duration,
                 "idle_time": idle_seconds,
                 "idle_duration_seconds": idle_seconds,
+                "idle_start": idle_start_str,
                 "idle_start_time": idle_start_str,
+                "idle_end": idle_end_str,
                 "idle_end_time": idle_end_str,
             })
 

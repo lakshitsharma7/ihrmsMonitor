@@ -415,7 +415,7 @@ class DashboardPage(QWidget):
         self.tracking_status_label.setText(f"Tracking: {tracking_text}")
 
         # Update idle time label (dynamic updates when idle resumes or resets)
-        idle_s = int(state.idle_seconds)
+        idle_s = max(0, int(getattr(state, "idle_seconds", 0) or 0))
         if idle_s < 60:
             self.idle_time_label.setText(f"Idle Time: {idle_s} seconds")
         else:

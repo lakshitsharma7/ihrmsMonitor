@@ -62,7 +62,7 @@ class TestUIAndThreadResilience(unittest.TestCase):
         sync_mock = MagicMock()
         
         # Make sync_activity_now sleep briefly to ensure it runs asynchronously
-        def slow_sync():
+        def slow_sync(*args, **kwargs):
             time.sleep(0.05)
             return True
 
