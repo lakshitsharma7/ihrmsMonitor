@@ -1454,6 +1454,13 @@ class MainWindow(QMainWindow):
             from config.api_config import ApiConfig
             from services.session_service import SessionService
             from services.update_service import UpdateService
+            from services.update_state import UpdateStateManager
+
+            if manual:
+                try:
+                    UpdateStateManager().reset_cooldown()
+                except Exception:
+                    pass
 
             api_config = ApiConfig()
             try:

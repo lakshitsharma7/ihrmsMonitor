@@ -1,4 +1,10 @@
-TO make installer run this command
+firstly install inno setup 6 or updated version  
+then drag --- installer.iss or IHRMS Monitor.iss
+open this in inno setup app 
+click on build and complie that open file .
+
+
+use this command
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss 
 
 check the installer 

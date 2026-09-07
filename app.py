@@ -152,6 +152,14 @@ def main() -> int:
         )
         return 1
 
+    # Verify whether an auto-update just occurred and prevent restart loops
+    try:
+        from services.update_service import verify_post_restart_update
+        verified, update_msg = verify_post_restart_update()
+        logger.info("Startup update check: %s", update_msg)
+    except Exception as up_err:
+        logger.debug("Startup update check exception: %s", up_err)
+
     # Imported after QApplication exists, since it builds widgets.
     from ui.login_window import LoginWindow
     from services.secure_session import SessionStore

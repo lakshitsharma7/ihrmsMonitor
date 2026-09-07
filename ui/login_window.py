@@ -924,26 +924,31 @@ class LoginWindow(QMainWindow):
                     # Trigger update check if newer version detected
                     if version_json.get("status") == 1:
                         from services.update_service import is_newer_version, UpdateService
+                        from services.update_state import UpdateStateManager
                         from config.settings import get_running_app_version
                         server_ver = str(version_json.get("version_code", "")).strip()
                         if is_newer_version(server_ver, get_running_app_version()):
-                            logger.info("Newer version %s detected on login. Initiating background update pipeline.", server_ver)
+                            allowed, loop_reason = UpdateStateManager().should_attempt_update(server_ver)
+                            if not allowed:
+                                logger.info("Login screen update loop guard: %s", loop_reason)
+                            else:
+                                logger.info("Newer version %s detected on login. Initiating background update pipeline.", server_ver)
 
-                            def on_progress(percent: int, down: int, total: int):
-                                self.update_status_label.setText(f"Updating ({percent}%)...")
-                                self.update_status_label.setVisible(True)
+                                def on_progress(percent: int, down: int, total: int):
+                                    self.update_status_label.setText(f"Updating ({percent}%)...")
+                                    self.update_status_label.setVisible(True)
 
-                            def on_completed(path: str, ver: str, force: bool):
-                                self.update_status_label.setText(f"Restarting to install v{ver}...")
-                                self.update_status_label.setVisible(True)
+                                def on_completed(path: str, ver: str, force: bool):
+                                    self.update_status_label.setText(f"Restarting to install v{ver}...")
+                                    self.update_status_label.setVisible(True)
 
-                            UpdateService().start_pipeline(
-                                api_url=api_url,
-                                indo_code=indo_code,
-                                api_key=api_key,
-                                on_progress=on_progress,
-                                on_download_completed=on_completed,
-                            )
+                                UpdateService().start_pipeline(
+                                    api_url=api_url,
+                                    indo_code=indo_code,
+                                    api_key=api_key,
+                                    on_progress=on_progress,
+                                    on_download_completed=on_completed,
+                                )
                 except Exception as version_err:
                     logger.warning("Check version API call failed: %s", version_err)
 

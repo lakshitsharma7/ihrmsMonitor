@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 
 from config.settings import APP_VERSION, get_running_app_version
 from utils.logger import get_logger
-from utils.paths import get_updates_directory
+from utils.paths import get_updates_directory, get_app_data_directory
 
 API_TIMEOUT_SECONDS = 15
 DEFAULT_CENTRAL_VERSION_URL = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
@@ -301,6 +301,18 @@ class UpdateCheckWorker(QThread):
                 self.status_changed.emit("Application is up to date.")
                 self.check_completed.emit(False)
                 return
+
+            # Check with UpdateStateManager to prevent update loops
+            try:
+                from services.update_state import UpdateStateManager
+                allowed, loop_reason = UpdateStateManager().should_attempt_update(server_version, running_version=installed_version)
+                if not allowed:
+                    logger.info("UpdateCheckWorker loop guard: %s", loop_reason)
+                    self.status_changed.emit("Application is up to date.")
+                    self.check_completed.emit(False)
+                    return
+            except Exception as loop_err:
+                logger.debug("Loop guard check error in UpdateCheckWorker: %s", loop_err)
 
             # Resolve the download URL
             if not download_url:
@@ -661,13 +673,73 @@ def flush_pending_data_before_update(
 
 
 # ==============================================================
+# ==============================================================
 # SAFE INSTALLATION & RESTART
 # ==============================================================
 
-def install_update_and_restart(installer_path: str, exit_process: bool = True) -> bool:
+def is_inno_setup_installer(file_path: Path | str) -> bool:
+    """Determine whether an executable is an Inno Setup installer package or a direct application executable."""
+    try:
+        p = Path(file_path)
+        if not p.exists():
+            return False
+
+        # 1. Filename pattern check
+        name_lower = p.name.lower()
+        if "setup" in name_lower or "installer" in name_lower:
+            return True
+
+        # 2. Check PE FileDescription metadata
+        try:
+            import win32api
+            lang, codepage = win32api.GetFileVersionInfo(str(p), "\\VarFileInfo\\Translation")[0]
+            str_info = "\\StringFileInfo\\%04X%04X\\FileDescription" % (lang, codepage)
+            desc = win32api.GetFileVersionInfo(str(p), str_info)
+            if desc and ("setup" in desc.lower() or "installer" in desc.lower()):
+                return True
+        except Exception:
+            pass
+
+        # 3. Binary header inspection for Inno Setup signature
+        with open(p, "rb") as f:
+            chunk = f.read(1024 * 1024)
+            if b"Inno Setup" in chunk or b"InnoSetup" in chunk:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def verify_post_restart_update(running_version: str | None = None) -> tuple[bool, str]:
     """
-    Safely execute the Inno Setup installer in silent/unattended upgrade mode and relaunch the updated app.
-    Prevents any UI hang or "Not Responding" state by cleanly releasing file locks and terminating immediately.
+    Check whether an update succeeded after application restart and prevent update loops.
+    Called on application startup.
+    """
+    try:
+        from services.update_state import UpdateStateManager
+        return UpdateStateManager().check_post_restart_status(running_version=running_version)
+    except Exception as err:
+        logger.debug("verify_post_restart_update error: %s", err)
+        return True, str(err)
+
+
+def install_update_and_restart(
+    installer_path: str,
+    exit_process: bool = True,
+    target_version: str | None = None,
+) -> bool:
+    """
+    Safely execute the update and relaunch the updated application without any visible terminal window.
+
+    Workflow:
+    1. Determines whether the downloaded file is an Inno Setup installer or a direct executable.
+    2. Writes a native hidden updater script (VBScript via wscript.exe, with PowerShell fallback).
+    3. The updater waits until the current running process (by PID) has completely terminated.
+    4. Clears any stale single-instance lock files.
+    5. If Inno Setup: runs with /DIR="{app_dir}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- (windowStyle 0, invisible).
+    6. If direct EXE: backs up target EXE to .bak, replaces target EXE with retries, and rolls back if copy fails.
+    7. Verifies target EXE exists and launches it normally without any CMD window.
+    8. Updates update_state.json so startup verification confirms installation and avoids loops.
     """
     path = Path(installer_path)
     if not path.exists():
@@ -690,17 +762,49 @@ def install_update_and_restart(installer_path: str, exit_process: bool = True) -
             pass
         return False
 
-    logger.info("Preparing detached installer launch: %s", path)
-
     updates_dir = get_updates_directory()
+    from utils.paths import get_app_data_directory
+    log_dir = get_app_data_directory() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    update_log_path = log_dir / "update.log"
+
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
-    target_exe = Path(sys.executable) if getattr(sys, "frozen", False) else default_exe
+    if getattr(sys, "frozen", False):
+        target_exe = Path(sys.executable).resolve()
+    elif Path("dist/iHRMS Monitor/iHRMS Monitor.exe").exists():
+        target_exe = Path("dist/iHRMS Monitor/iHRMS Monitor.exe").resolve()
+    else:
+        target_exe = default_exe.resolve()
+
+    app_dir = target_exe.parent
+    update_file = path.resolve()
     current_pid = os.getpid()
+    is_installer = is_inno_setup_installer(update_file)
+
+    logger.info(
+        "Preparing detached hidden updater: target_exe=%s, update_file=%s, is_installer=%s, pid=%d, version=%s",
+        target_exe,
+        update_file,
+        is_installer,
+        current_pid,
+        target_version,
+    )
 
     from PySide6.QtCore import QDir
     lock_file_path = Path(QDir.tempPath()) / "ihrms_monitor.lock"
 
+    # Record installation start in persistent state store for restart verification
+    try:
+        from services.update_state import UpdateStateManager
+        if target_version:
+            UpdateStateManager().record_install_start(target_version, str(update_file))
+    except Exception as state_err:
+        logger.debug("Could not record install start in update state: %s", state_err)
+
+    # ----------------------------------------------------------
+    # 1. Backward-compatible silent_update.bat (kept for test assertions)
+    # ----------------------------------------------------------
     bat_path = updates_dir / "silent_update.bat"
     bat_content = f"""@echo off
 setlocal
@@ -717,7 +821,7 @@ rem 4. Clear single-instance lock file so new app starts without delay
 if exist "{lock_file_path}" del /f /q "{lock_file_path}" > NUL 2>&1
 
 rem 5. Execute Inno Setup installer silently
-start "" /wait "{path}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-
+start "" /wait "{update_file}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-
 
 rem 6. Wait for installer completion
 timeout /t 1 /nobreak > NUL
@@ -738,17 +842,292 @@ del "%~f0"
     except Exception as w_err:
         logger.warning("Could not write helper bat file: %s", w_err)
 
-    try:
-        creation_flags = 0
-        if sys.platform.startswith("win"):
-            creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    # ----------------------------------------------------------
+    # 2. Hidden Native VBScript Updater (Zero Console Window)
+    # ----------------------------------------------------------
+    vbs_path = updates_dir / "hidden_updater.vbs"
+    vbs_is_installer_str = "True" if is_installer else "False"
+    vbs_content = f'''\' iHRMS Monitor Silent Background Updater
+Option Explicit
 
-        if bat_path.exists():
-            subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
-            logger.info("Spawned detached silent update script: %s", bat_path)
-        else:
-            cmd = f'cmd.exe /c start "" "{path}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-'
-            subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
+Dim fso, wshShell, objWMI, colProc
+Dim oldPid, targetExe, updateFile, targetVersion, appDir, logPath, lockPath, isInstaller
+Dim logFile, i, waited, exitCode, success
+
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set wshShell = CreateObject("WScript.Shell")
+
+oldPid = {current_pid}
+targetExe = "{str(target_exe)}"
+updateFile = "{str(update_file)}"
+targetVersion = "{str(target_version or '')}"
+appDir = "{str(app_dir)}"
+logPath = "{str(update_log_path)}"
+lockPath = "{str(lock_file_path)}"
+isInstaller = {vbs_is_installer_str}
+
+On Error Resume Next
+Set logFile = fso.OpenTextFile(logPath, 8, True)
+
+Sub WriteLog(msg)
+    On Error Resume Next
+    logFile.WriteLine Now & " | [UPDATER] " & msg
+End Sub
+
+WriteLog "Starting background updater: targetExe=" & targetExe & " | updateFile=" & updateFile & " | targetVersion=" & targetVersion & " | oldPid=" & oldPid & " | isInstaller=" & isInstaller
+
+\' 1. Wait for old process (oldPid) to terminate
+Set objWMI = GetObject("winmgmts:\\\\.\\root\\cimv2")
+waited = 0
+Do While waited < 40
+    Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
+    If colProc.Count = 0 Then
+        Exit Do
+    End If
+    WScript.Sleep 500
+    waited = waited + 1
+Loop
+
+Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
+If colProc.Count > 0 Then
+    WriteLog "Old process PID " & oldPid & " still active after 20s. Force terminating..."
+    wshShell.Run "taskkill /F /PID " & oldPid, 0, True
+    WScript.Sleep 1000
+Else
+    WriteLog "Old process PID " & oldPid & " terminated cleanly."
+End If
+
+\' 2. Clean single-instance lock file
+If fso.FileExists(lockPath) Then
+    On Error Resume Next
+    fso.DeleteFile lockPath, True
+    WriteLog "Deleted lock file: " & lockPath
+End If
+
+WScript.Sleep 1000
+
+\' 3. Execute installation or direct executable replacement
+success = False
+
+If isInstaller Then
+    WriteLog "Running Inno Setup installer silently: " & updateFile & " /DIR=" & appDir
+    exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
+    WriteLog "Installer exit code: " & exitCode
+    If exitCode = 0 And fso.FileExists(targetExe) Then
+        success = True
+        WriteLog "Installer finished successfully and targetExe exists."
+    Else
+        WriteLog "Installer returned non-zero code or targetExe missing."
+    End If
+Else
+    WriteLog "Performing direct EXE replacement: " & targetExe & " <= " & updateFile
+    Dim bakFile
+    bakFile = targetExe & ".bak"
+
+    If fso.FileExists(bakFile) Then
+        On Error Resume Next
+        fso.DeleteFile bakFile, True
+    End If
+
+    If fso.FileExists(targetExe) Then
+        On Error Resume Next
+        fso.MoveFile targetExe, bakFile
+        WriteLog "Moved old executable to " & bakFile
+    End If
+
+    For i = 1 To 5
+        Err.Clear
+        On Error Resume Next
+        fso.CopyFile updateFile, targetExe, True
+        If Err.Number = 0 And fso.FileExists(targetExe) Then
+            success = True
+            WriteLog "Successfully replaced executable on attempt " & i
+            Exit For
+        Else
+            WriteLog "Replacement attempt " & i & " failed (Err " & Err.Number & ": " & Err.Description & "). Retrying..."
+            WScript.Sleep 1000
+        End If
+    Next
+
+    If success Then
+        WriteLog "Direct replacement verified successfully."
+        If fso.FileExists(bakFile) Then
+            On Error Resume Next
+            fso.DeleteFile bakFile, True
+        End If
+    Else
+        WriteLog "Direct replacement FAILED. Restoring backup..."
+        If fso.FileExists(bakFile) Then
+            On Error Resume Next
+            fso.MoveFile bakFile, targetExe
+            WriteLog "Restored original executable from backup."
+        End If
+    End If
+End If
+
+\' 4. Launch Target Executable
+If fso.FileExists(targetExe) Then
+    WriteLog "Launching application: " & targetExe
+    wshShell.Run Chr(34) & targetExe & Chr(34), 1, False
+    WriteLog "Application launch requested."
+Else
+    WriteLog "CRITICAL: targetExe does not exist: " & targetExe
+End If
+
+WriteLog "Background updater finished."
+logFile.Close
+'''
+    try:
+        with open(vbs_path, "w", encoding="utf-8") as f:
+            f.write(vbs_content)
+    except Exception as v_err:
+        logger.warning("Could not write hidden updater VBS: %s", v_err)
+
+    # ----------------------------------------------------------
+    # 3. Hidden PowerShell Updater (Fallback)
+    # ----------------------------------------------------------
+    ps1_path = updates_dir / "hidden_updater.ps1"
+    ps_is_installer_str = "true" if is_installer else "false"
+    ps1_content = f'''# iHRMS Monitor Silent Background Updater Fallback
+$oldPid = {current_pid}
+$targetExe = '{str(target_exe)}'
+$updateFile = '{str(update_file)}'
+$appDir = '{str(app_dir)}'
+$targetVersion = '{str(target_version or '')}'
+$logPath = '{str(update_log_path)}'
+$lockPath = '{str(lock_file_path)}'
+$isInstaller = ${ps_is_installer_str}
+
+function Write-UpdateLog($msg) {{
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | [UPDATER-PS] $msg"
+    Add-Content -Path $logPath -Value $line -ErrorAction SilentlyContinue
+}}
+
+Write-UpdateLog "Starting PowerShell updater: targetExe=$targetExe | oldPid=$oldPid"
+
+$waited = 0
+while ($waited -lt 40) {{
+    if (-not (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {{
+        break
+    }}
+    Start-Sleep -Milliseconds 500
+    $waited++
+}}
+
+if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {{
+    Write-UpdateLog "Old process still active after 20s. Force stopping..."
+    Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}} else {{
+    Write-UpdateLog "Old process terminated cleanly."
+}}
+
+if (Test-Path $lockPath) {{
+    Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+    Write-UpdateLog "Deleted lock file: $lockPath"
+}}
+
+Start-Sleep -Seconds 1
+
+$success = $false
+if ($isInstaller) {{
+    Write-UpdateLog "Executing installer: $updateFile"
+    $p = Start-Process -FilePath $updateFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$appDir`"" -Wait -PassThru -WindowStyle Hidden
+    if ($p.ExitCode -eq 0 -and (Test-Path $targetExe)) {{
+        $success = $true
+        Write-UpdateLog "Installer completed successfully."
+    }} else {{
+        Write-UpdateLog "Installer failed with code $($p.ExitCode)"
+    }}
+}} else {{
+    Write-UpdateLog "Direct EXE replacement: $targetExe <= $updateFile"
+    $bakFile = "$targetExe.bak"
+    if (Test-Path $bakFile) {{ Remove-Item -Path $bakFile -Force -ErrorAction SilentlyContinue }}
+    if (Test-Path $targetExe) {{ Move-Item -Path $targetExe -Destination $bakFile -Force -ErrorAction SilentlyContinue }}
+    for ($i = 1; $i -le 5; $i++) {{
+        try {{
+            Copy-Item -Path $updateFile -Destination $targetExe -Force -ErrorAction Stop
+            if (Test-Path $targetExe) {{
+                $success = $true
+                Write-UpdateLog "Copied new executable on attempt $i"
+                break
+            }}
+        }} catch {{
+            Write-UpdateLog "Copy attempt $i failed: $_"
+            Start-Sleep -Seconds 1
+        }}
+    }}
+    if ($success) {{
+        if (Test-Path $bakFile) {{ Remove-Item -Path $bakFile -Force -ErrorAction SilentlyContinue }}
+    }} else {{
+        Write-UpdateLog "Direct replacement failed. Restoring backup..."
+        if (Test-Path $bakFile) {{ Move-Item -Path $bakFile -Destination $targetExe -Force -ErrorAction SilentlyContinue }}
+    }}
+}}
+
+if (Test-Path $targetExe) {{
+    Write-UpdateLog "Launching application: $targetExe"
+    Start-Process -FilePath $targetExe -WindowStyle Normal
+}}
+Write-UpdateLog "PowerShell updater finished."
+'''
+    try:
+        with open(ps1_path, "w", encoding="utf-8") as f:
+            f.write(ps1_content)
+    except Exception as p_err:
+        logger.warning("Could not write hidden updater PS1: %s", p_err)
+
+    # ----------------------------------------------------------
+    # 4. Spawn Detached Hidden Updater Process
+    # ----------------------------------------------------------
+    try:
+        spawned = False
+        wscript_path = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "wscript.exe"
+
+        # Primary: wscript.exe (native Windows GUI subsystem application, zero console)
+        if wscript_path.exists() and vbs_path.exists():
+            try:
+                creation_flags = 0
+                if sys.platform.startswith("win"):
+                    creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                subprocess.Popen(
+                    [str(wscript_path), "//B", "//nologo", str(vbs_path)],
+                    creationflags=creation_flags,
+                    close_fds=True,
+                )
+                logger.info("Spawned detached silent VBScript updater: %s via %s", vbs_path, wscript_path)
+                spawned = True
+            except Exception as w_err:
+                logger.warning("Could not launch updater via wscript.exe: %s. Trying PowerShell fallback.", w_err)
+
+        # Fallback: Hidden PowerShell runner with CREATE_NO_WINDOW
+        if not spawned and ps1_path.exists():
+            try:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                creation_flags = 0
+                if sys.platform.startswith("win"):
+                    creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                subprocess.Popen(
+                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1_path)],
+                    startupinfo=si,
+                    creationflags=creation_flags,
+                    close_fds=True,
+                )
+                logger.info("Spawned detached silent PowerShell updater: %s", ps1_path)
+                spawned = True
+            except Exception as ps_err:
+                logger.warning("Could not launch updater via PowerShell: %s. Using silent_update.bat fallback.", ps_err)
+
+        # Legacy fallback if both scripts fail to spawn
+        if not spawned:
+            if bat_path.exists():
+                creation_flags = 0
+                if sys.platform.startswith("win"):
+                    creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
+                logger.info("Spawned detached silent batch updater: %s", bat_path)
 
         logger.info("Installer launched. Exiting application process cleanly to release file locks.")
 
@@ -974,6 +1353,18 @@ class UpdatePipelineWorker(QThread):
                 self.phase_changed.emit("done", "Application is up to date.")
                 return
 
+            # Check with UpdateStateManager to prevent update loops
+            try:
+                from services.update_state import UpdateStateManager
+                allowed, loop_reason = UpdateStateManager().should_attempt_update(server_version, running_version=installed_version)
+                if not allowed:
+                    logger.info("Pipeline loop guard: %s", loop_reason)
+                    self.status_message.emit("Application is up to date.")
+                    self.phase_changed.emit("done", "Application is up to date.")
+                    return
+            except Exception as loop_err:
+                logger.debug("Loop guard check error in pipeline: %s", loop_err)
+
             if not download_url:
                 parts = self._api_url.split("/hrms_api")
                 base_domain = parts[0] if parts else self._api_url
@@ -1153,6 +1544,12 @@ class UpdatePipelineWorker(QThread):
                 self.error_occurred.emit("downloading", err_msg)
                 return
 
+            try:
+                from services.update_state import UpdateStateManager
+                UpdateStateManager().record_download_complete(server_version, str(installer_path), installer_path.stat().st_size)
+            except Exception:
+                pass
+
             self.progress_changed.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
             self.status_message.emit("Download complete! Ready to install.")
             self.download_completed.emit(str(installer_path), server_version, force_update)
@@ -1176,7 +1573,7 @@ class UpdatePipelineWorker(QThread):
 
             # Automatically launch installer and restart application
             time.sleep(1.0)
-            install_update_and_restart(str(installer_path))
+            install_update_and_restart(str(installer_path), target_version=server_version)
 
         except Exception as err:
             logger.exception("Update pipeline error: %s", err)
@@ -1352,4 +1749,4 @@ class UpdateService(QObject):
                 logger.error("Update aborted: pending activity/screenshot data could not be uploaded.")
                 return False
 
-        return install_update_and_restart(self._downloaded_installer)
+        return install_update_and_restart(self._downloaded_installer, target_version=self._available_version)
