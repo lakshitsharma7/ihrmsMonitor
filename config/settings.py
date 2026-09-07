@@ -55,7 +55,7 @@ def get_running_app_version() -> str:
 
     project_root = Path(__file__).resolve().parent.parent
 
-    # 2. Check workspace build descriptor files (VERSION, version.txt)
+    # 2. Check version descriptor files if present (authoritative in source/dev mode)
     for ver_file in ("VERSION", "version.txt"):
         vf = project_root / ver_file
         if vf.exists():
@@ -66,28 +66,7 @@ def get_running_app_version() -> str:
             except Exception:
                 pass
 
-    # 3. Check workspace dist binary build
-    dist_exe = project_root / "dist" / "iHRMS Monitor" / "iHRMS Monitor.exe"
-    if dist_exe.exists():
-        v = _read_pe_file_version(dist_exe)
-        if v:
-            return v
-
-    # 4. Check file_version_info.txt
-    fvi = project_root / "file_version_info.txt"
-    if fvi.exists():
-        try:
-            import re
-            m = re.search(r"FileVersion',\s*'([\d.]+)'", fvi.read_text(encoding="utf-8"))
-            if m:
-                parts = [p for p in m.group(1).split(".") if p]
-                while len(parts) > 3 and parts[-1] == "0":
-                    parts.pop()
-                return ".".join(parts)
-        except Exception:
-            pass
-
-    # 5. Check installed application binary
+    # 3. Check installed application binary if available
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         installed_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
@@ -96,7 +75,7 @@ def get_running_app_version() -> str:
             if v:
                 return v
 
-    return "2.0.0"
+    return "2.0.1"
 
 
 class _DynamicAppVersion(str):
@@ -116,7 +95,7 @@ class _DynamicAppVersion(str):
 
 
 # Dynamically resolved application version (never requires manual updates)
-APP_VERSION = _DynamicAppVersion("2.0.0")
+APP_VERSION = _DynamicAppVersion("2.0.1")
 
 
 # How often (in seconds) the tracker worker polls for the active application.

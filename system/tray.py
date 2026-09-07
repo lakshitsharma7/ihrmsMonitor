@@ -39,8 +39,9 @@ class TrayController:
         on_stop_tracking,
         on_show_today_activity,
         on_show_settings,
-        on_exit,
+        on_exit=None,
         on_check_updates=None,
+        show_exit: bool = False,
     ) -> None:
         self._parent = parent
         import os
@@ -91,11 +92,13 @@ class TrayController:
             self.update_action.triggered.connect(on_check_updates)
             menu.addAction(self.update_action)
 
-        menu.addSeparator()
-
-        self.exit_action = QAction("Exit", parent)
-        self.exit_action.triggered.connect(on_exit)
-        menu.addAction(self.exit_action)
+        # Exit option removed from tray menu to prevent exiting from background
+        self.exit_action: QAction | None = None
+        if show_exit and on_exit:
+            menu.addSeparator()
+            self.exit_action = QAction("Exit", parent)
+            self.exit_action.triggered.connect(on_exit)
+            menu.addAction(self.exit_action)
 
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_activated)

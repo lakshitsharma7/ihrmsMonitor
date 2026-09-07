@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import threading
 from typing import Callable
 
 from database.repository import ActivityRepository
@@ -15,6 +16,7 @@ from platform_support.base import (
 from tracker.activity_session import CurrentSession
 from utils.logger import get_logger
 
+from services.activity_service import ActivityService
 from services.screenshot import capture_screenshot
 
 
@@ -896,11 +898,16 @@ class ActivityTracker:
             idle_duration = max(0, int((now - self._idle_start_time).total_seconds()))
 
         app_name = getattr(self, "_idle_application_name", None) or "Unknown"
+        try:
+            formatted_duration = ActivityService.format_duration(idle_duration)
+        except Exception:
+            formatted_duration = f"{idle_duration}s"
+
         logger.info(
             "User activity resumed: Application: %s | Status: Idle | Idle Duration: %ds (%s)",
             app_name,
             idle_duration,
-            ActivityService.format_duration(idle_duration),
+            formatted_duration,
         )
 
         if self._last_active_session_id and idle_duration > 0:
@@ -973,25 +980,19 @@ class ActivityTracker:
                 self._close_current_session_at(now)
                 self._open_new_session(active_app, title)
 
-            success = (
-                self._sync_service
-                .sync_activity_now()
-            )
+            def _run_sync():
+                try:
+                    success = self._sync_service.sync_activity_now()
+                    if success:
+                        logger.info("Activity sync completed")
+                    else:
+                        logger.warning("Activity sync failed")
+                except Exception as sync_err:
+                    logger.exception("Activity sync background thread error: %s", sync_err)
 
-            if success:
-
-                logger.info(
-                    "Activity sync completed"
-                )
-
-            else:
-
-                logger.warning(
-                    "Activity sync failed"
-                )
+            threading.Thread(target=_run_sync, name="ActivitySyncWorker", daemon=True).start()
 
         except Exception:  # noqa: BLE001
-
             logger.exception(
                 "Activity sync raised an exception"
             )
