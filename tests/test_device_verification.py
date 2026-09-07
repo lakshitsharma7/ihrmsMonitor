@@ -177,8 +177,10 @@ class TestDeviceVerificationSystem(unittest.TestCase):
     def test_verification_cli_script_execution(self):
         """Test the standalone verify_device_updates CLI script."""
         from scripts.verify_device_updates import print_fleet_verification_report
+        import io
+        from contextlib import redirect_stdout
         # Execute report generator in json mode
-        with patch("sys.stdout") as mock_stdout:
+        with redirect_stdout(io.StringIO()):
             exit_code = print_fleet_verification_report(as_json=True)
             self.assertEqual(exit_code, 0)
 

@@ -53,6 +53,9 @@ class TrackerWorker(QObject):
     @Slot()
     def start_tracking(self) -> None:
         try:
+            if self._timer is not None and self._timer.isActive() and self._tracker.is_tracking:
+                logger.debug("TrackerWorker: tracking timer is already active, ignoring duplicate start")
+                return
             if self._timer is None:
                 self.setup()
             self._tracker.start()
@@ -68,6 +71,9 @@ class TrackerWorker(QObject):
     @Slot()
     def stop_tracking(self) -> None:
         try:
+            if not self._tracker.is_tracking and (self._timer is None or not self._timer.isActive()):
+                logger.debug("TrackerWorker: tracking is already stopped, ignoring duplicate stop")
+                return
             if self._timer is not None:
                 self._timer.stop()
             self._tracker.stop()

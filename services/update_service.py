@@ -554,11 +554,8 @@ def flush_pending_data_before_update(
                     if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
                         logger.info("Stopping active tracking to record session before update.")
                         try:
-                            if isinstance(widget, QObject):
-                                QMetaObject.invokeMethod(widget, "stop_tracking", Qt.ConnectionType.QueuedConnection)
-                            else:
-                                widget.stop_tracking()
-                        except Exception:
+                            widget.stop_tracking(manual=False)
+                        except TypeError:
                             widget.stop_tracking()
                         time.sleep(0.5)
         except Exception as stop_err:
@@ -723,6 +720,9 @@ def verify_post_restart_update(running_version: str | None = None) -> tuple[bool
         return True, str(err)
 
 
+_is_installing_update = False
+
+
 def install_update_and_restart(
     installer_path: str,
     exit_process: bool = True,
@@ -741,8 +741,31 @@ def install_update_and_restart(
     7. Verifies target EXE exists and launches it normally without any CMD window.
     8. Updates update_state.json so startup verification confirms installation and avoids loops.
     """
+    is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+    if not is_running_tests:
+        global _is_installing_update
+        if _is_installing_update:
+            logger.info("install_update_and_restart already in progress; skipping duplicate trigger.")
+            return True
+
+        # Ensure UI close and exit are dispatched on the Main GUI Thread to prevent loader lock deadlocks
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import QThread, QTimer
+            app = QApplication.instance()
+            if app and QThread.currentThread() != app.thread():
+                logger.info("install_update_and_restart invoked from background thread; dispatching to Main Thread.")
+                _is_installing_update = True
+                QTimer.singleShot(0, lambda: install_update_and_restart(installer_path, exit_process, target_version))
+                return True
+        except Exception as dispatch_err:
+            logger.debug("Could not dispatch install_update_and_restart to main thread: %s", dispatch_err)
+
+        _is_installing_update = True
+
     path = Path(installer_path)
     if not path.exists():
+        _is_installing_update = False
         err_msg = f"Cannot launch installer: file does not exist at {installer_path}"
         logger.error(err_msg)
         try:
@@ -753,6 +776,7 @@ def install_update_and_restart(
         return False
 
     if path.stat().st_size < 1024 * 100:
+        _is_installing_update = False
         err_msg = f"Cannot launch installer: file is incomplete ({path.stat().st_size} bytes)"
         logger.error(err_msg)
         try:
@@ -1131,24 +1155,22 @@ Write-UpdateLog "PowerShell updater finished."
 
         logger.info("Installer launched. Exiting application process cleanly to release file locks.")
 
-        # 1. Close Qt windows and stop UI gracefully (safely on main thread or queued)
+        is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+
+        # 1. Close Qt windows and stop UI gracefully
         try:
             from PySide6.QtWidgets import QApplication
-            from PySide6.QtCore import QCoreApplication, QThread
+            from PySide6.QtCore import QCoreApplication
             app = QApplication.instance()
             if app:
-                is_main_thread = (QThread.currentThread() == app.thread())
                 for widget in app.topLevelWidgets():
                     if hasattr(widget, "_really_quit"):
                         widget._really_quit = True
                     try:
-                        if is_main_thread:
-                            widget.close()
-                        else:
-                            widget.hide()
+                        widget.close()
                     except Exception:
                         pass
-                if is_main_thread:
+                if exit_process and not is_running_tests:
                     app.quit()
                     QCoreApplication.processEvents()
         except Exception as q_err:
@@ -1162,19 +1184,23 @@ Write-UpdateLog "PowerShell updater finished."
             pass
 
         # 3. Flush and shut down logger
-        try:
-            import logging
-            logging.shutdown()
-        except Exception:
-            pass
+        if not is_running_tests:
+            try:
+                import logging
+                logging.shutdown()
+            except Exception:
+                pass
 
         # 4. Immediate, definitive exit - releases all OS file locks immediately
-        is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
         if exit_process and not is_running_tests:
             os._exit(0)
 
+        if not exit_process or is_running_tests:
+            _is_installing_update = False
+
         return True
     except Exception as err:
+        _is_installing_update = False
         logger.exception("Failed to spawn update installer: %s", err)
         try:
             from services.error_report_service import ErrorReportService

@@ -15,6 +15,48 @@ _LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _INITIALIZED = False
 
 
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that safely handles Windows file locks and descriptor errors during rollover."""
+
+    def shouldRollover(self, record) -> int:
+        try:
+            return super().shouldRollover(record)
+        except OSError:
+            try:
+                if self.stream:
+                    try:
+                        self.stream.close()
+                    except Exception:
+                        pass
+                self.stream = self._open()
+                return super().shouldRollover(record)
+            except OSError:
+                return 0
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except (PermissionError, OSError):
+            # Another process or thread on Windows has the file open; ignore and continue appending
+            pass
+
+    def emit(self, record) -> None:
+        try:
+            super().emit(record)
+        except OSError:
+            # If the underlying stream was closed or invalidated, gracefully recover
+            try:
+                if self.stream:
+                    try:
+                        self.stream.close()
+                    except Exception:
+                        pass
+                self.stream = self._open()
+                super().emit(record)
+            except Exception:
+                pass
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure the root application logger exactly once.
 
@@ -32,7 +74,7 @@ def configure_logging(level: int = logging.INFO) -> None:
 
     try:
         log_file = get_log_file_path()
-        file_handler = RotatingFileHandler(
+        file_handler = SafeRotatingFileHandler(
             log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
         )
         file_handler.setFormatter(formatter)

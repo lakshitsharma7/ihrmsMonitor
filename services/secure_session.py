@@ -55,6 +55,8 @@ class SessionStore:
     _KEY_ALLOW_USER_DEVICE = "session/allow_user_device"
     _KEY_ALLOW_LOGOUT = "session/allow_logout"
     _KEY_ENCRYPTED_CHECKSUM = "session/checksum"
+    _KEY_TRACKING_MANUALLY_STOPPED = "session/tracking_manually_stopped"
+    _KEY_TRACKING_ACTIVE = "session/tracking_active"
 
     def __init__(self) -> None:
         """Initialize session store with QSettings."""
@@ -131,6 +133,7 @@ class SessionStore:
         company_id: str | None = None,
         allow_user_device: bool = True,
         allow_logout: bool = True,
+        tracking_manually_stopped: bool | None = None,
     ) -> bool:
         """Save session data securely.
         
@@ -149,6 +152,7 @@ class SessionStore:
             company_id: Resolved company ID
             allow_user_device: Whether User/Device control is enabled
             allow_logout: Whether Logout control is enabled
+            tracking_manually_stopped: Whether user manually stopped tracking
             
         Returns:
             True if session was saved successfully
@@ -168,6 +172,10 @@ class SessionStore:
             self.settings.setValue(self._KEY_TRACKING_PERMITTED, tracking_permitted)
             self.settings.setValue(self._KEY_ALLOW_USER_DEVICE, allow_user_device)
             self.settings.setValue(self._KEY_ALLOW_LOGOUT, allow_logout)
+
+            if tracking_manually_stopped is not None:
+                self.set_tracking_manually_stopped(tracking_manually_stopped)
+            self.set_tracking_active(True)
 
             # Store device info as JSON
             device_info_json = json.dumps(device_info)
@@ -263,9 +271,10 @@ class SessionStore:
             full_name = self.settings.value(self._KEY_FULL_NAME) or None
             user_type = self.settings.value(self._KEY_USER_TYPE) or "User"
             employee_id = self.settings.value(self._KEY_EMPLOYEE_ID) or None
+            tracking_permitted_raw = self.settings.value(self._KEY_TRACKING_PERMITTED, True)
             tracking_permitted = (
-                self.settings.value(self._KEY_TRACKING_PERMITTED, True) == "true"
-                or self.settings.value(self._KEY_TRACKING_PERMITTED, True) is True
+                tracking_permitted_raw is True
+                or str(tracking_permitted_raw).lower() in ("true", "1")
             )
             allow_user_device_raw = self.settings.value(self._KEY_ALLOW_USER_DEVICE, True)
             allow_user_device = (
@@ -299,6 +308,8 @@ class SessionStore:
                 "tracking_permitted": tracking_permitted,
                 "allow_user_device": allow_user_device,
                 "allow_logout": allow_logout,
+                "tracking_manually_stopped": self.is_tracking_manually_stopped(),
+                "tracking_active": self.is_tracking_active(),
             }
 
             logger.info(
@@ -331,10 +342,30 @@ class SessionStore:
             self.settings.remove(self._KEY_ALLOW_USER_DEVICE)
             self.settings.remove(self._KEY_ALLOW_LOGOUT)
             self.settings.remove(self._KEY_ENCRYPTED_CHECKSUM)
+            self.settings.remove(self._KEY_TRACKING_MANUALLY_STOPPED)
+            self.settings.remove(self._KEY_TRACKING_ACTIVE)
 
             logger.info("Session data cleared")
         except Exception:
             logger.exception("Failed to clear session")
+
+    def is_tracking_manually_stopped(self) -> bool:
+        """Check if user manually stopped tracking."""
+        raw = self.settings.value(self._KEY_TRACKING_MANUALLY_STOPPED, False)
+        return raw is True or str(raw).lower() in ("true", "1")
+
+    def set_tracking_manually_stopped(self, stopped: bool) -> None:
+        """Record whether user manually stopped tracking."""
+        self.settings.setValue(self._KEY_TRACKING_MANUALLY_STOPPED, bool(stopped))
+
+    def is_tracking_active(self) -> bool:
+        """Check if tracking was actively running."""
+        raw = self.settings.value(self._KEY_TRACKING_ACTIVE, False)
+        return raw is True or str(raw).lower() in ("true", "1")
+
+    def set_tracking_active(self, active: bool) -> None:
+        """Record whether tracking is actively running."""
+        self.settings.setValue(self._KEY_TRACKING_ACTIVE, bool(active))
 
     def validate_session(self) -> bool:
         """Validate that a saved session can be decrypted.

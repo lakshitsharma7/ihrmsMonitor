@@ -437,6 +437,13 @@ class DashboardPage(QWidget):
         """Update the dynamic Records Uploaded count on the dashboard."""
         self.records_uploaded_label.setText(f"Records Uploaded: {count}")
 
+    def set_tracking_active(self, active: bool) -> None:
+        """Explicitly update the tracking status label and app indicators."""
+        self.tracking_status_label.setText(f"Tracking: {'Active' if active else 'Inactive'}")
+        if not active:
+            self.current_app_label.setText("Not tracking")
+            self.current_window_label.setText("")
+
     def refresh(self) -> None:
         """Reload today's total, applications, timeline, and uploaded records count."""
 

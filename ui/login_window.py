@@ -1140,6 +1140,7 @@ class LoginWindow(QMainWindow):
                         company_id=api_config.company_id,
                         allow_user_device=allow_user_device,
                         allow_logout=allow_logout,
+                        tracking_manually_stopped=False,
                     )
                 except Exception as save_err:
                     logger.warning("Could not persist session: %s", save_err)
