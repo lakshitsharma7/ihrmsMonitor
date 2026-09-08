@@ -994,6 +994,10 @@ If fso.FileExists(targetExe) Then
     WriteLog "Launching application: " & targetExe
     wshShell.Run Chr(34) & targetExe & Chr(34), 1, False
     WriteLog "Application launch requested."
+ElseIf fso.FileExists(appDir & "\iHRMS Monitor.exe") Then
+    WriteLog "Launching application from appDir: " & appDir & "\iHRMS Monitor.exe"
+    wshShell.Run Chr(34) & appDir & "\iHRMS Monitor.exe" & Chr(34), 1, False
+    WriteLog "Application launch requested."
 Else
     WriteLog "CRITICAL: targetExe does not exist: " & targetExe
 End If
@@ -1092,6 +1096,11 @@ if ($isInstaller) {{
 if (Test-Path $targetExe) {{
     Write-UpdateLog "Launching application: $targetExe"
     Start-Process -FilePath $targetExe -WindowStyle Normal
+}} elseif (Test-Path "$appDir\\iHRMS Monitor.exe") {{
+    Write-UpdateLog "Launching application from appDir: $appDir\\iHRMS Monitor.exe"
+    Start-Process -FilePath "$appDir\\iHRMS Monitor.exe" -WindowStyle Normal
+}} else {{
+    Write-UpdateLog "CRITICAL: targetExe does not exist: $targetExe"
 }}
 Write-UpdateLog "PowerShell updater finished."
 '''

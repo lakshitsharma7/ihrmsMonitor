@@ -1532,16 +1532,25 @@ class MainWindow(QMainWindow):
             )
 
     def nativeEvent(self, eventType, message):
-        """Handle native Windows events including system power suspend and resume."""
+        """Handle native Windows events including system power suspend/resume and shutdown/restart."""
         try:
             if eventType == b"windows_generic_MSG":
                 import ctypes
                 from ctypes import wintypes
                 msg = wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0218:  # WM_POWERBROADCAST
-                    PBT_APMSUSPEND = 0x0004
-                    PBT_APMRESUMEAUTOMATIC = 0x0012
-                    PBT_APMRESUMESUSPEND = 0x0007
+                WM_QUERYENDSESSION = 0x0011
+                WM_ENDSESSION = 0x0016
+                WM_POWERBROADCAST = 0x0218
+                PBT_APMSUSPEND = 0x0004
+                PBT_APMRESUMEAUTOMATIC = 0x0012
+                PBT_APMRESUMESUSPEND = 0x0007
+
+                if msg.message in (WM_QUERYENDSESSION, WM_ENDSESSION):
+                    logger.info("Native Windows Shutdown/Restart received: message=0x%04x. Performing clean shutdown.", msg.message)
+                    self._really_quit = True
+                    self._shutdown()
+                    return True, 1
+                elif msg.message == WM_POWERBROADCAST:
                     if msg.wParam == PBT_APMSUSPEND:
                         logger.info("Native WM_POWERBROADCAST: System entering suspend/sleep.")
                         self._request_system_suspend.emit()
@@ -1552,7 +1561,7 @@ class MainWindow(QMainWindow):
                         QTimer.singleShot(200, self.dashboard_page.refresh)
                         QTimer.singleShot(200, self._apply_rbac_permissions)
         except Exception as power_err:
-            logger.debug("Error handling native power event: %s", power_err)
+            logger.debug("Error handling native event: %s", power_err)
         return super().nativeEvent(eventType, message)
 
     def _shutdown(
@@ -1560,9 +1569,14 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Stop tracker and cleanly shut down."""
 
+        if getattr(self, "_is_shutting_down", False):
+            return
+        self._is_shutting_down = True
+
         logger.info(
             "Shutting down application"
         )
+
 
         try:
             if hasattr(self, "_periodic_settings_timer") and self._periodic_settings_timer and self._periodic_settings_timer.isActive():

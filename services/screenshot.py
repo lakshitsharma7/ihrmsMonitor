@@ -306,6 +306,15 @@ def capture_screenshot(
             "All screen capture methods failed for session=%s",
             activity_session_id,
         )
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error(
+                error_type="SCREENSHOT_CAPTURE_ERROR",
+                error_message=f"All screen capture methods failed for session={activity_session_id}",
+                extra_context={"session_id": activity_session_id, "operation": "capture_screenshot"},
+            )
+        except Exception:
+            pass
         return None
 
     # ----------------------------------------------------------

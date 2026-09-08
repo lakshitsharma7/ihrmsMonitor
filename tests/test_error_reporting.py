@@ -110,8 +110,8 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("v2.0.1", body)
         self.assertIn("ACTIVITY_UPLOAD_ERROR", body)
         self.assertIn("/tracking/save_activity_batch", body)
-        self.assertIn("HTTP Status  : 502", body)
-        self.assertIn("Response Err : Bad Gateway", body)
+        self.assertIn("HTTP Status   : 502", body)
+        self.assertIn("Response Err  : Bad Gateway", body)
         self.assertIn("EMP-100", body)
         self.assertIn("TEST-PC", body)
 
@@ -127,17 +127,63 @@ class TestErrorReportService(unittest.TestCase):
             self.assertFalse(result)
             self.assertTrue(mock_send.called)
 
-    def test_report_error_runs_asynchronously(self):
+    def test_listener_notification_on_report_error(self):
         service = self.service
-        unique_sig = f"ASYNC_TEST_{time.time()}"
-        with patch.object(service, "_dispatch_email") as mock_dispatch:
+        received_errors = []
+
+        def mock_listener(err_type, err_msg, ctx):
+            received_errors.append((err_type, err_msg, ctx))
+
+        service.register_listener(mock_listener)
+        unique_sig = f"LISTENER_TEST_{time.time()}"
+        with patch.object(service, "_dispatch_email"):
             service.report_error(
                 error_type=unique_sig,
-                error_message="Async non-blocking test",
+                error_message="Test listener notification",
             )
-            # Should not block, thread will run in background
-            time.sleep(0.3)
-            mock_dispatch.assert_called_once()
+            self.assertEqual(len(received_errors), 1)
+            self.assertEqual(received_errors[0][0], unique_sig)
+            self.assertEqual(received_errors[0][1], "Test listener notification")
+            self.assertIn("device_details", received_errors[0][2])
+            self.assertIn("calling_module", received_errors[0][2])
+
+        service.unregister_listener(mock_listener)
+
+    def test_dashboard_status_area_updates_on_error(self):
+        """Verify DashboardPage immediately displays short error status when an error is reported."""
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+
+        from services.activity_service import ActivityService
+        from database.database import get_session
+        from ui.dashboard import DashboardPage
+
+        service = ActivityService(get_session)
+        page = DashboardPage(activity_service=service)
+
+        # Trigger a sync error
+        ErrorReportService().report_error(
+            error_type="API_SYNC_ERROR",
+            error_message="Connection timed out while uploading batch",
+        )
+        self.assertIn("Error", page.sync_status_label.text())
+        self.assertIn("Connection timed out", page.sync_status_label.text())
+
+        # Trigger an update error
+        ErrorReportService().report_error(
+            error_type="UPDATE_INSTALL_ERROR",
+            error_message="Installer hash mismatch",
+        )
+        self.assertIn("Update Error", page.update_status_label.text())
+        self.assertIn("Installer hash mismatch", page.update_status_label.text())
+
+        # Trigger a tracking error
+        ErrorReportService().report_error(
+            error_type="TRACKING_ERROR",
+            error_message="Window handle invalid",
+        )
+        self.assertIn("Error", page.tracking_status_label.text())
+        self.assertIn("Window handle invalid", page.tracking_status_label.text())
 
 
 if __name__ == "__main__":

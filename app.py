@@ -17,8 +17,10 @@ Note on package naming:
 from __future__ import annotations
 
 import sys
+import threading
 
 from PySide6.QtWidgets import QApplication, QMessageBox
+
 
 from config.settings import APP_NAME, ORG_NAME
 from database.database import init_database
@@ -68,7 +70,7 @@ def _set_windows_app_identity() -> None:
 
 
 def _setup_exception_hook() -> None:
-    """Install global exception handler to capture and report critical unhandled errors."""
+    """Install global exception handlers to capture and report critical unhandled errors across main and background threads."""
     original_hook = sys.excepthook
 
     def _custom_excepthook(exc_type, exc_value, exc_traceback):
@@ -85,6 +87,22 @@ def _setup_exception_hook() -> None:
         original_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = _custom_excepthook
+
+    if hasattr(threading, "excepthook"):
+        def _threading_excepthook(args):
+            thread_name = getattr(args.thread, "name", "UnknownThread")
+            logger.critical("Uncaught thread exception in %s: %s", thread_name, args.exc_value, exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="THREAD_RUNTIME_ERROR",
+                    error_message=f"Unhandled exception in thread '{thread_name}': {args.exc_value}",
+                    exc=args.exc_value,
+                    extra_context={"thread_name": thread_name},
+                )
+            except Exception:
+                pass
+        threading.excepthook = _threading_excepthook
 
 
 def main() -> int:
@@ -133,6 +151,7 @@ def main() -> int:
     # conflicting on SQLite database locks and system resources.
     lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
     lock_file = QLockFile(lock_path)
+    lock_file.setStaleLockTime(30000)
     if not lock_file.tryLock(100):
         logger.warning(
             "Another instance of %s is already running. Exiting gracefully.",
@@ -226,6 +245,7 @@ def main() -> int:
             # Open main window directly and display the Dashboard
             from ui.main_window import MainWindow
             main_window = MainWindow(login_window=None)
+            app.aboutToQuit.connect(main_window._shutdown)
             main_window.show()
             main_window.raise_()
             main_window.activateWindow()

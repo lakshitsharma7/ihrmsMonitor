@@ -234,11 +234,13 @@ class WeeklyTimelinePage(QWidget):
     """Full-page view dedicated to weekly tracking timeline and day-by-day analysis."""
 
     back_requested = Signal()
+    weekly_data_refreshed = Signal(list)
 
     def __init__(self, activity_service: ActivityService, parent=None) -> None:
         super().__init__(parent)
         self._service = activity_service
         self._is_refreshing = False
+        self.weekly_data_refreshed.connect(self._apply_weekly_data)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -380,8 +382,7 @@ class WeeklyTimelinePage(QWidget):
         def _bg_fetch():
             try:
                 week_data = self._service.get_weekly_timeline_data()
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._apply_weekly_data(week_data))
+                self.weekly_data_refreshed.emit(week_data)
             except Exception as err:
                 logger.debug("Background weekly refresh error: %s", err)
             finally:

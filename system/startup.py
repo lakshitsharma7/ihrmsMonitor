@@ -74,10 +74,10 @@ def _windows_is_enabled() -> bool:
     try:
         import winreg  # type: ignore
 
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH) as key:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_READ) as key:
             try:
-                winreg.QueryValueEx(key, APP_NAME)
-                return True
+                val, _ = winreg.QueryValueEx(key, APP_NAME)
+                return bool(val)
             except FileNotFoundError:
                 return False
     except Exception:  # noqa: BLE001
@@ -89,28 +89,42 @@ def _windows_set_enabled(enabled: bool, exe_path: str) -> bool:
     import sys
     import winreg  # type: ignore
 
-    with winreg.OpenKey(
-        winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE
+    with winreg.CreateKeyEx(
+        winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
     ) as key:
         if enabled:
-            # Only register auto-start for packaged/frozen builds, never bare python.exe.
-            # Running bare python.exe on Windows startup without a script spawns
-            # an orphaned headless interpreter that hangs and triggers 'Python is not responding'.
-            if not getattr(sys, "frozen", False) and "python" in Path(exe_path).name.lower():
-                logger.info(
-                    "Skipping Windows startup registration for development interpreter: %s",
-                    exe_path,
-                )
-                try:
-                    winreg.DeleteValue(key, APP_NAME)
-                except FileNotFoundError:
-                    pass
-                return True
+            clean_exe = str(exe_path).strip().strip('"')
+            # Only register auto-start for packaged/frozen builds or compiled iHRMS Monitor.exe.
+            # Never register bare python.exe or development scripts.
+            is_dev_python = "python" in Path(clean_exe).name.lower() or clean_exe.endswith(".py")
+            if not getattr(sys, "frozen", False) and is_dev_python:
+                # Check if a compiled binary exists in standard locations
+                candidate_paths = [
+                    Path(r"C:\Program Files\iHRMS Monitor\iHRMS Monitor.exe"),
+                    Path(r"C:\Program Files (x86)\iHRMS Monitor\iHRMS Monitor.exe"),
+                    Path(__file__).resolve().parent.parent / "dist" / "iHRMS Monitor" / "iHRMS Monitor.exe",
+                ]
+                compiled_exe = next((p for p in candidate_paths if p.is_file()), None)
+                if compiled_exe:
+                    clean_exe = str(compiled_exe)
+                    logger.info("Found compiled executable for Windows startup registration: %s", clean_exe)
+                else:
+                    logger.info(
+                        "Skipping Windows startup registration for development interpreter: %s",
+                        clean_exe,
+                    )
+                    try:
+                        winreg.DeleteValue(key, APP_NAME)
+                    except FileNotFoundError:
+                        pass
+                    return True
 
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{clean_exe}"')
+            logger.info("Registered Windows auto-start Run key for: %s", clean_exe)
         else:
             try:
                 winreg.DeleteValue(key, APP_NAME)
+                logger.info("Removed Windows auto-start Run key for: %s", APP_NAME)
             except FileNotFoundError:
                 pass
     return True

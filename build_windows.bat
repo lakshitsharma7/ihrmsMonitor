@@ -5,10 +5,10 @@ REM Run this on Windows.
 setlocal enabledelayedexpansion
 
 echo ===================================================
-echo [1/3] Installing / Verifying Dependencies...
+echo [1/3] Preparing Environment and Verifying Dependencies...
 echo ===================================================
-python -m pip install --upgrade pip
-pip install -r requirements.txt -r requirements-windows.txt
+taskkill /F /IM "iHRMS Monitor.exe" 2>nul
+python -m pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
 echo.
@@ -27,7 +27,7 @@ if not defined SPEC_FILE (
     set "SPEC_FILE=iHRMS Monitor.spec"
 )
 
-pyinstaller --noconfirm --clean "!SPEC_FILE!"
+python -m PyInstaller --noconfirm --clean "!SPEC_FILE!"
 if errorlevel 1 goto :error
 
 echo.
@@ -60,11 +60,17 @@ echo Using Inno Setup Compiler: "%ISCC%" for Version %APP_VER%
 "%ISCC%" /DMyAppVersion="%APP_VER%" "IHRMS Monitor.iss"
 if errorlevel 1 goto :error
 
+if not exist "dist\installer" mkdir "dist\installer"
+if exist "installer\iHRMS-Monitor-Installer.exe" copy /y "installer\iHRMS-Monitor-Installer.exe" "dist\installer\iHRMSMonitorSetup.exe"
+
 echo.
 echo ===================================================
-echo Installer Build Complete: dist\installer\iHRMSMonitorSetup.exe
+echo Installer Build Complete:
+echo   1. installer\iHRMS-Monitor-Installer.exe
+echo   2. dist\installer\iHRMSMonitorSetup.exe
 echo ===================================================
 goto :eof
+
 
 :done_pyinstaller
 echo.

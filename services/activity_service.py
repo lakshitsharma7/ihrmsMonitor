@@ -44,7 +44,13 @@ class ActivityService:
         try:
             from services.session_service import SessionService
             user = SessionService().current_user
-            return user.employee_id if user else None
+            if user:
+                return user.employee_id or user.indo_code or user.username or None
+            from services.secure_session import SessionStore
+            saved = SessionStore().load_session()
+            if saved:
+                return saved.get("employee_id") or saved.get("indo_code") or saved.get("username") or None
+            return None
         except Exception:
             return None
 
@@ -77,7 +83,7 @@ class ActivityService:
 
         db_session = self._session_factory()
         try:
-            return self._repo(
+            db_total = self._repo(
                 db_session
             ).get_total_duration_seconds(
                 start_utc,
@@ -86,6 +92,21 @@ class ActivityService:
             )
         finally:
             db_session.close()
+
+        if target_date == local_now.date():
+            try:
+                from services.secure_session import SessionStore
+                store = SessionStore()
+                saved_date = store.settings.value("dashboard/today_date")
+                if saved_date and str(saved_date) == str(target_date):
+                    val = store.settings.value("dashboard/today_total_seconds")
+                    if val is not None:
+                        persisted_s = max(0, int(val))
+                        db_total = max(db_total, persisted_s)
+            except Exception:
+                pass
+
+        return db_total
 
     def get_today_total_seconds(
         self,
@@ -212,21 +233,29 @@ class ActivityService:
     ) -> list[ApplicationUsage]:
         """Return today's application usage."""
 
-        now = now or datetime.now(
-            timezone.utc
-        )
+        if now is None:
+            local_now = datetime.now().astimezone()
+            target_date = local_now.date()
+        else:
+            local_now = now.astimezone() if now.tzinfo else now.replace(tzinfo=timezone.utc).astimezone()
+            target_date = local_now.date()
 
-        start = datetime.combine(
-            now.date(),
+        local_tz = local_now.tzinfo
+
+        start_local = datetime.combine(
+            target_date,
             time.min,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
 
-        end = datetime.combine(
-            now.date(),
+        end_local = datetime.combine(
+            target_date,
             time.max,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
+
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
 
         db_session = self._session_factory()
 
@@ -252,21 +281,29 @@ class ActivityService:
         including its PID.
         """
 
-        now = now or datetime.now(
-            timezone.utc
-        )
+        if now is None:
+            local_now = datetime.now().astimezone()
+            target_date = local_now.date()
+        else:
+            local_now = now.astimezone() if now.tzinfo else now.replace(tzinfo=timezone.utc).astimezone()
+            target_date = local_now.date()
 
-        start = datetime.combine(
-            now.date(),
+        local_tz = local_now.tzinfo
+
+        start_local = datetime.combine(
+            target_date,
             time.min,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
 
-        end = datetime.combine(
-            now.date(),
+        end_local = datetime.combine(
+            target_date,
             time.max,
-            tzinfo=now.tzinfo,
+            tzinfo=local_tz,
         )
+
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
 
         db_session = self._session_factory()
 
@@ -281,17 +318,32 @@ class ActivityService:
                 )
             )
 
-            return [
-                TimelineEntry(
-                    started_at=session.started_at,
-                    application_name=session.application_name,
-                    window_title=session.window_title,
-                    duration_seconds=max(0, (session.duration_seconds or 0) - (session.idle_seconds or 0)),
-                    process_id=session.process_id,
-                    idle_seconds=session.idle_seconds or 0,
+            now_utc = datetime.now(timezone.utc)
+            entries = []
+            for session in sessions:
+                if session.ended_at is None:
+                    s_start = session.started_at
+                    if s_start.tzinfo is None:
+                        s_start = s_start.replace(tzinfo=timezone.utc)
+                    raw_duration = max(0, int((now_utc - s_start).total_seconds()))
+                else:
+                    raw_duration = session.duration_seconds or 0
+
+                idle_s = session.idle_seconds or 0
+                effective_duration = max(0, raw_duration - idle_s)
+
+                entries.append(
+                    TimelineEntry(
+                        started_at=session.started_at,
+                        application_name=session.application_name,
+                        window_title=session.window_title,
+                        duration_seconds=effective_duration,
+                        process_id=session.process_id,
+                        idle_seconds=idle_s,
+                    )
                 )
-                for session in sessions
-            ]
+
+            return entries
 
         finally:
             db_session.close()

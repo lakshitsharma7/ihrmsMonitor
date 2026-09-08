@@ -79,7 +79,7 @@ class ErrorReportService:
             return cls._instance
 
     def _init_service(self) -> None:
-        """Initialize reporting configuration and deduplication caches."""
+        """Initialize reporting configuration, listener list, and deduplication caches."""
         self._support_email = os.environ.get("SUPPORT_EMAIL", DEFAULT_SUPPORT_EMAIL).strip()
         self._smtp_host = os.environ.get("SMTP_HOST", DEFAULT_SMTP_HOST).strip()
         self._smtp_port = int(os.environ.get("SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip())
@@ -87,9 +87,24 @@ class ErrorReportService:
         self._smtp_pass = os.environ.get("SMTP_PASS", "").strip()
         self._smtp_from = os.environ.get("SMTP_FROM", DEFAULT_SMTP_FROM).strip()
 
+        # UI listeners registered for immediate dashboard status updates
+        self._listeners: list[Any] = []
+
         # Cooldown cache: maps hash(signature) -> last_sent_timestamp
         self._sent_reports: dict[str, float] = {}
         self._cooldown_seconds = 3600.0  # 1 hour cooldown per unique error signature
+
+    def register_listener(self, callback: Any) -> None:
+        """Register a callback listener to receive error notifications immediately."""
+        with self._lock:
+            if callback not in self._listeners:
+                self._listeners.append(callback)
+
+    def unregister_listener(self, callback: Any) -> None:
+        """Unregister an error notification listener."""
+        with self._lock:
+            if callback in self._listeners:
+                self._listeners.remove(callback)
 
     # ==============================================================
     # DEDUPLICATION
@@ -190,6 +205,7 @@ class ErrorReportService:
         endpoint = "N/A"
         http_status = "N/A"
         response_error = "N/A"
+        operation = "N/A"
         if extra_context:
             if extra_context.get("endpoint"):
                 endpoint = str(extra_context["endpoint"])
@@ -206,7 +222,63 @@ class ErrorReportService:
             elif extra_context.get("server_response") is not None:
                 response_error = str(extra_context["server_response"])
 
-        # 5. Recent application log lines
+            if extra_context.get("operation"):
+                operation = str(extra_context["operation"])
+
+        # 5. Extract module and function where error originated
+        calling_module = "N/A"
+        calling_function = "N/A"
+        try:
+            if extra_context and extra_context.get("module"):
+                calling_module = str(extra_context["module"])
+            if extra_context and extra_context.get("function"):
+                calling_function = str(extra_context["function"])
+
+            if calling_module == "N/A" or calling_function == "N/A":
+                import inspect
+                stack = inspect.stack()
+                for frame_info in stack[1:]:
+                    fn = frame_info.filename
+                    if "error_report_service" not in fn:
+                        calling_module = Path(fn).name
+                        calling_function = frame_info.function
+                        break
+        except Exception:
+            pass
+
+        # 6. Current application status (tracking, sync, update)
+        tracking_status = "Unknown"
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            if store.is_tracking_manually_stopped():
+                tracking_status = "Manually Stopped"
+            elif store.is_tracking_active():
+                tracking_status = "Active"
+            else:
+                tracking_status = "Inactive"
+        except Exception:
+            pass
+
+        sync_status = "Unknown"
+        try:
+            from services.sync_service import SyncService
+            sync_status = f"{SyncService.last_sync_status} (Last success: {SyncService.last_successful_sync_time})"
+        except Exception:
+            pass
+
+        update_status = "Unknown"
+        try:
+            from services.device_registry_service import DeviceRegistryService
+            from utils.device import get_device_identifier
+            for d in DeviceRegistryService().get_all_devices():
+                if d.get("device_identifier") == get_device_identifier():
+                    update_status = d.get("update_status", "Updated")
+                    break
+        except Exception:
+            pass
+
+        # 7. Recent application log lines
         recent_logs = self._get_recent_logs(max_lines=60)
 
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -217,9 +289,15 @@ class ErrorReportService:
             "app_version": get_running_app_version(),
             "error_type": error_type,
             "error_message": sanitize_text(error_message),
+            "calling_module": sanitize_text(calling_module),
+            "calling_function": sanitize_text(calling_function),
+            "operation": sanitize_text(operation),
             "endpoint": sanitize_text(endpoint),
             "http_status": sanitize_text(http_status),
             "response_error": sanitize_text(response_error),
+            "tracking_status": tracking_status,
+            "sync_status": sync_status,
+            "update_status": update_status,
             "traceback": sanitize_text(traceback_str),
             "timestamp_local": now_local,
             "timestamp_utc": now_utc,
@@ -255,26 +333,33 @@ class ErrorReportService:
             f"==========================================================\n"
             f"iHRMS Monitor - Critical Error Report\n"
             f"==========================================================\n"
-            f"Application : {context.get('app_name')} v{context.get('app_version')}\n"
-            f"Time (Local): {context.get('timestamp_local')}\n"
-            f"Time (UTC)  : {context.get('timestamp_utc')}\n"
-            f"Error Type  : {context.get('error_type')}\n"
-            f"Error Msg   : {context.get('error_message')}\n\n"
-            f"--- API & Operation Diagnostics ---\n"
-            f"Endpoint / Op: {context.get('endpoint', 'N/A')}\n"
-            f"HTTP Status  : {context.get('http_status', 'N/A')}\n"
-            f"Response Err : {context.get('response_error', 'N/A')}\n\n"
+            f"Application   : {context.get('app_name')} v{context.get('app_version')}\n"
+            f"Time (Local)  : {context.get('timestamp_local')}\n"
+            f"Time (UTC)    : {context.get('timestamp_utc')}\n"
+            f"Error Type    : {context.get('error_type')}\n"
+            f"Error Msg     : {context.get('error_message')}\n\n"
+            f"--- Module & Operation Diagnostics ---\n"
+            f"Module / File : {context.get('calling_module', 'N/A')}\n"
+            f"Function      : {context.get('calling_function', 'N/A')}\n"
+            f"Operation     : {context.get('operation', 'N/A')}\n"
+            f"Endpoint / URL: {context.get('endpoint', 'N/A')}\n"
+            f"HTTP Status   : {context.get('http_status', 'N/A')}\n"
+            f"Response Err  : {context.get('response_error', 'N/A')}\n\n"
+            f"--- Application State ---\n"
+            f"Tracking State: {context.get('tracking_status', 'Unknown')}\n"
+            f"Sync State    : {context.get('sync_status', 'Unknown')}\n"
+            f"Update State  : {context.get('update_status', 'Unknown')}\n\n"
             f"--- User / Employee Context ---\n"
-            f"Username    : {user.get('username', 'N/A')}\n"
-            f"Employee ID : {user.get('employee_id', 'N/A')}\n"
-            f"Full Name   : {user.get('full_name', 'N/A')}\n"
-            f"Company Code: {user.get('company_code', 'N/A')}\n"
-            f"Role        : {user.get('role', 'N/A')}\n\n"
+            f"Username      : {user.get('username', 'N/A')}\n"
+            f"Employee ID   : {user.get('employee_id', 'N/A')}\n"
+            f"Full Name     : {user.get('full_name', 'N/A')}\n"
+            f"Company Code  : {user.get('company_code', 'N/A')}\n"
+            f"Role          : {user.get('role', 'N/A')}\n\n"
             f"--- Device / Host Context ---\n"
-            f"Hostname    : {device.get('hostname', 'N/A')}\n"
-            f"OS User     : {device.get('os_user', 'N/A')}\n"
-            f"Platform    : {device.get('platform', 'N/A')} {device.get('os_release', '')} ({device.get('os_version', '')})\n"
-            f"Architecture: {device.get('architecture', 'N/A')}\n\n"
+            f"Hostname      : {device.get('hostname', 'N/A')}\n"
+            f"OS User       : {device.get('os_user', 'N/A')}\n"
+            f"Platform      : {device.get('platform', 'N/A')} {device.get('os_release', '')} ({device.get('os_version', '')})\n"
+            f"Architecture  : {device.get('architecture', 'N/A')}\n\n"
             f"--- Traceback ---\n"
             f"{context.get('traceback') or 'No traceback available.'}\n\n"
             f"--- Extra Context ---\n"
@@ -382,13 +467,6 @@ class ErrorReportService:
         Deduplicates identical errors within a 1-hour window.
         """
         try:
-            sig = self._get_error_signature(error_type, error_message)
-            if self._is_duplicate(sig):
-                logger.debug("Suppressing duplicate error report for signature: %s (%s)", sig, error_type)
-                return
-
-            self._record_sent(sig)
-
             # Collect context synchronously to capture state at time of error
             context = self._collect_context(
                 error_type=error_type,
@@ -397,7 +475,23 @@ class ErrorReportService:
                 extra_context=extra_context,
             )
 
-            # Dispatch asynchronously
+            # Immediately notify registered UI listeners (e.g. Dashboard)
+            with self._lock:
+                listeners = list(self._listeners)
+            for listener in listeners:
+                try:
+                    listener(error_type, error_message, context)
+                except Exception as listener_err:
+                    logger.debug("Error notification listener failed: %s", listener_err)
+
+            sig = self._get_error_signature(error_type, error_message)
+            if self._is_duplicate(sig):
+                logger.debug("Suppressing duplicate error report email for signature: %s (%s)", sig, error_type)
+                return
+
+            self._record_sent(sig)
+
+            # Dispatch email asynchronously
             def _async_send():
                 try:
                     self._dispatch_email(context)

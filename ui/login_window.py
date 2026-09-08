@@ -1006,6 +1006,15 @@ class LoginWindow(QMainWindow):
 
                 if not device_token:
                     logger.error("Device enrollment failed: No device token returned from %s", enroll_url)
+                    try:
+                        from services.error_report_service import ErrorReportService
+                        ErrorReportService().report_error(
+                            error_type="DEVICE_ENROLLMENT_ERROR",
+                            error_message=f"Device enrollment failed: No device token returned from {enroll_url}",
+                            extra_context={"endpoint": enroll_url, "username": username},
+                        )
+                    except Exception:
+                        pass
                     self._show_login_error("Device enrollment failed. Please check backend server status.")
                     return
 
@@ -1184,8 +1193,18 @@ class LoginWindow(QMainWindow):
                 msg = res_json.get("message") or "Invalid username or password."
                 self._show_login_error(msg)
                 
-        except Exception:
+        except Exception as exc:
             logger.exception("Error calling external login API")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="LOGIN_API_ERROR",
+                    error_message=f"Error calling external login API: {exc}",
+                    exc=exc,
+                    extra_context={"endpoint": url, "company_code": company_code},
+                )
+            except Exception:
+                pass
             self._show_login_error("Could not connect to authentication server. Please check your network connection.")
 
     def _show_login_error(self, message: str = "Invalid username or password.") -> None:

@@ -1,11 +1,13 @@
-firstly install inno setup 6 or updated version  
-then drag --- installer.iss or IHRMS Monitor.iss
-open this in inno setup app 
-click on build and complie that open file .
+# iHRMS Monitor Build & Packaging Instructions
 
+1. Install Inno Setup 6 (https://jrsoftware.org/isdl.php)
+2. Build Standalone PyInstaller Bundle (No UPX, Full Dependencies):
+   python -m PyInstaller --noconfirm --clean "iHRMS Monitor.spec"
 
-use this command
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss 
+3. Compile Inno Setup Installer:
+   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "IHRMS Monitor.iss"
+   (or "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "IHRMS Monitor.iss")
 
-check the installer 
-where ISCC
+4. Generated Installer:
+   installer\iHRMS-Monitor-Installer.exe
+   dist\installer\iHRMSMonitorSetup.exe

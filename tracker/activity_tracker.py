@@ -377,6 +377,7 @@ class ActivityTracker:
             # Get idle time.
             # --------------------------------------------------
 
+            prev_idle = self._last_idle_seconds
             idle_seconds = (
                 self._safe_get_idle_seconds()
             )
@@ -423,6 +424,11 @@ class ActivityTracker:
             elif not now_idle and was_idle:
 
                 self._on_became_active()
+
+            elif not now_idle and not was_idle and prev_idle > 0 and idle_seconds == 0:
+
+                # User was idling for a short period (< threshold) and returned to active
+                self._last_resumed_idle_seconds = float(prev_idle)
 
             self._is_idle = now_idle
 
@@ -513,11 +519,20 @@ class ActivityTracker:
 
                 self._sync_activity()
 
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
 
             logger.exception(
                 "Unexpected error during tracker poll()"
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKER_POLL_ERROR",
+                    error_message=f"Unexpected error during tracker poll(): {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
         return self._state()
 
@@ -815,7 +830,17 @@ class ActivityTracker:
 
             from services.session_service import SessionService
             curr_user = SessionService().current_user
-            emp_id = curr_user.employee_id if curr_user else None
+            emp_id = None
+            if curr_user:
+                emp_id = curr_user.employee_id or curr_user.indo_code or curr_user.username or None
+            if not emp_id:
+                try:
+                    from services.secure_session import SessionStore
+                    saved = SessionStore().load_session()
+                    if saved:
+                        emp_id = saved.get("employee_id") or saved.get("indo_code") or saved.get("username") or None
+                except Exception:
+                    pass
 
             record = (
                 repository.create_session(
@@ -1326,12 +1351,21 @@ class ActivityTracker:
                 .get_active_application()
             )
 
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
 
             logger.exception(
                 "Platform provider failed "
                 "to get active application"
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="APPLICATION_DETECTION_ERROR",
+                    error_message=f"Platform provider failed to get active application: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
             return None
 
@@ -1351,12 +1385,21 @@ class ActivityTracker:
                 .get_idle_seconds()
             )
 
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
 
             logger.exception(
                 "Platform provider failed "
                 "to get idle seconds"
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="IDLE_DETECTION_ERROR",
+                    error_message=f"Platform provider failed to get idle seconds: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
             return 0.0
 
@@ -1375,6 +1418,8 @@ class ActivityTracker:
                 effective_idle = float(self._session_idle_base_seconds + current_idle)
             else:
                 effective_idle = float(self._last_idle_seconds)
+        elif self._last_idle_seconds > 0:
+            effective_idle = float(self._last_idle_seconds)
         else:
             if self._current is not None and self._current.idle_seconds > 0:
                 effective_idle = float(self._current.idle_seconds)

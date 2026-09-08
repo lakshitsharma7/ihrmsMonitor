@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import threading
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -33,6 +34,8 @@ class DashboardPage(QWidget):
     """Main Activity Tracker dashboard."""
 
     weekly_timeline_requested = Signal()
+    data_refreshed = Signal(dict)
+    error_reported = Signal(str, str)
 
     def __init__(
         self,
@@ -45,8 +48,50 @@ class DashboardPage(QWidget):
         self._is_refreshing = False
         self._cached_today_idle = 0
         self._cached_uploaded_count = 0
+        self._cached_calendar_date = datetime.now().astimezone().date()
+
+        self.data_refreshed.connect(self._apply_dashboard_data)
+        self.error_reported.connect(self._on_error_reported)
+
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().register_listener(self._handle_global_error)
+        except Exception:
+            pass
+
+        persisted = self._load_persisted_today_seconds(self._cached_calendar_date)
+        db_seconds = 0
+        try:
+            val = self._service.get_today_total_seconds()
+            if isinstance(val, (int, float)):
+                db_seconds = max(0, int(val))
+        except Exception:
+            pass
+
+        self._cached_today_total_seconds = max(persisted, db_seconds)
 
         self._build_ui()
+
+    def _save_persisted_today_seconds(self, seconds: int, cal_date) -> None:
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            store.settings.setValue("dashboard/today_total_seconds", int(seconds))
+            store.settings.setValue("dashboard/today_date", str(cal_date))
+        except Exception:
+            pass
+
+    def _load_persisted_today_seconds(self, cal_date) -> int:
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            saved_date = store.settings.value("dashboard/today_date")
+            if saved_date and str(saved_date) == str(cal_date):
+                val = store.settings.value("dashboard/today_total_seconds")
+                return max(0, int(val)) if val is not None else 0
+            return 0
+        except Exception:
+            return 0
 
     def _build_ui(self) -> None:
         """Build the dashboard interface."""
@@ -261,7 +306,7 @@ class DashboardPage(QWidget):
         today_layout.setSpacing(6)
 
         self.today_total_label = QLabel(
-            "0m"
+            ActivityService.format_duration(self._cached_today_total_seconds)
         )
 
         self.today_total_label.setObjectName(
@@ -270,6 +315,22 @@ class DashboardPage(QWidget):
 
         self.today_total_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.refresh_button = QPushButton(
+            "↻ Refresh"
+        )
+        self.refresh_button.setObjectName(
+            "RefreshButton"
+        )
+        self.refresh_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.refresh_button.setToolTip(
+            "Refresh today's activity sessions and timeline"
+        )
+        self.refresh_button.clicked.connect(
+            lambda: self.refresh(async_mode=True)
         )
 
         self.weekly_timeline_button = QPushButton(
@@ -291,6 +352,10 @@ class DashboardPage(QWidget):
         today_layout.addStretch(1)
         today_layout.addWidget(
             self.today_total_label
+        )
+        today_layout.addSpacing(4)
+        today_layout.addWidget(
+            self.refresh_button
         )
         today_layout.addSpacing(4)
         today_layout.addWidget(
@@ -421,7 +486,7 @@ class DashboardPage(QWidget):
         tracking_text = "Active" if state.is_tracking else "Inactive"
         self.tracking_status_label.setText(f"Tracking: {tracking_text}")
 
-        # Update idle time label (dynamic updates when idle resumes or resets)
+        # Update idle time label in real time second by second
         idle_s = max(0, int(getattr(state, "idle_seconds", 0) or 0))
         if idle_s == 0 and self._cached_today_idle > 0:
             idle_s = self._cached_today_idle
@@ -438,6 +503,28 @@ class DashboardPage(QWidget):
         self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
 
         self.set_records_uploaded(self._cached_uploaded_count)
+
+        # Check calendar date rollover: reset ONLY when a new calendar day begins
+        current_date = datetime.now().astimezone().date()
+        if current_date != self._cached_calendar_date:
+            logger.info(
+                "Calendar date rolled over from %s to %s. Resetting Today's Time counter.",
+                self._cached_calendar_date,
+                current_date,
+            )
+            self._cached_calendar_date = current_date
+            self._cached_today_total_seconds = 0
+            self._cached_today_idle = 0
+            self._save_persisted_today_seconds(0, current_date)
+            self.today_total_label.setText(ActivityService.format_duration(0))
+
+        # Continuous accumulation throughout the day:
+        # If tracking is active and user is not idle, accumulate active tracked time
+        if state.is_tracking and not state.is_idle:
+            self._cached_today_total_seconds += 1
+            self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
+            if self._cached_today_total_seconds % 5 == 0:
+                self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
     def set_records_uploaded(self, count: int) -> None:
         """Update the dynamic Records Uploaded count on the dashboard."""
@@ -459,7 +546,16 @@ class DashboardPage(QWidget):
         if not async_mode:
             try:
                 total_seconds = self._service.get_today_total_seconds()
-                self.today_total_label.setText(ActivityService.format_duration(total_seconds))
+                current_date = datetime.now().astimezone().date()
+                if isinstance(total_seconds, (int, float)):
+                    total_seconds = int(total_seconds)
+                    if current_date != self._cached_calendar_date:
+                        self._cached_calendar_date = current_date
+                        self._cached_today_total_seconds = total_seconds
+                    else:
+                        self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
+                    self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
+                    self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
             except Exception as err:
                 logger.debug("Sync refresh total_seconds error: %s", err)
 
@@ -505,8 +601,7 @@ class DashboardPage(QWidget):
                     "today_idle": today_idle,
                     "timeline": timeline,
                 }
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._apply_dashboard_data(data))
+                self.data_refreshed.emit(data)
             except Exception as err:
                 logger.debug("Background dashboard refresh error: %s", err)
             finally:
@@ -518,7 +613,17 @@ class DashboardPage(QWidget):
         """Apply refreshed database statistics to dashboard widgets on the UI thread."""
         try:
             total_seconds = data.get("total_seconds", 0)
-            self.today_total_label.setText(ActivityService.format_duration(total_seconds))
+            current_date = datetime.now().astimezone().date()
+            if isinstance(total_seconds, (int, float)):
+                total_seconds = int(total_seconds)
+                if current_date != self._cached_calendar_date:
+                    self._cached_calendar_date = current_date
+                    self._cached_today_total_seconds = total_seconds
+                else:
+                    self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
+
+                self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
+                self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
             uploaded_count = data.get("uploaded_count", 0)
             self._cached_uploaded_count = uploaded_count
@@ -557,4 +662,37 @@ class DashboardPage(QWidget):
             elif "Failed" in status:
                 self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
             else:
-                self.update_status_label.setStyleSheet("")
+                self.update_status_label.setStyleSheet("")
+
+    def _handle_global_error(self, error_type: str, error_message: str, context: dict) -> None:
+        """Receive notification from ErrorReportService and queue GUI update via Qt signal."""
+        try:
+            self.error_reported.emit(str(error_type), str(error_message))
+        except Exception:
+            pass
+
+    @Slot(str, str)
+    def _on_error_reported(self, error_type: str, error_message: str) -> None:
+        """Display short user-friendly error message in the existing dashboard status area."""
+        try:
+            short_msg = str(error_message).strip()
+            if "\n" in short_msg:
+                short_msg = short_msg.split("\n")[0].strip()
+            if len(short_msg) > 35:
+                short_msg = short_msg[:32] + "..."
+
+            err_upper = str(error_type).upper()
+            if any(k in err_upper for k in ("SYNC", "UPLOAD", "API", "NETWORK", "HTTP")):
+                self.sync_status_label.setText(f"API Sync: Error ({short_msg})")
+                self.sync_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+            elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
+                self.update_status_label.setText(f"Status: Update Error ({short_msg})")
+                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+            elif any(k in err_upper for k in ("TRACK", "IDLE", "PROVIDER", "PROCESS", "WINDOW")):
+                self.tracking_status_label.setText(f"Tracking: Error ({short_msg})")
+                self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+            else:
+                self.sync_status_label.setText(f"API Sync: Issue ({short_msg})")
+                self.sync_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+        except Exception:
+            pass

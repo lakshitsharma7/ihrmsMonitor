@@ -719,7 +719,11 @@ class ActivityRepository:
             )
         )
         if employee_id is not None:
-            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+            stmt = stmt.where(
+                (ActivitySession.employee_id == employee_id)
+                | (ActivitySession.employee_id.is_(None))
+                | (ActivitySession.employee_id == "")
+            )
         stmt = stmt.order_by(
             ActivitySession.started_at.asc()
         )

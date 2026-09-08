@@ -107,6 +107,22 @@ QPushButton#SecondaryButton:hover {
     background-color: #eaf1fd;
 }
 
+QPushButton#RefreshButton {
+    background-color: #ffffff;
+    color: #1a73e8;
+    border: 1px solid #c2e7ff;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QPushButton#RefreshButton:hover {
+    background-color: #eaf1fd;
+    border-color: #1a73e8;
+    color: #1765cc;
+}
+
 QPushButton#WeeklyTimelineButton {
     background-color: #f0f7ff;
     color: #1a73e8;

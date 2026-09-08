@@ -237,6 +237,62 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
         self.assertFalse(self.store.is_tracking_manually_stopped(), "Fresh login must reset manual stop flag")
         self.assertTrue(self.store.is_tracking_active())
 
+    def test_windows_shutdown_and_restart_native_event(self):
+        """WM_QUERYENDSESSION and WM_ENDSESSION native Windows events cleanly trigger shutdown without process hang."""
+        self._login_test_user(tracking_permitted=True)
+
+        with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
+             patch.object(MainWindow, "_check_for_updates"), \
+             patch.object(MainWindow, "_sync_permissions_from_backend"):
+            win = MainWindow()
+            win.show()
+            QApplication.processEvents()
+            try:
+                self.assertTrue(win._tracker.is_tracking)
+
+                # Mock ctypes MSG structure for WM_QUERYENDSESSION (0x0011)
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG()
+                msg.message = 0x0011  # WM_QUERYENDSESSION
+                msg_ptr = ctypes.addressof(msg)
+
+                handled, res = win.nativeEvent(b"windows_generic_MSG", msg_ptr)
+                self.assertTrue(handled)
+                self.assertTrue(win._really_quit)
+                self.assertTrue(getattr(win, "_is_shutting_down", False))
+            finally:
+                win._shutdown()
+                win.close()
+                QApplication.processEvents()
+
+    def test_startup_registration_compiled_exe_only(self):
+        """Startup registration writes registry only for compiled iHRMS Monitor.exe, never dev python.exe."""
+        from system import startup
+        with patch("winreg.CreateKeyEx") as mock_create_key, \
+             patch("winreg.SetValueEx") as mock_set_val, \
+             patch("winreg.DeleteValue") as mock_del_val:
+            mock_key = MagicMock()
+            mock_create_key.return_value.__enter__.return_value = mock_key
+
+            # 1. Dev python interpreter without compiled exe skips registration
+            with patch("sys.frozen", False, create=True), \
+                 patch("pathlib.Path.is_file", return_value=False):
+                startup.set_enabled(True, executable_path="C:\\Python312\\python.exe")
+                mock_set_val.assert_not_called()
+
+            # 2. Frozen compiled exe registers correctly
+            with patch("sys.frozen", True, create=True):
+                startup.set_enabled(True, executable_path="C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe")
+                mock_set_val.assert_called_with(
+                    mock_key,
+                    startup.APP_NAME,
+                    0,
+                    1,  # REG_SZ
+                    '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe"',
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
+
