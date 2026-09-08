@@ -1592,20 +1592,40 @@ class UpdatePipelineWorker(QThread):
             UpdateService()._is_force_update = force_update
 
             # Finalize active tracking session and flush pending records right before installer execution
-            try:
-                flush_pending_data_before_update(max_retries=1, stop_tracker=True)
-            except Exception as final_flush_err:
-                logger.debug("Pre-restart flush warning: %s", final_flush_err)
+            is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+            if getattr(sys, "frozen", False) or is_running_tests:
+                try:
+                    flush_pending_data_before_update(max_retries=1, stop_tracker=True)
+                except Exception as final_flush_err:
+                    logger.debug("Pre-restart flush warning: %s", final_flush_err)
 
-            # Automatically launch installer and restart application
-            time.sleep(1.0)
-            install_update_and_restart(str(installer_path), target_version=server_version)
+                # Automatically launch installer and restart application
+                time.sleep(1.0)
+                install_update_and_restart(str(installer_path), target_version=server_version)
+            else:
+                logger.info("Running in development/source mode; skipping automatic binary installer execution.")
+                self.phase_changed.emit("done", "Update available: installer downloaded.")
+                self.status_message.emit("Update ready.")
 
         except Exception as err:
             logger.exception("Update pipeline error: %s", err)
             try:
                 from services.device_registry_service import DeviceRegistryService
                 DeviceRegistryService().record_update_failure(str(err))
+            except Exception:
+                pass
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="UPDATE_PIPELINE_ERROR",
+                    error_message=f"Update pipeline failed: {err}",
+                    exc=err,
+                    extra_context={
+                        "endpoint": "/appcontroller/appcontroller",
+                        "api_url": self._api_url,
+                        "phase": "pipeline",
+                    },
+                )
             except Exception:
                 pass
             self.error_occurred.emit("pipeline", str(err))

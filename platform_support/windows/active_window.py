@@ -20,26 +20,45 @@ def get_active_application() -> ActiveApplication | None:
     Never raises - any pywin32/psutil error is logged and swallowed so a
     single failed API call can never take down the tracker loop.
     """
+    hwnd = 0
+    window_title = None
+    pid = None
+
     try:
         import win32gui  # type: ignore
         import win32process  # type: ignore
-    except ImportError:
-        logger.error("pywin32 is not installed; cannot detect active window")
+
+        hwnd = win32gui.GetForegroundWindow()
+        if hwnd:
+            window_title = win32gui.GetWindowText(hwnd) or None
+            try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            except Exception:
+                pid = None
+    except Exception:
+        # Fallback to ctypes Win32 API if pywin32 is missing or has DLL errors
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if hwnd:
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    window_title = buff.value or None
+                dw_pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(dw_pid))
+                pid = dw_pid.value if dw_pid.value > 0 else None
+        except Exception as ct_err:
+            logger.debug("ctypes active window detection error: %s", ct_err)
+
+    if not hwnd:
         return None
 
     try:
-        hwnd = win32gui.GetForegroundWindow()
-        if not hwnd:
-            return None
-
-        window_title = win32gui.GetWindowText(hwnd) or None
-
-        try:
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not resolve PID for hwnd=%s", hwnd, exc_info=True)
-            pid = None
-
         application_name = "Unknown"
         if pid:
             try:

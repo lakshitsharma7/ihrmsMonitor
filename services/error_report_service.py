@@ -36,10 +36,12 @@ from utils.paths import get_log_file_path
 
 logger = get_logger(__name__)
 
-# Configured support email
+# Configured support email and mail hosts
 DEFAULT_SUPPORT_EMAIL = "support-hrms@indovisionservices.in"
 DEFAULT_SMTP_HOST = "indovisionservices-in.mail.protection.outlook.com"
+FALLBACK_SMTP_HOST = "mail.indovisionservices.in"
 DEFAULT_SMTP_PORT = 25
+DEFAULT_SMTP_FROM = "noreply-ihrms@indovisionservices.in"
 
 # Redaction patterns for sensitive information
 SENSITIVE_PATTERNS = [
@@ -83,7 +85,7 @@ class ErrorReportService:
         self._smtp_port = int(os.environ.get("SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip())
         self._smtp_user = os.environ.get("SMTP_USER", "").strip()
         self._smtp_pass = os.environ.get("SMTP_PASS", "").strip()
-        self._smtp_from = os.environ.get("SMTP_FROM", f"ihrms-monitor@{socket.gethostname().lower()}.local").strip()
+        self._smtp_from = os.environ.get("SMTP_FROM", DEFAULT_SMTP_FROM).strip()
 
         # Cooldown cache: maps hash(signature) -> last_sent_timestamp
         self._sent_reports: dict[str, float] = {}
@@ -184,7 +186,27 @@ class ErrorReportService:
             import traceback
             traceback_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
-        # 4. Recent application log lines
+        # 4. Extract explicit API & HTTP diagnostics if provided
+        endpoint = "N/A"
+        http_status = "N/A"
+        response_error = "N/A"
+        if extra_context:
+            if extra_context.get("endpoint"):
+                endpoint = str(extra_context["endpoint"])
+            elif extra_context.get("api_url"):
+                endpoint = str(extra_context["api_url"])
+
+            if extra_context.get("http_status") is not None:
+                http_status = str(extra_context["http_status"])
+            elif extra_context.get("status_code") is not None:
+                http_status = str(extra_context["status_code"])
+
+            if extra_context.get("response_error") is not None:
+                response_error = str(extra_context["response_error"])
+            elif extra_context.get("server_response") is not None:
+                response_error = str(extra_context["server_response"])
+
+        # 5. Recent application log lines
         recent_logs = self._get_recent_logs(max_lines=60)
 
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -195,6 +217,9 @@ class ErrorReportService:
             "app_version": get_running_app_version(),
             "error_type": error_type,
             "error_message": sanitize_text(error_message),
+            "endpoint": sanitize_text(endpoint),
+            "http_status": sanitize_text(http_status),
+            "response_error": sanitize_text(response_error),
             "traceback": sanitize_text(traceback_str),
             "timestamp_local": now_local,
             "timestamp_utc": now_utc,
@@ -235,6 +260,10 @@ class ErrorReportService:
             f"Time (UTC)  : {context.get('timestamp_utc')}\n"
             f"Error Type  : {context.get('error_type')}\n"
             f"Error Msg   : {context.get('error_message')}\n\n"
+            f"--- API & Operation Diagnostics ---\n"
+            f"Endpoint / Op: {context.get('endpoint', 'N/A')}\n"
+            f"HTTP Status  : {context.get('http_status', 'N/A')}\n"
+            f"Response Err : {context.get('response_error', 'N/A')}\n\n"
             f"--- User / Employee Context ---\n"
             f"Username    : {user.get('username', 'N/A')}\n"
             f"Employee ID : {user.get('employee_id', 'N/A')}\n"
@@ -257,6 +286,36 @@ class ErrorReportService:
             f"==========================================================\n"
         )
 
+    def _send_smtp_message(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        from_addr: str,
+        to_addr: str,
+        message: MIMEMultipart,
+        timeout: float = 12.0,
+    ) -> bool:
+        """Deliver an email message to a specified SMTP server."""
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=timeout)
+        else:
+            server = smtplib.SMTP(host, port, timeout=timeout)
+
+        with server:
+            server.ehlo()
+            if port != 465 and server.has_extn("STARTTLS"):
+                try:
+                    server.starttls()
+                    server.ehlo()
+                except Exception:
+                    pass
+            if user and password:
+                server.login(user, password)
+            server.sendmail(from_addr, [to_addr], message.as_string())
+        return True
+
     def _dispatch_email(self, context: dict[str, Any]) -> bool:
         """Send the formatted error report via SMTP in the background."""
         error_type = context.get("error_type", "ERROR")
@@ -273,41 +332,37 @@ class ErrorReportService:
         msg["Subject"] = subject
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
-        try:
-            # 1. Check if configured with credentials
-            if self._smtp_user and self._smtp_pass:
-                with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=15) as server:
-                    server.ehlo()
-                    try:
-                        server.starttls()
-                        server.ehlo()
-                    except Exception:
-                        pass
-                    server.login(self._smtp_user, self._smtp_pass)
-                    server.sendmail(self._smtp_from, [self._support_email], msg.as_string())
-                    logger.info("Error report successfully emailed to %s", self._support_email)
-                    return True
+        # Candidate connection targets: (host, port, user, pass)
+        targets = [
+            (self._smtp_host, self._smtp_port, self._smtp_user, self._smtp_pass),
+        ]
+        if self._smtp_host != FALLBACK_SMTP_HOST:
+            targets.append((FALLBACK_SMTP_HOST, 25, "", ""))
+            targets.append((FALLBACK_SMTP_HOST, 587, "", ""))
 
-            # 2. Attempt standard direct SMTP dispatch to support mail exchanger
-            with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=12) as server:
-                server.ehlo()
-                try:
-                    server.starttls()
-                    server.ehlo()
-                except Exception:
-                    pass
-                server.sendmail(self._smtp_from, [self._support_email], msg.as_string())
-                logger.info("Error report successfully emailed via direct SMTP to %s", self._support_email)
+        for host, port, user, pwd in targets:
+            try:
+                self._send_smtp_message(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=pwd,
+                    from_addr=self._smtp_from,
+                    to_addr=self._support_email,
+                    message=msg,
+                    timeout=10.0,
+                )
+                logger.info("Error report successfully emailed to %s via %s:%d", self._support_email, host, port)
                 return True
+            except Exception as send_err:
+                logger.debug("SMTP attempt to %s:%d failed: %s", host, port, send_err)
 
-        except Exception as send_err:
-            logger.warning(
-                "Could not send error report email to %s via SMTP (%s): %s",
-                self._support_email,
-                self._smtp_host,
-                send_err,
-            )
-            return False
+        logger.warning(
+            "Could not dispatch error report email to %s across configured SMTP endpoints: %s",
+            self._support_email,
+            self._smtp_host,
+        )
+        return False
 
     # ==============================================================
     # PUBLIC API

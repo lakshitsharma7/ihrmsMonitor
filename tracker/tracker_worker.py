@@ -65,8 +65,17 @@ class TrackerWorker(QObject):
             self.tracking_started.emit()
             # Immediately execute an initial poll so the GUI receives active state instantly
             self._on_tick()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception("TrackerWorker failed to start tracking")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKING_START_ERROR",
+                    error_message=f"TrackerWorker failed to start tracking: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
     @Slot()
     def stop_tracking(self) -> None:
@@ -80,8 +89,17 @@ class TrackerWorker(QObject):
             logger.info("TrackerWorker: tracking stopped")
             self.tracking_stopped.emit()
             self.state_changed.emit(self._tracker.poll())
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception("TrackerWorker failed to stop tracking cleanly")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKING_STOP_ERROR",
+                    error_message=f"TrackerWorker failed to stop tracking cleanly: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
     @Slot(float, bool, str, int, bool)
     def apply_settings(self, idle_threshold_seconds: float, track_window_titles: bool,

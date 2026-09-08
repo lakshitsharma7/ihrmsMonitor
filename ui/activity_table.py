@@ -108,10 +108,11 @@ class ApplicationUsageTable(QTableWidget):
         entries: list[TimelineEntry],
     ) -> None:
         """Aggregate sessions and display one row per application."""
-
+        self.setUpdatesEnabled(False)
         self.setRowCount(0)
 
         if not entries:
+            self.setUpdatesEnabled(True)
             return
 
         applications: dict[str, dict] = {}
@@ -209,6 +210,7 @@ class ApplicationUsageTable(QTableWidget):
             )
 
         self.resizeRowsToContents()
+        self.setUpdatesEnabled(True)
 
 
 class ActivityTimelineTable(QTableWidget):
@@ -300,10 +302,11 @@ class ActivityTimelineTable(QTableWidget):
         entries: list[TimelineEntry],
     ) -> None:
         """Display every activity session, newest first."""
-
+        self.setUpdatesEnabled(False)
         self.setRowCount(0)
 
         if not entries:
+            self.setUpdatesEnabled(True)
             return
 
         # Latest activity first.
@@ -423,3 +426,4 @@ class ActivityTimelineTable(QTableWidget):
             )
 
         self.resizeRowsToContents()
+        self.setUpdatesEnabled(True)

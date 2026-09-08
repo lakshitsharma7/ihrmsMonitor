@@ -739,6 +739,209 @@ class TestIdleTrackingAndSync(unittest.TestCase):
         finally:
             db.close()
 
+    # =========================================================================
+    # CASE 11: Ongoing session idle time is updated in DB while idle advances
+    # =========================================================================
+    def test_case_11_ongoing_idle_synced_to_db_and_dashboard_match(self):
+        """
+        Verify:
+        - When user is idle, ongoing database session is updated with current calculated idle
+        - Dashboard table calculation duration_seconds (3m 42s) and idle_seconds (1m 10s = 70s)
+          match the database session idle_seconds exactly
+        """
+        tracker = self._make_tracker(idle_threshold=60)
+        tracker.start()
+
+        self.provider.active_application = ActiveApplication("Chrome.exe", 1001, "Google")
+        self.provider.idle_seconds = 0.0
+        tracker.poll()
+        session_id = tracker._current.db_id
+
+        # 1. User active for 222 seconds (3m 42s)
+        self.advance_time(tracker, 222, step=5.0)
+
+        # 2. User goes idle for 70 seconds (1m 10s)
+        self.simulate_idle(tracker, 70, step=5.0)
+        self.assertTrue(tracker.is_idle)
+
+        # Verify: DB record already has idle_seconds = 70 while the session is still undergoing idle
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            session = repo.get_session_by_id(session_id)
+            self.assertIsNotNone(session)
+            self.assertEqual(session.idle_seconds, 70)
+
+            # Check dashboard ActivityService timeline representation
+            from services.activity_service import ActivityService
+            service = ActivityService(get_session)
+            timeline = service.get_today_timeline(now=self.clock())
+            entry = next(e for e in timeline if e.process_id == 1001)
+
+            # Net active duration: 222 seconds -> "3m 42s"
+            self.assertEqual(entry.duration_seconds, 222)
+            self.assertEqual(ActivityService.format_duration(entry.duration_seconds), "3m 42s")
+
+            # Idle duration: 70 seconds -> "1m 10s"
+            self.assertEqual(entry.idle_seconds, 70)
+            self.assertEqual(ActivityService.format_duration(entry.idle_seconds), "1m 10s")
+
+            # Activity table formatted text: "3m 42s (1m 10s idle)"
+            dur_text = f"{ActivityService.format_duration(entry.duration_seconds)} ({ActivityService.format_duration(entry.idle_seconds)} idle)"
+            self.assertEqual(dur_text, "3m 42s (1m 10s idle)")
+        finally:
+            db.close()
+
+        tracker.stop()
+
+    # =========================================================================
+    # CASE 12: Stopping tracker while idle persists the final idle duration
+    # =========================================================================
+    def test_case_12_stop_while_idle_persists_final_idle(self):
+        """
+        Verify:
+        - If tracking stops while the user is idle, the final idle duration is persisted
+        - Session is ready for sync with the exact idle seconds
+        """
+        tracker = self._make_tracker(idle_threshold=60)
+        tracker.start()
+
+        self.provider.active_application = ActiveApplication("Chrome.exe", 1001, "Google")
+        self.provider.idle_seconds = 0.0
+        tracker.poll()
+        session_id = tracker._current.db_id
+
+        # Active for 100 seconds
+        self.advance_time(tracker, 100, step=5.0)
+
+        # Idle for 70 seconds
+        self.simulate_idle(tracker, 70, step=5.0)
+        self.assertTrue(tracker.is_idle)
+
+        # User stops tracking while still idle
+        tracker.stop()
+        self.assertFalse(tracker.is_tracking)
+
+        # Verify DB has the final idle duration
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            session = repo.get_session_by_id(session_id)
+            self.assertIsNotNone(session)
+            self.assertEqual(session.idle_seconds, 70)
+            self.assertEqual(session.duration_seconds, 170)  # 100 active + 70 idle
+
+            # Verify it is available for sync
+            unsynced = repo.get_unsynced_closed_sessions()
+            self.assertTrue(any(s.id == session_id for s in unsynced))
+
+            # Verify sync payload sends exact idle_seconds = 70
+            payload = self.sync_service._build_page_payload([session], session.started_at, session.ended_at, 1, 25)
+            act = payload["activities"][0]
+            self.assertEqual(act["idle_seconds"], 70)
+            self.assertEqual(act["idle_duration"], 70)
+            self.assertEqual(act["idle_time"], 70)
+            self.assertEqual(act["duration_seconds"], 100)
+            self.assertEqual(act["total_duration_seconds"], 170)
+        finally:
+            db.close()
+
+    # =========================================================================
+    # CASE 13: End-to-end idle flow: Dashboard -> Local DB -> API Payload -> Backend
+    # =========================================================================
+    def test_case_13_exact_idle_end_to_end_flow(self):
+        """
+        Flow:
+        Dashboard/local calculated idle (70s)
+        -> existing activity/session record (idle_seconds = 70)
+        -> existing API payload (idle_seconds = 70)
+        -> existing API (HTTP 200)
+        -> existing backend / DB (stores 70)
+        """
+        tracker = self._make_tracker(idle_threshold=60)
+        tracker.start()
+
+        self.provider.active_application = ActiveApplication("Chrome.exe", 1001, "Google")
+        self.provider.idle_seconds = 0.0
+        tracker.poll()
+        session_id = tracker._current.db_id
+
+        # 3m 42s (222s active)
+        self.advance_time(tracker, 222, step=5.0)
+
+        # 1m 10s (70s idle)
+        self.simulate_idle(tracker, 70, step=5.0)
+
+        # Resume active
+        self.clock.advance(1)
+        self.provider.idle_seconds = 0.0
+        tracker.poll()
+
+        # Stop tracker
+        tracker.stop()
+
+        # 1. Verify Local DB
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            session = repo.get_session_by_id(session_id)
+            self.assertEqual(session.idle_seconds, 71)
+        finally:
+            db.close()
+
+        # 2. Mock API backend response capturing payload
+        sent_payloads = []
+        def capture_post(*args, **kwargs):
+            sent_payloads.append(kwargs)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "response": "Success",
+                "message": "1 record(s) processed.",
+                "data": [
+                    {
+                        "client_session_ref": session_id,
+                        "status": "saved",
+                        "activity_session_id": "SRV_7777",
+                    }
+                ],
+            }
+            return resp
+
+        self.mock_post.side_effect = capture_post
+
+        # 3. Trigger sync
+        success = self.sync_service.sync_activity_now()
+        self.assertTrue(success)
+
+        # 4. Inspect payload sent to backend
+        self.assertGreater(len(sent_payloads), 0)
+        import json
+        activity_requests = [
+            req for req in sent_payloads
+            if isinstance(req.get("data"), dict) and "sessions" in req["data"]
+        ]
+        self.assertGreater(len(activity_requests), 0)
+        batch_request = activity_requests[-1]
+        raw_sessions = json.loads(batch_request["data"]["sessions"])
+        matching = next(s for s in raw_sessions if s["activity_session_id"] == session_id)
+
+        # EXACT SAME IDLE DURATION: 71 seconds
+        self.assertEqual(matching["idle_seconds"], 71)
+        self.assertEqual(matching["idle_duration"], 71)
+        self.assertEqual(matching["idle_time"], 71)
+        self.assertEqual(matching["idle_duration_seconds"], 71)
+
+        # Verify DB is now bound to server_session_id
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            session = repo.get_session_by_id(session_id)
+            self.assertEqual(session.server_session_id, "SRV_7777")
+            self.assertEqual(session.idle_seconds, 71)
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

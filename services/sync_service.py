@@ -56,6 +56,7 @@ class SyncService:
     current_sync_interval_seconds: int = 300  # Default 300 seconds until first API settings load
     current_idle_threshold_seconds: int = 300  # Default 300 seconds until first API settings load
     _sync_lock: threading.Lock = threading.Lock()
+    _fetching_settings_lock: threading.Lock = threading.Lock()
 
     @staticmethod
     def _save_cached_setting(key: str, value: Any) -> None:
@@ -131,11 +132,14 @@ class SyncService:
         Fetch latest configuration from tracking/get_settings at the beginning of each sync cycle
         and apply the returned values directly without using overriding hardcoded fallbacks.
         """
-        device_token = self._require_device_token()
-        if not device_token:
+        if not self._fetching_settings_lock.acquire(blocking=False):
+            logger.debug("fetch_settings already in progress; skipping duplicate call.")
             return {}
 
         try:
+            device_token = self._require_device_token()
+            if not device_token:
+                return {}
             response = requests.post(
                 f"{self._api_url}/tracking/get_settings",
                 data={"device_token": device_token},
@@ -318,6 +322,25 @@ class SyncService:
                 self.current_idle_threshold_seconds,
                 err,
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                http_code = getattr(getattr(err, "response", None), "status_code", None)
+                resp_text = getattr(getattr(err, "response", None), "text", None)
+                ErrorReportService().report_error(
+                    error_type="API_SYNC_ERROR",
+                    error_message=f"Sync API fetch settings failed: {err}",
+                    exc=err,
+                    extra_context={
+                        "endpoint": "/tracking/get_settings",
+                        "api_url": self._api_url,
+                        "http_status": http_code,
+                        "response_error": resp_text,
+                    },
+                )
+            except Exception:
+                pass
+        finally:
+            self._fetching_settings_lock.release()
 
         return {}
 
@@ -494,6 +517,20 @@ class SyncService:
                             logger.error("Activity sync batch page failed: %s. Halting sync.", error_msg)
                             SyncService.last_sync_status = "Failed"
                             SyncService.records_currently_sending = 0
+                            try:
+                                from services.error_report_service import ErrorReportService
+                                ErrorReportService().report_error(
+                                    error_type="ACTIVITY_UPLOAD_ERROR",
+                                    error_message=f"Activity upload batch failed: {error_msg}",
+                                    extra_context={
+                                        "endpoint": "/tracking/save_activity_batch",
+                                        "api_url": self._api_url,
+                                        "page": page_num,
+                                        "response_error": res_data,
+                                    },
+                                )
+                            except Exception:
+                                pass
                             return False
                             
                         # Process mappings in a short-lived db session
@@ -663,11 +700,19 @@ class SyncService:
                     logger.error("Activity sync failed after maximum retries. Error: %s", exc)
                     try:
                         from services.error_report_service import ErrorReportService
+                        http_code = getattr(getattr(exc, "response", None), "status_code", None)
+                        resp_text = getattr(getattr(exc, "response", None), "text", None)
                         ErrorReportService().report_error(
                             error_type="ACTIVITY_SYNC_ERROR",
                             error_message=f"Activity sync failed after {retries} retries: {exc}",
                             exc=exc,
-                            extra_context={"page": page, "api_url": self._api_url},
+                            extra_context={
+                                "page": page,
+                                "api_url": self._api_url,
+                                "endpoint": "/tracking/save_activity_batch",
+                                "http_status": http_code,
+                                "response_error": resp_text,
+                            },
                         )
                     except Exception:
                         pass
@@ -1352,18 +1397,26 @@ class SyncService:
             return True
 
         except requests.RequestException as exc:
-
             logger.error(
                 "Screenshot upload failed: %s",
                 exc,
             )
             try:
                 from services.error_report_service import ErrorReportService
+                http_code = getattr(getattr(exc, "response", None), "status_code", None)
+                resp_text = getattr(getattr(exc, "response", None), "text", None)
                 ErrorReportService().report_error(
                     error_type="SCREENSHOT_UPLOAD_ERROR",
                     error_message=f"Screenshot upload failed for session {activity_session_id}: {exc}",
                     exc=exc,
-                    extra_context={"session_id": str(activity_session_id), "file": str(screenshot_path.name)},
+                    extra_context={
+                        "endpoint": "/tracking/upload_screenshot",
+                        "api_url": self._api_url,
+                        "session_id": str(activity_session_id),
+                        "file": str(screenshot_path.name),
+                        "http_status": http_code,
+                        "response_error": resp_text,
+                    },
                 )
             except Exception:
                 pass
@@ -1371,7 +1424,6 @@ class SyncService:
             return False
 
         except Exception as exc:
-
             logger.exception(
                 "Unexpected screenshot upload error: %s",
                 exc,
@@ -1382,7 +1434,13 @@ class SyncService:
                     error_type="SCREENSHOT_UPLOAD_ERROR",
                     error_message=f"Unexpected screenshot upload error for session {activity_session_id}: {exc}",
                     exc=exc,
-                    extra_context={"session_id": str(activity_session_id), "file": str(screenshot_path.name)},
+                    extra_context={
+                        "endpoint": "/tracking/upload_screenshot",
+                        "api_url": self._api_url,
+                        "session_id": str(activity_session_id),
+                        "file": str(screenshot_path.name),
+                        "response_error": str(exc),
+                    },
                 )
             except Exception:
                 pass

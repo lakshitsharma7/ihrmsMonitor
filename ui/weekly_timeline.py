@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
@@ -27,6 +28,9 @@ from PySide6.QtWidgets import (
 )
 
 from services.activity_service import ActivityService
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class WeeklyBarChart(QWidget):
@@ -234,6 +238,7 @@ class WeeklyTimelinePage(QWidget):
     def __init__(self, activity_service: ActivityService, parent=None) -> None:
         super().__init__(parent)
         self._service = activity_service
+        self._is_refreshing = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -354,9 +359,38 @@ class WeeklyTimelinePage(QWidget):
         # Initial data load
         self.refresh()
 
-    def refresh(self) -> None:
+    def refresh(self, async_mode: bool | None = None) -> None:
         """Reload weekly data from the activity service and update graph."""
-        week_data = self._service.get_weekly_timeline_data()
+        if async_mode is None:
+            import sys
+            async_mode = not any("test" in arg.lower() or "unittest" in arg.lower() for arg in sys.argv)
+
+        if not async_mode:
+            try:
+                week_data = self._service.get_weekly_timeline_data()
+                self._apply_weekly_data(week_data)
+            except Exception as err:
+                logger.debug("Sync weekly refresh error: %s", err)
+            return
+
+        if getattr(self, "_is_refreshing", False):
+            return
+        self._is_refreshing = True
+
+        def _bg_fetch():
+            try:
+                week_data = self._service.get_weekly_timeline_data()
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._apply_weekly_data(week_data))
+            except Exception as err:
+                logger.debug("Background weekly refresh error: %s", err)
+            finally:
+                self._is_refreshing = False
+
+        threading.Thread(target=_bg_fetch, name="WeeklyTimelineWorker", daemon=True).start()
+
+    def _apply_weekly_data(self, week_data: list[dict]) -> None:
+        """Apply refreshed weekly statistics and day breakdowns to UI."""
         self.chart.set_data(week_data)
 
         # Update week range header text

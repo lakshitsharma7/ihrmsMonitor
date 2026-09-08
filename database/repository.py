@@ -561,8 +561,9 @@ class ActivityRepository:
         self,
         session_id: int,
         now: datetime,
+        idle_seconds: int | None = None,
     ) -> None:
-        """Periodically update an open session's duration so far.
+        """Periodically update an open session's duration so far and sync idle time.
 
         This guarantees that sudden shutdowns, crashes, or reboots preserve
         exact active time up to the moment of shutdown and never add false time.
@@ -579,6 +580,8 @@ class ActivityRepository:
                     0,
                     int((now_utc - started_at).total_seconds()),
                 )
+                if idle_seconds is not None:
+                    record.idle_seconds = max(0, int(idle_seconds))
                 self._session.commit()
         except Exception:  # noqa: BLE001
             self._session.rollback()

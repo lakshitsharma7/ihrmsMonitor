@@ -134,6 +134,27 @@ class ActivityTracker:
         self._idle_window_title = None
         self._session_idle_base_seconds = 0
         self._last_resumed_idle_seconds = 0.0
+        self._last_persisted_idle_seconds: int | None = None
+
+    def _update_ongoing_idle_session(
+        self,
+        total_idle: int,
+    ) -> None:
+        """Update the ongoing session in database with the currently accumulated idle seconds."""
+        target_id = self._current_idle_session_id or self._last_active_session_id
+        if not target_id or total_idle <= 0:
+            return
+        if getattr(self, "_last_persisted_idle_seconds", None) == total_idle:
+            return
+        self._last_persisted_idle_seconds = total_idle
+        db_session = self._session_factory()
+        try:
+            repo = ActivityRepository(db_session)
+            repo.update_session_idle_seconds(target_id, total_idle)
+        except Exception as err:
+            logger.debug("Failed to update ongoing idle session #%s: %s", target_id, err)
+        finally:
+            db_session.close()
 
     @property
     def current_idle_session_id(self) -> int | None:
@@ -200,37 +221,53 @@ class ActivityTracker:
         if self._is_tracking:
             return
 
-        logger.info(
-            "Starting activity tracker"
-        )
+        try:
+            logger.info(
+                "Starting activity tracker"
+            )
 
-        self._close_stale_database_session()
+            self._close_stale_database_session()
 
-        self._is_tracking = True
+            self._is_tracking = True
 
-        self._is_idle = False
+            self._is_idle = False
 
-        self._current = None
+            self._current = None
 
-        self._last_idle_seconds = 0.0
-        self._session_idle_base_seconds = 0
-        self._last_resumed_idle_seconds = 0.0
+            self._last_idle_seconds = 0.0
+            self._session_idle_base_seconds = 0
+            self._last_resumed_idle_seconds = 0.0
+            self._last_persisted_idle_seconds = None
 
-        self._last_screenshot_time = self._clock()
+            self._last_screenshot_time = self._clock()
 
-        logger.info(
-            "Activity tracker started"
-        )
+            logger.info(
+                "Activity tracker started"
+            )
 
-        # A previous run may have collected logs it never managed to send
-        # (no connection, or the machine was shut down). Push those now
-        # rather than making them wait a full cycle. Run on a daemon thread
-        # so tracker startup and initial polling are never blocked by network latency.
-        self._last_sync_time = self._clock()
-        self._last_settings_fetch_time = self._clock()
+            # A previous run may have collected logs it never managed to send
+            # (no connection, or the machine was shut down). Push those now
+            # rather than making them wait a full cycle. Run on a daemon thread
+            # so tracker startup and initial polling are never blocked by network latency.
+            self._last_sync_time = self._clock()
+            self._last_settings_fetch_time = self._clock()
 
-        import threading
-        threading.Thread(target=self._sync_activity, name="StartupActivitySync", daemon=True).start()
+            import threading
+            threading.Thread(target=self._sync_activity, name="StartupActivitySync", daemon=True).start()
+
+        except Exception as exc:
+            self._is_tracking = False
+            logger.exception("Failed to start activity tracker")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKER_START_ERROR",
+                    error_message=f"Failed to start activity tracker: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
+            raise
 
     # ==========================================================
     # STOP
@@ -242,23 +279,62 @@ class ActivityTracker:
         if not self._is_tracking:
             return
 
-        logger.info(
-            "Stopping activity tracker"
-        )
+        try:
+            logger.info(
+                "Stopping activity tracker"
+            )
 
-        self._close_current_session()
+            # If user was idle when stopping, persist final idle duration to database session
+            if self._is_idle and self._idle_start_time is not None:
+                target_id = self._current_idle_session_id or self._last_active_session_id
+                if target_id is not None:
+                    now = self._clock()
+                    current_idle = max(0, int((now - self._idle_start_time).total_seconds()))
+                    if current_idle <= 7200:
+                        total_idle = int(self._session_idle_base_seconds + current_idle)
+                        db_session = self._session_factory()
+                        try:
+                            repo = ActivityRepository(db_session)
+                            repo.update_session_idle_seconds(target_id, total_idle)
+                            logger.info(
+                                "Persisted final idle on stop: session_id=%s idle_seconds=%d",
+                                target_id,
+                                total_idle,
+                            )
+                        except Exception as idle_err:
+                            logger.error("Failed to persist final idle on stop: %s", idle_err)
+                        finally:
+                            db_session.close()
 
-        self._is_tracking = False
+            self._close_current_session()
 
-        self._is_idle = False
+            self._is_tracking = False
 
-        self._last_idle_seconds = 0.0
-        self._session_idle_base_seconds = 0
-        self._last_resumed_idle_seconds = 0.0
+            self._is_idle = False
 
-        logger.info(
-            "Activity tracker stopped"
-        )
+            self._last_idle_seconds = 0.0
+            self._session_idle_base_seconds = 0
+            self._last_resumed_idle_seconds = 0.0
+            self._last_persisted_idle_seconds = None
+            self._current_idle_session_id = None
+            self._last_active_session_id = None
+            self._idle_start_time = None
+
+            logger.info(
+                "Activity tracker stopped"
+            )
+        except Exception as exc:
+            logger.exception("Failed to stop activity tracker cleanly")
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKER_STOP_ERROR",
+                    error_message=f"Failed to stop activity tracker cleanly: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
+            raise
 
     # ==========================================================
     # MAIN POLLING LOOP
@@ -350,6 +426,13 @@ class ActivityTracker:
 
             self._is_idle = now_idle
 
+            # Update ongoing idle session with latest calculated idle
+            if self._is_idle and self._idle_start_time is not None:
+                current_idle = max(0, int((now - self._idle_start_time).total_seconds()))
+                if current_idle <= 7200:
+                    total_idle = int(self._session_idle_base_seconds + current_idle)
+                    self._update_ongoing_idle_session(total_idle)
+
             # --------------------------------------------------
             # Track active application.
             # --------------------------------------------------
@@ -396,11 +479,22 @@ class ActivityTracker:
                     self._last_settings_fetch_time = now
                 elif (now - self._last_settings_fetch_time).total_seconds() >= min(sync_interval, 60.0):
                     self._last_settings_fetch_time = now
-                    try:
-                        self._sync_service.fetch_settings()
-                        sync_interval = self._get_sync_interval_seconds()
-                    except Exception as fetch_err:
-                        logger.debug("Periodic settings fetch deferred: %s", fetch_err)
+                    if self._clock is not _default_clock:
+                        try:
+                            self._sync_service.fetch_settings()
+                            sync_interval = self._get_sync_interval_seconds()
+                        except Exception as fetch_err:
+                            logger.debug("Periodic settings fetch deferred: %s", fetch_err)
+                    elif not getattr(self, "_settings_fetching", False):
+                        self._settings_fetching = True
+                        def _bg_fetch():
+                            try:
+                                self._sync_service.fetch_settings()
+                            except Exception as fetch_err:
+                                logger.debug("Periodic settings fetch deferred: %s", fetch_err)
+                            finally:
+                                self._settings_fetching = False
+                        threading.Thread(target=_bg_fetch, name="TrackerSettingsFetch", daemon=True).start()
 
             if self._last_sync_time is None:
                 self._last_sync_time = now
@@ -817,16 +911,18 @@ class ActivityTracker:
 
         session_id = self._current.db_id
         application_name = self._current.application_name
+        current_idle = self._current.idle_seconds
 
         db_session = self._session_factory()
         try:
             repository = ActivityRepository(db_session)
-            repository.close_session(session_id, ended_at)
+            repository.close_session(session_id, ended_at, idle_seconds=current_idle)
             logger.info(
-                "Closed session: app=%s session_id=%s ended_at=%s",
+                "Closed session: app=%s session_id=%s ended_at=%s idle_seconds=%s",
                 application_name,
                 session_id,
                 ended_at,
+                current_idle,
             )
         finally:
             db_session.close()
@@ -849,7 +945,7 @@ class ActivityTracker:
         db_session = self._session_factory()
         try:
             repository = ActivityRepository(db_session)
-            repository.update_session_heartbeat(self._current.db_id, now)
+            repository.update_session_heartbeat(self._current.db_id, now, idle_seconds=self._current.idle_seconds)
         finally:
             db_session.close()
 
@@ -887,6 +983,23 @@ class ActivityTracker:
 
         if self._current is not None:
             self._close_current_session_at(suspend_time)
+        elif self._is_idle and self._idle_start_time and self._last_active_session_id:
+            current_idle = max(0, int((suspend_time - self._idle_start_time).total_seconds()))
+            if current_idle <= 7200:
+                total_idle = int(self._session_idle_base_seconds + current_idle)
+                db_session = self._session_factory()
+                try:
+                    repo = ActivityRepository(db_session)
+                    repo.update_session_idle_seconds(self._last_active_session_id, total_idle)
+                    logger.info(
+                        "Persisted final idle on suspend: session_id=%s idle_seconds=%d",
+                        self._last_active_session_id,
+                        total_idle,
+                    )
+                except Exception as idle_err:
+                    logger.error("Failed to persist final idle on suspend: %s", idle_err)
+                finally:
+                    db_session.close()
 
         self._is_idle = False
         self._idle_start_time = None
@@ -897,6 +1010,7 @@ class ActivityTracker:
         self._idle_window_title = None
         self._session_idle_base_seconds = 0
         self._last_resumed_idle_seconds = 0.0
+        self._last_persisted_idle_seconds = None
         self._last_poll_time = suspend_time
 
     def handle_system_resume(self, now: datetime | None = None) -> None:
@@ -920,6 +1034,7 @@ class ActivityTracker:
         self._last_idle_seconds = 0.0
         self._session_idle_base_seconds = 0
         self._last_resumed_idle_seconds = 0.0
+        self._last_persisted_idle_seconds = None
 
         # Reset poll timing marker to current wake time
         self._last_poll_time = resume_time
@@ -969,6 +1084,11 @@ class ActivityTracker:
             self._idle_window_title = self._current.window_title
             self._session_idle_base_seconds = self._current.idle_seconds or 0
             self._close_current_session_at(last_input_time)
+
+            # Immediately persist initial idle elapsed up to now
+            initial_idle = int((now - last_input_time).total_seconds())
+            if initial_idle > 0:
+                self._update_ongoing_idle_session(self._session_idle_base_seconds + initial_idle)
         else:
             self._last_active_session_id = None
             self._current_idle_session_id = None
@@ -1019,13 +1139,21 @@ class ActivityTracker:
             app_name,
         )
 
-        if self._last_active_session_id and idle_duration > 0:
+        final_idle = int(self._session_idle_base_seconds + idle_duration)
+        if self._last_active_session_id and final_idle > 0:
             db_session = self._session_factory()
             try:
                 repo = ActivityRepository(db_session)
-                repo.add_session_idle_seconds(self._last_active_session_id, idle_duration)
+                repo.update_session_idle_seconds(self._last_active_session_id, final_idle)
+                logger.info(
+                    "[DATABASE_UPDATE_RESULT] Session #%s idle_seconds updated: prev=%ds added=%ds total=%ds",
+                    self._last_active_session_id,
+                    self._session_idle_base_seconds,
+                    idle_duration,
+                    final_idle,
+                )
             except Exception as err:
-                logger.error("Failed to add idle seconds for session %s: %s", self._last_active_session_id, err)
+                logger.error("Failed to update idle seconds for session %s: %s", self._last_active_session_id, err)
             finally:
                 db_session.close()
 
@@ -1083,6 +1211,7 @@ class ActivityTracker:
         self._is_idle = False
         self._last_resumed_idle_seconds = float(idle_duration)
         self._last_idle_seconds = 0.0
+        self._last_persisted_idle_seconds = None
 
     # ==========================================================
     # ACTIVITY SYNC
@@ -1122,13 +1251,20 @@ class ActivityTracker:
         """
 
         if self._sync_service is None:
-
             logger.debug(
                 "SyncService not configured; "
                 "skipping activity sync"
             )
-
             return
+
+        sync_lock = getattr(self._sync_service, "_sync_lock", None)
+        if sync_lock is not None and hasattr(sync_lock, "locked"):
+            try:
+                if sync_lock.locked() is True:
+                    logger.info("Activity sync already running in background; skipping duplicate trigger.")
+                    return
+            except Exception:
+                pass
 
         try:
             # Checkpoint the current active session at now so all synced sessions
@@ -1160,10 +1296,19 @@ class ActivityTracker:
 
             threading.Thread(target=_run_sync, name="ActivitySyncWorker", daemon=True).start()
 
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Activity sync raised an exception"
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="SYNC_TRIGGER_ERROR",
+                    error_message=f"Activity sync trigger raised an exception: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
     # ==========================================================
     # PLATFORM: ACTIVE APPLICATION

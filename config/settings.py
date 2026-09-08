@@ -79,7 +79,7 @@ def get_running_app_version() -> str:
 
 
 class _DynamicAppVersion(str):
-    """Dynamically resolves application version whenever accessed as a string."""
+    """String subclass that dynamically evaluates get_running_app_version() so imports never get stale."""
 
     def __str__(self) -> str:
         return get_running_app_version()

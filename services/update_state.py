@@ -192,6 +192,22 @@ class UpdateStateManager:
             except Exception:
                 pass
 
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="AUTO_UPDATE_FAILED",
+                    error_message=err_msg,
+                    extra_context={
+                        "target_version": target_version,
+                        "running_version": running_version,
+                        "install_attempts": attempts,
+                        "max_attempts": max_attempts,
+                        "cooldown_until": cooldown_until,
+                    },
+                )
+            except Exception:
+                pass
+
             return False, err_msg
 
     def should_attempt_update(

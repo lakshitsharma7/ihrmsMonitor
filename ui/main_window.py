@@ -563,6 +563,10 @@ class MainWindow(QMainWindow):
 
     def _sync_permissions_from_backend(self) -> None:
         """Fetch latest backend configuration to dynamically apply permission changes in a background thread."""
+        if getattr(self, "_syncing_permissions", False):
+            return
+        self._syncing_permissions = True
+
         def _bg_fetch():
             try:
                 from services.sync_service import SyncService
@@ -571,6 +575,8 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, self._apply_rbac_permissions)
             except Exception as err:
                 logger.debug("Background settings sync encountered: %s", err)
+            finally:
+                self._syncing_permissions = False
 
         threading.Thread(target=_bg_fetch, name="SettingsSyncWorker", daemon=True).start()
 
@@ -661,6 +667,9 @@ class MainWindow(QMainWindow):
         self.status_badge = QLabel("Not Tracking")
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("tracking", "false")
+        self.status_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_badge.setToolTip("Click to start tracking")
+        self.status_badge.mousePressEvent = lambda event: self._on_status_badge_clicked(event)
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
@@ -856,10 +865,19 @@ class MainWindow(QMainWindow):
                 create_activity_provider()
             )
 
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Failed to create platform activity provider"
             )
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKING_PROVIDER_ERROR",
+                    error_message=f"Failed to create platform activity provider: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
             QMessageBox.critical(
                 self,
@@ -1311,9 +1329,9 @@ class MainWindow(QMainWindow):
             self._last_table_refresh_ts = now_ts
             self._last_rendered_app = state.current_application
             self._last_rendered_idle = state.is_idle
-            self.dashboard_page.refresh()
+            self.dashboard_page.refresh(async_mode=True)
             if hasattr(self, "weekly_page") and self.weekly_page.isVisible():
-                self.weekly_page.refresh()
+                self.weekly_page.refresh(async_mode=True)
             self._apply_rbac_permissions()
 
         # If an update check was pending/deferred due to offline status and sync succeeds, trigger check immediately
@@ -1330,6 +1348,23 @@ class MainWindow(QMainWindow):
     # SETTINGS
     # ==========================================================
 
+    def _on_status_badge_clicked(self, event=None) -> None:
+        """Allow clicking the status badge to start/resume tracking if currently inactive."""
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not session.tracking_permitted:
+            return
+
+        is_tracking = False
+        if hasattr(self, "_tracker") and self._tracker.is_tracking:
+            is_tracking = True
+        elif self.status_badge.property("tracking") in ("true", "idle"):
+            is_tracking = True
+
+        if not is_tracking:
+            logger.info("Status badge clicked while inactive; resuming tracking.")
+            self.start_tracking()
+
     def _refresh_badge_style(
         self,
     ) -> None:
@@ -1342,6 +1377,14 @@ class MainWindow(QMainWindow):
         self.status_badge.style().polish(
             self.status_badge
         )
+
+        tracking_prop = self.status_badge.property("tracking")
+        if tracking_prop == "true":
+            self.status_badge.setToolTip("Tracking is active")
+        elif tracking_prop == "idle":
+            self.status_badge.setToolTip("Currently idle")
+        else:
+            self.status_badge.setToolTip("Click to start tracking")
 
         self._update_status_icon()
 
@@ -1364,9 +1407,9 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         current_widget = self.tabs.currentWidget()
         if hasattr(self, "weekly_page") and current_widget == self.weekly_page:
-            self.weekly_page.refresh()
+            self.weekly_page.refresh(async_mode=True)
         elif hasattr(self, "dashboard_page") and current_widget == self.dashboard_page:
-            self.dashboard_page.refresh()
+            self.dashboard_page.refresh(async_mode=True)
         elif hasattr(self, "settings_page") and current_widget == self.settings_page:
             self.settings_page.reload()
             if hasattr(self, "_tracker") and self._tracker:
@@ -1443,7 +1486,7 @@ class MainWindow(QMainWindow):
             self.dashboard_page
         )
 
-        self.dashboard_page.refresh()
+        self.dashboard_page.refresh(async_mode=True)
 
     def _show_settings(
         self,

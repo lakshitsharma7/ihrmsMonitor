@@ -111,6 +111,120 @@ class TestUIAndThreadResilience(unittest.TestCase):
         self.assertIn("img", result_holder)
         self.assertIsNotNone(result_holder["img"])
 
+    def test_dashboard_update_tracker_state_does_not_query_database_on_tick(self):
+        """Verify update_tracker_state on the 1-second GUI tick uses cached values without querying SQLite."""
+        import sys
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        from ui.dashboard import DashboardPage
+        from tracker.activity_tracker import TrackerState
+
+        mock_service = MagicMock()
+        dashboard = DashboardPage(mock_service)
+
+        # Set cached baseline
+        dashboard._cached_today_idle = 45
+        dashboard._cached_uploaded_count = 12
+
+        mock_service.reset_mock()
+
+        # Simulate 1-second tick state update
+        state = TrackerState(
+            is_tracking=True,
+            is_idle=False,
+            current_application="VS Code",
+            current_window_title="main.py",
+            idle_seconds=0.0,
+        )
+        dashboard.update_tracker_state(state)
+
+        # Ensure NO database queries were run on UI tick
+        mock_service.get_today_total_idle_seconds.assert_not_called()
+        mock_service.get_uploaded_records_count.assert_not_called()
+        mock_service.get_today_total_seconds.assert_not_called()
+        mock_service.get_today_timeline.assert_not_called()
+
+        self.assertEqual(dashboard.idle_time_label.text(), "Idle Time: 45 seconds")
+        self.assertEqual(dashboard.records_uploaded_label.text(), "Records Uploaded: 12")
+
+    def test_dashboard_refresh_async_mode_is_non_blocking_and_single_flight(self):
+        """Verify DashboardPage.refresh(async_mode=True) runs in background worker and prevents overlapping workers."""
+        import sys
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        from ui.dashboard import DashboardPage
+
+        mock_service = MagicMock()
+
+        def slow_fetch():
+            time.sleep(0.06)
+            return 3600
+
+        mock_service.get_today_total_seconds.side_effect = slow_fetch
+        mock_service.get_uploaded_records_count.return_value = 10
+        mock_service.get_today_total_idle_seconds.return_value = 120
+        mock_service.get_today_timeline.return_value = []
+
+        dashboard = DashboardPage(mock_service)
+
+        start = time.time()
+        dashboard.refresh(async_mode=True)
+        elapsed = time.time() - start
+
+        # Refresh must return immediately without blocking UI thread
+        self.assertLess(elapsed, 0.04)
+        self.assertTrue(dashboard._is_refreshing)
+
+        # Second refresh while first is running must be dropped immediately
+        dashboard.refresh(async_mode=True)
+
+        # Wait for worker to finish
+        time.sleep(0.12)
+        self.assertFalse(dashboard._is_refreshing)
+
+    def test_weekly_timeline_refresh_async_mode_is_non_blocking(self):
+        """Verify WeeklyTimelinePage.refresh(async_mode=True) offloads 7-day aggregation to background thread."""
+        import sys
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        from ui.weekly_timeline import WeeklyTimelinePage
+
+        mock_service = MagicMock()
+
+        def slow_week_data():
+            time.sleep(0.06)
+            return []
+
+        mock_service.get_weekly_timeline_data.side_effect = slow_week_data
+        weekly = WeeklyTimelinePage(mock_service)
+
+        start = time.time()
+        weekly.refresh(async_mode=True)
+        elapsed = time.time() - start
+
+        self.assertLess(elapsed, 0.04)
+        self.assertTrue(weekly._is_refreshing)
+
+        time.sleep(0.12)
+        self.assertFalse(weekly._is_refreshing)
+
+    def test_sync_service_fetch_settings_single_flight_lock(self):
+        """Verify SyncService._fetching_settings_lock prevents overlapping settings API requests."""
+        svc = SyncService(api_url="https://test.api")
+        acquired = svc._fetching_settings_lock.acquire(blocking=False)
+        self.assertTrue(acquired)
+        try:
+            # Calling fetch_settings while lock is held must return empty dict immediately without HTTP request
+            with patch("requests.post") as mock_post:
+                res = svc.fetch_settings()
+                self.assertEqual(res, {})
+                mock_post.assert_not_called()
+        finally:
+            svc._fetching_settings_lock.release()
+
 
 if __name__ == "__main__":
     unittest.main()
