@@ -20,6 +20,7 @@ class TimelineEntry:
     window_title: str | None
     duration_seconds: int
     process_id: int | None
+    idle_seconds: int = 0
 
 
 class ActivityService:
@@ -102,6 +103,47 @@ class ActivityService:
             target_date = now.astimezone().date() if now.tzinfo else now.date()
 
         return self.get_day_total_seconds(target_date)
+
+    def get_today_total_idle_seconds(
+        self,
+        now: datetime | None = None,
+    ) -> int:
+        """Return today's total idle seconds based on local calendar day."""
+        if now is None:
+            local_now = datetime.now().astimezone()
+            target_date = local_now.date()
+        else:
+            target_date = now.astimezone().date() if now.tzinfo else now.date()
+
+        local_now = datetime.now().astimezone()
+        local_tz = local_now.tzinfo
+
+        start_local = datetime.combine(
+            target_date,
+            time.min,
+            tzinfo=local_tz,
+        )
+
+        end_local = datetime.combine(
+            target_date,
+            time.max,
+            tzinfo=local_tz,
+        )
+
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
+
+        db_session = self._session_factory()
+        try:
+            return self._repo(
+                db_session
+            ).get_total_idle_seconds(
+                start_utc,
+                end_utc,
+                employee_id=self._current_employee_id(),
+            )
+        finally:
+            db_session.close()
 
     @staticmethod
     def format_hours_minutes(total_seconds: int) -> str:
@@ -244,8 +286,9 @@ class ActivityService:
                     started_at=session.started_at,
                     application_name=session.application_name,
                     window_title=session.window_title,
-                    duration_seconds=session.duration_seconds,
+                    duration_seconds=max(0, (session.duration_seconds or 0) - (session.idle_seconds or 0)),
                     process_id=session.process_id,
+                    idle_seconds=session.idle_seconds or 0,
                 )
                 for session in sessions
             ]

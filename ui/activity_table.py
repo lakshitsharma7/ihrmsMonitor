@@ -338,10 +338,17 @@ class ActivityTimelineTable(QTableWidget):
             # Duration
             # ------------------------------------------------------
 
+            formatted_duration = ActivityService.format_duration(
+                entry.duration_seconds
+            )
+            if getattr(entry, "idle_seconds", 0) > 0:
+                idle_str = ActivityService.format_duration(entry.idle_seconds)
+                dur_text = f"{formatted_duration} ({idle_str} idle)"
+            else:
+                dur_text = formatted_duration
+
             duration_item = QTableWidgetItem(
-                ActivityService.format_duration(
-                    entry.duration_seconds
-                )
+                dur_text
             )
 
             # ------------------------------------------------------

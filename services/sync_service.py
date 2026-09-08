@@ -773,6 +773,8 @@ class SyncService:
                 "active_duration_seconds": active_duration,
                 "total_duration": total_session_duration,
                 "total_duration_seconds": total_session_duration,
+                "idle_seconds": idle_seconds,
+                "idle_duration": idle_seconds,
                 "idle_time": idle_seconds,
                 "idle_duration_seconds": idle_seconds,
                 "idle_start": idle_start_str,

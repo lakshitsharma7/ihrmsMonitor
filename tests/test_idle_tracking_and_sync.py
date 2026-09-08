@@ -602,6 +602,143 @@ class TestIdleTrackingAndSync(unittest.TestCase):
         self.assertEqual(totals["Code.exe"], 200)
         self.assertEqual(totals["Excel.exe"], 90)
 
+    # =========================================================================
+    # CASE 8: Payload contains explicit "idle_seconds" for backend DB mapping
+    # =========================================================================
+    def test_case_8_idle_seconds_field_in_sync_payload(self):
+        """
+        Verify that SyncService._build_page_payload explicitly includes
+        both 'idle_seconds' and 'idle_duration' matching the session idle time.
+        """
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            start = self.clock()
+            sess = repo.create_session("Word.exe", 5005, "Report.docx", start, idle_seconds=0)
+            repo.close_session(sess.id, start + timedelta(seconds=200))
+            repo.add_session_idle_seconds(sess.id, 153)
+            db.refresh(sess)
+
+            payload = self.sync_service._build_page_payload(
+                [sess],
+                start,
+                start + timedelta(seconds=353),
+                page=1,
+                page_size=25,
+            )
+            self.assertEqual(len(payload["activities"]), 1)
+            act = payload["activities"][0]
+            # Primary backend field
+            self.assertIn("idle_seconds", act)
+            self.assertEqual(act["idle_seconds"], 153)
+            # Alternative field
+            self.assertIn("idle_duration", act)
+            self.assertEqual(act["idle_duration"], 153)
+            # Legacy fields preserved
+            self.assertEqual(act["idle_time"], 153)
+            self.assertEqual(act["idle_duration_seconds"], 153)
+        finally:
+            db.close()
+
+    # =========================================================================
+    # CASE 9: Tracker state preserves idle_seconds during ongoing sessions and transitions
+    # =========================================================================
+    def test_case_9_tracker_state_idle_seconds_ongoing_and_transitions(self):
+        """
+        Verify that ActivityTracker._state() correctly reports idle_seconds:
+        - When idle: reports the ongoing idle time
+        - When resuming active: does NOT reset to 0; retains session's idle duration
+        - Multiple idle intervals accumulate in state.idle_seconds
+        """
+        tracker = self._make_tracker(idle_threshold=60)
+        tracker.start()
+
+        self.provider.active_application = ActiveApplication("Chrome.exe", 1001, "Google")
+        self.provider.idle_seconds = 0.0
+        state = tracker.poll()
+        self.assertEqual(state.idle_seconds, 0.0)
+
+        # Work for 120s
+        self.advance_time(tracker, 120, step=5.0)
+
+        # User becomes idle for 153s
+        self.simulate_idle(tracker, 153, step=5.0)
+        state = tracker.poll()
+        self.assertTrue(state.is_idle)
+        # In idle state, idle_seconds reports ongoing idle
+        self.assertGreaterEqual(state.idle_seconds, 150.0)
+
+        # User becomes active again (idle -> active transition)
+        self.clock.advance(1)
+        self.provider.idle_seconds = 0.0
+        state = tracker.poll()
+        self.assertFalse(state.is_idle)
+        # Must NOT be 0! Must reflect the 153s idle duration
+        self.assertGreaterEqual(state.idle_seconds, 153.0)
+
+        # User continues working for another 60s
+        self.advance_time(tracker, 60, step=5.0)
+        state = tracker.poll()
+        self.assertFalse(state.is_idle)
+        # Still reflects the accumulated session idle
+        self.assertGreaterEqual(state.idle_seconds, 153.0)
+
+        tracker.stop()
+
+    # =========================================================================
+    # CASE 10: Repository and ActivityService idle calculations
+    # =========================================================================
+    def test_case_10_repository_and_service_idle_and_active_calculations(self):
+        """
+        Verify:
+        - ActivityRepository.get_total_duration_seconds deducts idle_seconds
+        - ActivityRepository.get_total_idle_seconds sums idle_seconds accurately
+        - ActivityService.get_today_timeline and get_today_total_idle_seconds
+        """
+        from services.activity_service import ActivityService
+
+        db = get_session()
+        try:
+            repo = ActivityRepository(db)
+            start = self.start_dt
+            # Session 1: 300s total, 100s idle -> 200s active
+            s1 = repo.create_session("App1.exe", 1, "App 1", start, employee_id="EMP_TEST_101")
+            repo.close_session(s1.id, start + timedelta(seconds=300))
+            repo.add_session_idle_seconds(s1.id, 100)
+
+            # Session 2: 180s total, 30s idle -> 150s active
+            start2 = start + timedelta(seconds=300)
+            s2 = repo.create_session("App2.exe", 2, "App 2", start2, employee_id="EMP_TEST_101")
+            repo.close_session(s2.id, start2 + timedelta(seconds=180))
+            repo.add_session_idle_seconds(s2.id, 30)
+
+            # Check repo total duration (net active): 300 + 180 = 480
+            total_active = repo.get_total_duration_seconds(start, start + timedelta(seconds=1000), employee_id="EMP_TEST_101")
+            self.assertEqual(total_active, 480)
+
+            # Check repo total idle: 100 + 30 = 130
+            total_idle = repo.get_total_idle_seconds(start, start + timedelta(seconds=1000), employee_id="EMP_TEST_101")
+            self.assertEqual(total_idle, 130)
+
+            # Check ActivityService
+            service = ActivityService(get_session)
+            timeline = service.get_today_timeline(now=start + timedelta(seconds=500))
+            self.assertEqual(len(timeline), 2)
+            # Check entry idle_seconds and net duration
+            e1 = next(e for e in timeline if e.application_name == "App1.exe")
+            self.assertEqual(e1.duration_seconds, 300)
+            self.assertEqual(e1.idle_seconds, 100)
+
+            e2 = next(e for e in timeline if e.application_name == "App2.exe")
+            self.assertEqual(e2.duration_seconds, 180)
+            self.assertEqual(e2.idle_seconds, 30)
+
+            # Check service get_today_total_idle_seconds
+            today_idle = service.get_today_total_idle_seconds(now=start + timedelta(seconds=500))
+            self.assertEqual(today_idle, 130)
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

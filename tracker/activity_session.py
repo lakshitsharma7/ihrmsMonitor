@@ -24,6 +24,7 @@ class CurrentSession:
     process_id: int | None
     window_title: str | None
     started_at: datetime
+    idle_seconds: int = 0
 
     def matches_application(self, application_name: str, process_id: int | None) -> bool:
         """Return True if the given app/pid is a continuation of this session.

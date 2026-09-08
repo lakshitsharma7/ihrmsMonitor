@@ -972,9 +972,33 @@ class ActivityRepository:
             overlap_end = min(sess_end, end_utc)
 
             if overlap_end > overlap_start:
-                total_seconds += int((overlap_end - overlap_start).total_seconds())
+                sess_overlap = int((overlap_end - overlap_start).total_seconds())
+                sess_idle = int(session.idle_seconds or 0)
+                total_seconds += max(0, sess_overlap - sess_idle)
 
         return total_seconds
+
+    def get_total_idle_seconds(
+        self,
+        start: datetime,
+        end: datetime,
+        employee_id: str | None = None,
+    ) -> int:
+        """Return total idle seconds of sessions overlapping [start, end]."""
+        start_utc = _to_utc(start)
+        end_utc = _to_utc(end)
+
+        sessions = self.get_sessions_between(
+            start_utc,
+            end_utc,
+            employee_id=employee_id,
+        )
+
+        total_idle = 0
+        for session in sessions:
+            total_idle += int(session.idle_seconds or 0)
+
+        return total_idle
 
     # ==========================================================
     # APPLICATION USAGE

@@ -132,6 +132,8 @@ class ActivityTracker:
         self._idle_application_name = None
         self._idle_process_id = None
         self._idle_window_title = None
+        self._session_idle_base_seconds = 0
+        self._last_resumed_idle_seconds = 0.0
 
     @property
     def current_idle_session_id(self) -> int | None:
@@ -211,6 +213,8 @@ class ActivityTracker:
         self._current = None
 
         self._last_idle_seconds = 0.0
+        self._session_idle_base_seconds = 0
+        self._last_resumed_idle_seconds = 0.0
 
         self._last_screenshot_time = self._clock()
 
@@ -249,6 +253,8 @@ class ActivityTracker:
         self._is_idle = False
 
         self._last_idle_seconds = 0.0
+        self._session_idle_base_seconds = 0
+        self._last_resumed_idle_seconds = 0.0
 
         logger.info(
             "Activity tracker stopped"
@@ -747,7 +753,9 @@ class ActivityTracker:
                 ),
                 window_title=title,
                 started_at=now,
+                idle_seconds=0,
             )
+            self._session_idle_base_seconds = 0
 
             logger.info(
                 "Started new session: "
@@ -887,6 +895,8 @@ class ActivityTracker:
         self._idle_application_name = None
         self._idle_process_id = None
         self._idle_window_title = None
+        self._session_idle_base_seconds = 0
+        self._last_resumed_idle_seconds = 0.0
         self._last_poll_time = suspend_time
 
     def handle_system_resume(self, now: datetime | None = None) -> None:
@@ -908,6 +918,8 @@ class ActivityTracker:
         self._idle_process_id = None
         self._idle_window_title = None
         self._last_idle_seconds = 0.0
+        self._session_idle_base_seconds = 0
+        self._last_resumed_idle_seconds = 0.0
 
         # Reset poll timing marker to current wake time
         self._last_poll_time = resume_time
@@ -955,6 +967,7 @@ class ActivityTracker:
             self._idle_application_name = self._current.application_name
             self._idle_process_id = self._current.process_id
             self._idle_window_title = self._current.window_title
+            self._session_idle_base_seconds = self._current.idle_seconds or 0
             self._close_current_session_at(last_input_time)
         else:
             self._last_active_session_id = None
@@ -962,6 +975,7 @@ class ActivityTracker:
             self._idle_application_name = None
             self._idle_process_id = None
             self._idle_window_title = None
+            self._session_idle_base_seconds = 0
 
     # ==========================================================
     # ACTIVE AGAIN
@@ -1043,6 +1057,7 @@ class ActivityTracker:
                         process_id=record.process_id,
                         window_title=record.window_title,
                         started_at=record.started_at,
+                        idle_seconds=record.idle_seconds or 0,
                     )
                     same_session = True
                     logger.info(
@@ -1066,6 +1081,7 @@ class ActivityTracker:
         self._idle_window_title = None
         self._current_idle_session_id = None
         self._is_idle = False
+        self._last_resumed_idle_seconds = float(idle_duration)
         self._last_idle_seconds = 0.0
 
     # ==========================================================
@@ -1208,6 +1224,18 @@ class ActivityTracker:
     ) -> TrackerState:
         """Return the current tracker state."""
 
+        if self._is_idle:
+            if self._idle_start_time is not None:
+                current_idle = max(0.0, (self._clock() - self._idle_start_time).total_seconds())
+                effective_idle = float(self._session_idle_base_seconds + current_idle)
+            else:
+                effective_idle = float(self._last_idle_seconds)
+        else:
+            if self._current is not None and self._current.idle_seconds > 0:
+                effective_idle = float(self._current.idle_seconds)
+            else:
+                effective_idle = float(self._last_resumed_idle_seconds)
+
         return TrackerState(
             is_tracking=self._is_tracking,
 
@@ -1225,7 +1253,5 @@ class ActivityTracker:
                 else None
             ),
 
-            idle_seconds=(
-                self._last_idle_seconds
-            ),
+            idle_seconds=effective_idle,
         )

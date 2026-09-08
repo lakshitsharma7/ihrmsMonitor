@@ -416,6 +416,14 @@ class DashboardPage(QWidget):
 
         # Update idle time label (dynamic updates when idle resumes or resets)
         idle_s = max(0, int(getattr(state, "idle_seconds", 0) or 0))
+        if idle_s == 0:
+            try:
+                today_idle = self._service.get_today_total_idle_seconds()
+                if today_idle > 0:
+                    idle_s = today_idle
+            except Exception:
+                pass
+
         if idle_s < 60:
             self.idle_time_label.setText(f"Idle Time: {idle_s} seconds")
         else:
@@ -464,6 +472,16 @@ class DashboardPage(QWidget):
         try:
             uploaded_count = self._service.get_uploaded_records_count()
             self.set_records_uploaded(uploaded_count)
+        except Exception:
+            pass
+
+        try:
+            today_idle = self._service.get_today_total_idle_seconds()
+            if self.idle_time_label.text() == "Idle Time: 0 seconds" and today_idle > 0:
+                if today_idle < 60:
+                    self.idle_time_label.setText(f"Idle Time: {today_idle} seconds")
+                else:
+                    self.idle_time_label.setText(f"Idle Time: {today_idle // 60} minutes {today_idle % 60} seconds")
         except Exception:
             pass
 
