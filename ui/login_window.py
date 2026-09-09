@@ -854,28 +854,81 @@ class LoginWindow(QMainWindow):
             return
 
         api_url = api_config.base_url
+        url = f"{api_url}/login/login"
 
+        import platform as _platform
         device_info = get_device_info()
 
-        url = f"{api_url}/login/login"
+        # Dynamically detect the OS type for the login payload.
+        # The API expects "WINDOWS" or "MACOS"; map platform.system() accordingly.
+        _sys_name = _platform.system().upper()
+        _os_type = "MACOS" if _sys_name == "DARWIN" else "WINDOWS"
+
+        # Dynamically detect the device description from the current machine.
+        _device_detail = device_info["device_detail"]
+
+        req_headers = {
+            "User-Agent": "iHRMS-Monitor/1.0 (Windows NT 10.0; Win64; x64)",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        # Build the login payload exactly as the API requires:
+        #   uname        – the username entered by the user
+        #   pass         – the encoded password
+        #   imei_number  – always an empty string (desktop has no IMEI)
+        #   device_detail – dynamic machine description
+        #   os_type      – dynamic operating-system value
         data = {
             "uname": username,
             "pass": password,
-            "imei_number": get_device_id(),
-            "device_detail": device_info["device_detail"],
+            "imei_number": "",
+            "device_detail": _device_detail,
+            "os_type": _os_type,
         }
 
+        logger.debug(
+            "Login request fields: uname=%s, imei_number='', device_detail=%s, os_type=%s",
+            username,
+            _device_detail,
+            _os_type,
+        )
+
+        res_json = None
+        used_device_id = ""
+
         try:
-            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
-            req = urllib.request.Request(url, data=encoded_data, method="POST")
-            
-            with urllib.request.urlopen(req, timeout=10) as response:
-                res_body = response.read().decode("utf-8")
-                
-            res_json = json.loads(res_body)
-            
-            if res_json.get("status") == 2:
-                logger.info("User %s logged in successfully via API", username)
+            # Perform HTTP POST via requests first (handles certificates and proxies automatically)
+            try:
+                import requests
+                resp = requests.post(url, data=data, headers=req_headers, timeout=15)
+                try:
+                    res_json = resp.json()
+                except Exception:
+                    res_json = json.loads(resp.text)
+            except Exception as req_exc:
+                logger.debug("requests login attempt failed (%s); trying urllib with SSL context", req_exc)
+                # Fallback to urllib with certifi SSL context
+                import ssl
+                try:
+                    import certifi
+                    ssl_context = ssl.create_default_context(cafile=certifi.where())
+                except Exception:
+                    ssl_context = ssl.create_default_context()
+
+                encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+                req = urllib.request.Request(url, data=encoded_data, headers=req_headers, method="POST")
+                with urllib.request.urlopen(req, timeout=15, context=ssl_context) as response:
+                    res_body = response.read().decode("utf-8")
+                res_json = json.loads(res_body)
+
+            if res_json and res_json.get("status") == 2:
+                logger.info(
+                    "User %s logged in successfully via API "
+                    "(imei_number='', device_detail=%s, os_type=%s)",
+                    username, _device_detail, _os_type,
+                )
+
+                # Nothing to persist for device identifier when imei_number is always empty.
 
                 # ----------------------------------------------
                 # Check New Version API
@@ -905,15 +958,29 @@ class LoginWindow(QMainWindow):
                         "key": api_key,
                         "os_type": os_type
                     }
-                    encoded_version_data = urllib.parse.urlencode(version_data).encode("utf-8")
-                    version_req = urllib.request.Request(
-                        version_url,
-                        data=encoded_version_data,
-                        method="POST"
-                    )
-                    with urllib.request.urlopen(version_req, timeout=10) as version_response:
-                        version_body = version_response.read().decode("utf-8")
-                    version_json = json.loads(version_body)
+                    version_json = {}
+                    try:
+                        import requests
+                        v_resp = requests.post(version_url, data=version_data, headers=req_headers, timeout=10)
+                        version_json = v_resp.json()
+                    except Exception:
+                        encoded_version_data = urllib.parse.urlencode(version_data).encode("utf-8")
+                        version_req = urllib.request.Request(
+                            version_url,
+                            data=encoded_version_data,
+                            headers=req_headers,
+                            method="POST"
+                        )
+                        import ssl
+                        try:
+                            import certifi
+                            v_ssl = ssl.create_default_context(cafile=certifi.where())
+                        except Exception:
+                            v_ssl = ssl.create_default_context()
+                        with urllib.request.urlopen(version_req, timeout=10, context=v_ssl) as version_response:
+                            version_body = version_response.read().decode("utf-8")
+                        version_json = json.loads(version_body)
+
                     logger.info(
                         "Check version response: status=%s, version_code=%s, force_update=%s",
                         version_json.get("status"),
@@ -1190,22 +1257,43 @@ class LoginWindow(QMainWindow):
                 # Hide login window
                 self.hide()
             else:
-                msg = res_json.get("message") or "Invalid username or password."
-                self._show_login_error(msg)
+                msg = res_json.get("message") if res_json else "Invalid username or password."
+                if isinstance(msg, dict):
+                    msg = " ".join(str(v) for v in msg.values())
+                self._show_login_error(str(msg) if msg else "Invalid username or password.")
                 
         except Exception as exc:
             logger.exception("Error calling external login API")
+            endpoint_url = url if "url" in locals() and url else (f"{api_config.base_url}/login/login" if hasattr(api_config, 'base_url') and api_config.base_url else "unknown")
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(
                     error_type="LOGIN_API_ERROR",
                     error_message=f"Error calling external login API: {exc}",
                     exc=exc,
-                    extra_context={"endpoint": url, "company_code": company_code},
+                    extra_context={"endpoint": endpoint_url, "company_code": company_code},
                 )
             except Exception:
                 pass
-            self._show_login_error("Could not connect to authentication server. Please check your network connection.")
+
+            import urllib.error
+            import socket
+            err_str = str(exc).strip()
+            
+            # Identify true network/connection errors vs runtime exceptions
+            is_network_err = (
+                isinstance(exc, (urllib.error.URLError, socket.error, TimeoutError, ConnectionError))
+                or "requests.exceptions" in str(type(exc))
+                or any(keyword in err_str.lower() for keyword in ["connection", "timed out", "getaddrinfo", "nodename", "refused", "unreachable"])
+            )
+
+            if is_network_err:
+                if err_detail := err_str:
+                    self._show_login_error(f"Could not connect to authentication server ({err_detail}). Please check your connection.")
+                else:
+                    self._show_login_error("Could not connect to authentication server. Please check your network connection.")
+            else:
+                self._show_login_error(f"Login error: {err_str}" if err_str else "Login failed due to an unexpected error. Please try again.")
 
     def _show_login_error(self, message: str = "Invalid username or password.") -> None:
         self.error_label.setText(message)

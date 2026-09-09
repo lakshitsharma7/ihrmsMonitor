@@ -215,12 +215,9 @@ class DashboardPage(QWidget):
             "Tracking: Inactive"
         )
 
-        self.sync_status_label = QLabel(
-            "API Sync: Sent"
-        )
 
         self.last_sync_label = QLabel(
-            "Last successful API sync: Never"
+            "Last successful sync: Never"
         )
 
         self.records_uploaded_label = QLabel(
@@ -245,7 +242,6 @@ class DashboardPage(QWidget):
 
         # Give them StatusLabel object names
         self.tracking_status_label.setObjectName("StatusLabel")
-        self.sync_status_label.setObjectName("StatusLabel")
         self.last_sync_label.setObjectName("StatusLabel")
         self.records_uploaded_label.setObjectName("StatusLabel")
         self.unsynced_records_label.setObjectName("StatusLabel")
@@ -255,9 +251,8 @@ class DashboardPage(QWidget):
 
         # Column 0
         status_grid.addWidget(self.tracking_status_label, 0, 0)
-        status_grid.addWidget(self.sync_status_label, 1, 0)
+        status_grid.addWidget(self.records_uploaded_label, 1, 0)
         status_grid.addWidget(self.last_sync_label, 2, 0)
-        status_grid.addWidget(self.records_uploaded_label, 3, 0)
 
         # Column 1
         status_grid.addWidget(self.idle_time_label, 0, 1)
@@ -498,9 +493,8 @@ class DashboardPage(QWidget):
 
         # Update sync info from SyncService
         from services.sync_service import SyncService
-        self.sync_status_label.setText(f"API Sync: {SyncService.last_sync_status}")
-        self.last_sync_label.setText(f"Last successful API sync: {SyncService.last_successful_sync_time}")
         self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
+        self.last_sync_label.setText(f"Last successful sync: {SyncService.last_successful_sync_time}")
 
         self.set_records_uploaded(self._cached_uploaded_count)
 
@@ -683,8 +677,8 @@ class DashboardPage(QWidget):
 
             err_upper = str(error_type).upper()
             if any(k in err_upper for k in ("SYNC", "UPLOAD", "API", "NETWORK", "HTTP")):
-                self.sync_status_label.setText(f"API Sync: Error ({short_msg})")
-                self.sync_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+                self.update_status_label.setText(f"Status: Sync Error ({short_msg})")
+                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
             elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
                 self.update_status_label.setText(f"Status: Update Error ({short_msg})")
                 self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
@@ -692,7 +686,7 @@ class DashboardPage(QWidget):
                 self.tracking_status_label.setText(f"Tracking: Error ({short_msg})")
                 self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
             else:
-                self.sync_status_label.setText(f"API Sync: Issue ({short_msg})")
-                self.sync_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+                self.update_status_label.setText(f"Status: Issue ({short_msg})")
+                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
         except Exception:
             pass

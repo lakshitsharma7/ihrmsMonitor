@@ -82,9 +82,18 @@ def get_device_identifier() -> str:
     Return a stable identifier for this machine.
 
     Sent as ``imei_number``: the desktop equivalent of a handset IMEI.
-    Falls back through progressively weaker sources so a value is always
-    produced.
+    Persisted via QSettings to ensure consistent identity across restarts,
+    logins, and background sync without generating duplicate devices.
     """
+    try:
+        from PySide6.QtCore import QSettings
+
+        settings = QSettings("Indovision", "iHRMSMonitor")
+        saved_id = str(settings.value("device/device_identifier") or "").strip()
+        if saved_id:
+            return saved_id
+    except Exception:
+        settings = None
 
     system = platform.system()
 
@@ -101,6 +110,12 @@ def get_device_identifier() -> str:
         # uuid.getnode() is derived from the MAC address when one is
         # available, and is stable for the life of the interface.
         identifier = f"{uuid.getnode():012x}"
+
+    if identifier and settings:
+        try:
+            settings.setValue("device/device_identifier", identifier)
+        except Exception:
+            pass
 
     return identifier
 

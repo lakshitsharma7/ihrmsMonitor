@@ -80,7 +80,7 @@ def get_device_id() -> str:
     Return the device identity to send as ``imei_number``.
 
     Uses the per-machine override when one is configured, otherwise the
-    device id this deployment has enrolled.
+    unique machine identifier from utils.device.get_device_identifier().
     """
 
     override = os.environ.get(DEVICE_ID_ENV_VAR, "").strip()
@@ -92,6 +92,15 @@ def get_device_id() -> str:
         )
 
         return override
+
+    try:
+        from utils.device import get_device_identifier
+
+        machine_id = get_device_identifier()
+        if machine_id:
+            return machine_id
+    except Exception:
+        pass
 
     return ENROLLED_DEVICE_ID
 
