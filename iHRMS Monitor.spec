@@ -10,6 +10,17 @@ block_cipher = None
 # Collect full package for shiboken6 (critical binding layer for PySide6)
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all('shiboken6')
 
+# Explicitly ensure all files from shiboken6 are placed in 'shiboken6' subfolder
+shiboken_explicit_binaries = []
+try:
+    import shiboken6
+    shiboken_pkg_dir = Path(shiboken6.__file__).parent
+    for f in shiboken_pkg_dir.iterdir():
+        if f.is_file():
+            shiboken_explicit_binaries.append((str(f), 'shiboken6'))
+except Exception:
+    pass
+
 # Collect VC runtime and helper binaries from PySide6 if available
 extra_binaries = []
 try:
@@ -30,7 +41,7 @@ try:
 except Exception:
     pass
 
-all_binaries = extra_binaries + shiboken_binaries
+all_binaries = extra_binaries + shiboken_binaries + shiboken_explicit_binaries
 all_datas = [
     ('assets', 'assets'),
     ('VERSION', '.'),
@@ -120,7 +131,7 @@ a = Analysis(
     ] + shiboken_hiddenimports,
     hookspath=['hooks'],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hooks/rthook-pyside6-fix.py'],
 
     excludes=[
         'tkinter',
@@ -161,13 +172,19 @@ exe = EXE(
     icon=['assets/ihrms-logo-icon.ico'],
 )
 
+from PyInstaller.building.datastruct import Tree
+
+shiboken_tree = Tree(str(Path(shiboken6.__file__).parent), prefix='shiboken6')
+
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    shiboken_tree,
     strip=False,
     upx=False,
     upx_exclude=[],
     name='iHRMS Monitor',
 )
+
 

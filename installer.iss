@@ -21,7 +21,7 @@ Source: "dist\iHRMS Monitor\*"; DestDir: "{app}"; Flags: recursesubdirs createal
 
 [Icons]
 Name: "{autoprograms}\iHRMS Monitor"; Filename: "{app}\iHRMS Monitor.exe"; WorkingDir: "{app}"
-Name: "{commondesktop}\iHRMS Monitor"; Filename: "{app}\iHRMS Monitor.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\iHRMS Monitor"; Filename: "{app}\iHRMS Monitor.exe"; WorkingDir: "{app}"
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "iHRMS Monitor"; ValueData: """{app}\iHRMS Monitor.exe"""; Flags: uninsdeletevalue
