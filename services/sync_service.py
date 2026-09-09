@@ -144,7 +144,7 @@ class SyncService:
         Fetch latest configuration from tracking/get_settings at the beginning of each sync cycle
         and apply the returned values directly without using overriding hardcoded fallbacks.
         """
-        if not self._fetching_settings_lock.acquire(blocking=False):
+        if not self._fetching_settings_lock.acquire(timeout=5.0):
             logger.debug("fetch_settings already in progress; skipping duplicate call.")
             return {}
 

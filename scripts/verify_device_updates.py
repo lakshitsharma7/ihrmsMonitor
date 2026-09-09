@@ -21,13 +21,18 @@ from database.database import init_database
 from services.device_registry_service import DeviceRegistryService
 
 
-def print_fleet_verification_report(as_json: bool = False) -> int:
+def print_fleet_verification_report(as_json: bool = False, check_offline: bool = False) -> int:
     """Generate and display the complete device update verification report."""
     init_database()
     svc = DeviceRegistryService()
 
     # Ensure current device is recorded with real executable version
     svc.record_heartbeat()
+
+    if check_offline:
+        alerted = svc.check_offline_devices()
+        if not as_json and alerted:
+            print(f"[*] Offline / Uninstall check triggered: {len(alerted)} device(s) flagged.")
 
     devices = svc.get_all_devices()
     summary = svc.get_device_summary()
@@ -90,4 +95,5 @@ def print_fleet_verification_report(as_json: bool = False) -> int:
 
 if __name__ == "__main__":
     as_json = "--json" in sys.argv
-    sys.exit(print_fleet_verification_report(as_json=as_json))
+    check_offline = "--check-offline" in sys.argv
+    sys.exit(print_fleet_verification_report(as_json=as_json, check_offline=check_offline))

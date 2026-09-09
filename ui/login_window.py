@@ -856,16 +856,11 @@ class LoginWindow(QMainWindow):
         api_url = api_config.base_url
         url = f"{api_url}/login/login"
 
-        import platform as _platform
+        from utils.device import get_device_info, get_dynamic_os_type
+
         device_info = get_device_info()
-
-        # Dynamically detect the OS type for the login payload.
-        # The API expects "WINDOWS" or "MACOS"; map platform.system() accordingly.
-        _sys_name = _platform.system().upper()
-        _os_type = "MACOS" if _sys_name == "DARWIN" else "WINDOWS"
-
-        # Dynamically detect the device description from the current machine.
-        _device_detail = device_info["device_detail"]
+        _os_type = device_info.get("os_type") or get_dynamic_os_type()
+        _device_detail = device_info.get("device_detail") or "PC"
 
         req_headers = {
             "User-Agent": "iHRMS-Monitor/1.0 (Windows NT 10.0; Win64; x64)",
@@ -876,8 +871,8 @@ class LoginWindow(QMainWindow):
         #   uname        – the username entered by the user
         #   pass         – the encoded password
         #   imei_number  – always an empty string (desktop has no IMEI)
-        #   device_detail – dynamic machine description
-        #   os_type      – dynamic operating-system value
+        #   device_detail – dynamic machine description (e.g. 'Dell Inc. Latitude 7490')
+        #   os_type      – dynamic operating-system value ('window' on Windows)
         data = {
             "uname": username,
             "pass": password,

@@ -181,8 +181,96 @@ class TestDeviceVerificationSystem(unittest.TestCase):
         from contextlib import redirect_stdout
         # Execute report generator in json mode
         with redirect_stdout(io.StringIO()):
-            exit_code = print_fleet_verification_report(as_json=True)
+            exit_code = print_fleet_verification_report(as_json=True, check_offline=True)
             self.assertEqual(exit_code, 0)
+
+    def test_offline_detection_within_grace_period(self):
+        """Verify brief disconnection within threshold grace period does not mark device offline."""
+        dev_id = "DEV-SHORT-OUTAGE"
+        recent_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+        db = get_session()
+        try:
+            d = EnrolledDevice(
+                device_identifier=dev_id,
+                hostname="Laptop-Grace",
+                platform="Windows",
+                employee_id="EMP-301",
+                username="grace.user",
+                installed_version="2.0.1",
+                last_seen=recent_time,
+            )
+            db.add(d)
+            db.commit()
+        finally:
+            db.close()
+
+        offline = self.registry.check_offline_devices(threshold_seconds=7200)
+        self.assertEqual(len(offline), 0)
+
+    def test_offline_detection_beyond_threshold_flags_device(self):
+        """Verify device inactive past threshold is detected in offline fleet scan."""
+        dev_id = "DEV-INACTIVE-01"
+        stale_time = datetime.now(timezone.utc) - timedelta(hours=3)
+
+        db = get_session()
+        try:
+            d = EnrolledDevice(
+                device_identifier=dev_id,
+                hostname="LAPTOP-DEV-01",
+                platform="Windows",
+                os_username="corp_user",
+                employee_id="EMP-999",
+                username="alex.smith",
+                installed_version="2.0.1",
+                last_seen=stale_time,
+            )
+            db.add(d)
+            db.commit()
+        finally:
+            db.close()
+
+        offline = self.registry.check_offline_devices(threshold_seconds=7200)
+        self.assertEqual(len(offline), 1)
+        self.assertEqual(offline[0]["device_identifier"], dev_id)
+        self.assertEqual(offline[0]["username"], "alex.smith")
+        self.assertEqual(offline[0]["employee_id"], "EMP-999")
+        self.assertEqual(offline[0]["hostname"], "LAPTOP-DEV-01")
+
+    def test_device_reconnect_restores_online_status(self):
+        """Verify device resuming heartbeat resets offline tracking state."""
+        dev_id = "DEV-RECONNECTING"
+        stale_time = datetime.now(timezone.utc) - timedelta(hours=5)
+
+        db = get_session()
+        try:
+            d = EnrolledDevice(
+                device_identifier=dev_id,
+                hostname="LAPTOP-RECONNECT",
+                platform="Windows",
+                employee_id="EMP-777",
+                username="sarah.connor",
+                installed_version="2.0.1",
+                last_seen=stale_time,
+            )
+            db.add(d)
+            db.commit()
+        finally:
+            db.close()
+
+        # 1. Device is detected offline
+        offline_1 = self.registry.check_offline_devices(threshold_seconds=7200)
+        self.assertEqual(len(offline_1), 1)
+
+        # 2. Device comes back online and sends heartbeat
+        self.registry.record_heartbeat(
+            device_identifier=dev_id,
+            hostname="LAPTOP-RECONNECT",
+            employee_id="EMP-777",
+            username="sarah.connor",
+            installed_version="2.0.1",
+        )
+        self.assertNotIn(dev_id, self.registry.get_offline_alerted_devices())
 
 
 if __name__ == "__main__":

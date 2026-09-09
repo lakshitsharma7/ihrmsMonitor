@@ -9,6 +9,12 @@ Version 2.0.1
 Date: 09-09-2026
 
 New Features:
+- True Application Uninstallation Detection & Support Reporting:
+    * Triggers support email ONLY upon actual application uninstallation (Inno Setup uninstaller lifecycle).
+    * Offline queueing: If internet is unavailable during uninstall, records event to persistent storage and configures a background scheduled task to automatically deliver once connectivity is restored.
+    * Guaranteed exactly one support email per uninstallation event with automatic queue and task cleanup.
+    * Strict isolation: Internet disconnections, heartbeats, app crashes, or system restarts NEVER trigger an uninstall alert.
+    * Full context payload: User ID, Username, Company, Device ID, Hostname, OS, App Version, and Uninstall Date/Time.
 - Idle duration is now sent to the backend in the window_title field for idle
   sessions, matching the value displayed on the Dashboard.
 - "Last successful sync" label added to the Dashboard status section.
@@ -16,16 +22,18 @@ New Features:
 Improvements:
 - Login API payload updated to match actual backend requirements:
     * imei_number is always sent as an empty string (desktop has no IMEI).
-    * os_type is dynamically detected (WINDOWS / MACOS) at runtime.
-    * device_detail is dynamically generated from the current machine.
+    * os_type is dynamically detected as 'window' on Windows (singular lowercase matching CI4 API contract) and 'macos' on macOS.
+    * device_detail is dynamically detected from machine BIOS/hardware (Manufacturer & Model).
 - Dashboard "Tracking & Sync Status" cleaned up:
     * Removed "API Sync: Sent" row (redundant).
     * Removed "Last successful API sync" row; renamed to "Last successful sync".
+- Removed and permanently hidden the "Stop Tracking" button and manual stop controls from the UI and system tray for all users. Tracking is automatically managed by system/RBAC logic and automatically resumes upon login, startup, and auto-update restarts.
 - Installer shortcut permission issue fixed (PrivilegesRequired=lowest).
 - Embedded Python EXE startup issue resolved.
 - Device validation no longer relies on a hardcoded IMEI/device-ID retry loop.
 
 Bug Fixes:
+- Fixed "Either Duplicate Device Or Invalid Device" error by aligning dynamic os_type to 'window' as required by the backend login API.
 - Fixed stale device-ID candidate list being iterated on every login attempt.
 - Fixed window_title carrying the previous active-app title into idle records
   sent to the API.
@@ -38,6 +46,13 @@ Bug Fixes:
 - Fixed pre-update pending data flush session detection, lock acquisition, and
   SessionStore fallback so 0-pending update proceeds immediately and pending data
   is safely preserved without data loss during server interruptions.
+- Fixed Full Auto-Update Flow with Zero Data Loss and Seamless Session Restoration:
+    * Background non-blocking update check and streaming download.
+    * Guaranteed pre-update data flush (activities & screenshots) before installer launch.
+    * Silent Inno Setup execution & single-instance lock file clearance.
+    * Automatic restart with encrypted SessionStore and ApiConfig restoration (NO re-login required).
+    * Tracking automatically resumes if active before update, or remains stopped if manually stopped.
+    * Startup loop prevention guard with 24-hour cooldown on repeated installation failures.
 
 --------------------------------------------------------------------------------
 

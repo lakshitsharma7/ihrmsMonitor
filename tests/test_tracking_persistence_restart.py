@@ -61,7 +61,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
         self.assertFalse(self.store.is_tracking_active())
 
     def test_restart_with_active_tracking_restores_tracking_and_shows_active(self):
-        """If tracking was active before restart, MainWindow automatically starts tracking and shows 'Tracking: Active'."""
+        """If tracking was active before restart, MainWindow automatically starts tracking, shows 'Tracking: Active', and hides manual stop button."""
         self._login_test_user(tracking_permitted=True)
         self.store.set_tracking_manually_stopped(False)
         self.store.set_tracking_active(True)
@@ -76,19 +76,19 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 self.assertTrue(win._tracker.is_tracking, "Tracker must be actively running")
                 self.assertEqual(win.status_badge.text(), "Tracking")
                 self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Active")
-                self.assertFalse(win.start_button.isEnabled())
-                self.assertTrue(win.stop_button.isEnabled())
+                # Stop button and Start button must be completely hidden for all users
+                self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must NOT be visible")
+                self.assertFalse(win.start_button.isVisible(), "Start Tracking button must NOT be visible")
+                if hasattr(win, "tray") and win.tray:
+                    self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop Tracking action must NOT be visible")
             finally:
                 win._shutdown()
                 win.close()
                 QApplication.processEvents()
 
-    def test_restart_after_manual_stop_keeps_tracking_stopped_and_shows_inactive(self):
-        """If user manually stopped tracking, MainWindow keeps it stopped on restart and shows 'Tracking: Inactive'."""
+    def test_stop_tracking_button_permanently_hidden(self):
+        """Stop Tracking button and manual stop controls are permanently hidden from UI for all users."""
         self._login_test_user(tracking_permitted=True)
-        # Simulate user having manually stopped tracking before restart
-        self.store.set_tracking_manually_stopped(True)
-        self.store.set_tracking_active(False)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -97,15 +97,10 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                self.assertFalse(win._tracker.is_tracking, "Tracker must NOT be running after manual stop")
-                self.assertEqual(win.status_badge.text(), "Not Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Inactive")
-                self.assertTrue(win.start_button.isEnabled())
-                self.assertFalse(win.stop_button.isEnabled())
-
-                # Post-render check must also honor manual stop
-                win._ensure_tracking_started()
-                self.assertFalse(win._tracker.is_tracking)
+                self.assertFalse(win.stop_button.isVisible())
+                self.assertFalse(win.start_button.isVisible())
+                if hasattr(win, "tray") and win.tray:
+                    self.assertFalse(win.tray.stop_action.isVisible())
             finally:
                 win._shutdown()
                 win.close()

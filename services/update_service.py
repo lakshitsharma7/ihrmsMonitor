@@ -752,9 +752,6 @@ def install_update_and_restart(
     is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
     if not is_running_tests:
         global _is_installing_update
-        if _is_installing_update:
-            logger.info("install_update_and_restart already in progress; skipping duplicate trigger.")
-            return True
 
         # Ensure UI close and exit are dispatched on the Main GUI Thread to prevent loader lock deadlocks
         try:
@@ -763,11 +760,14 @@ def install_update_and_restart(
             app = QApplication.instance()
             if app and QThread.currentThread() != app.thread():
                 logger.info("install_update_and_restart invoked from background thread; dispatching to Main Thread.")
-                _is_installing_update = True
                 QTimer.singleShot(0, lambda: install_update_and_restart(installer_path, exit_process, target_version))
                 return True
         except Exception as dispatch_err:
             logger.debug("Could not dispatch install_update_and_restart to main thread: %s", dispatch_err)
+
+        if _is_installing_update:
+            logger.info("install_update_and_restart already in progress; skipping duplicate trigger.")
+            return True
 
         _is_installing_update = True
 
@@ -883,8 +883,8 @@ del "%~f0"
 Option Explicit
 
 Dim fso, wshShell, objWMI, colProc
-Dim oldPid, targetExe, updateFile, targetVersion, appDir, logPath, lockPath, isInstaller
-Dim logFile, i, waited, exitCode, success
+Dim oldPid, targetExe, updateFile, targetVersion, appDir, defaultExe, logPath, lockPath, isInstaller
+Dim logFile, i, waited, exitCode, success, launchTarget
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set wshShell = CreateObject("WScript.Shell")
@@ -894,6 +894,7 @@ targetExe = "{str(target_exe)}"
 updateFile = "{str(update_file)}"
 targetVersion = "{str(target_version or '')}"
 appDir = "{str(app_dir)}"
+defaultExe = "{str(default_exe)}"
 logPath = "{str(update_log_path)}"
 lockPath = "{str(lock_file_path)}"
 isInstaller = {vbs_is_installer_str}
@@ -943,13 +944,13 @@ success = False
 
 If isInstaller Then
     WriteLog "Running Inno Setup installer silently: " & updateFile & " /DIR=" & appDir
-    exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
+    exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
     WriteLog "Installer exit code: " & exitCode
-    If exitCode = 0 And fso.FileExists(targetExe) Then
+    If exitCode = 0 And (fso.FileExists(targetExe) Or fso.FileExists(appDir & "\iHRMS Monitor.exe") Or fso.FileExists(defaultExe)) Then
         success = True
-        WriteLog "Installer finished successfully and targetExe exists."
+        WriteLog "Installer finished successfully."
     Else
-        WriteLog "Installer returned non-zero code or targetExe missing."
+        WriteLog "Installer returned exit code " & exitCode
     End If
 Else
     WriteLog "Performing direct EXE replacement: " & targetExe & " <= " & updateFile
@@ -998,16 +999,21 @@ Else
 End If
 
 \' 4. Launch Target Executable
+launchTarget = ""
 If fso.FileExists(targetExe) Then
-    WriteLog "Launching application: " & targetExe
-    wshShell.Run Chr(34) & targetExe & Chr(34), 1, False
-    WriteLog "Application launch requested."
+    launchTarget = targetExe
 ElseIf fso.FileExists(appDir & "\iHRMS Monitor.exe") Then
-    WriteLog "Launching application from appDir: " & appDir & "\iHRMS Monitor.exe"
-    wshShell.Run Chr(34) & appDir & "\iHRMS Monitor.exe" & Chr(34), 1, False
+    launchTarget = appDir & "\iHRMS Monitor.exe"
+ElseIf fso.FileExists(defaultExe) Then
+    launchTarget = defaultExe
+End If
+
+If launchTarget <> "" Then
+    WriteLog "Launching application: " & launchTarget
+    wshShell.Run Chr(34) & launchTarget & Chr(34), 1, False
     WriteLog "Application launch requested."
 Else
-    WriteLog "CRITICAL: targetExe does not exist: " & targetExe
+    WriteLog "CRITICAL: No target executable found to launch. Checked: " & targetExe & ", " & appDir & "\iHRMS Monitor.exe, " & defaultExe
 End If
 
 WriteLog "Background updater finished."
@@ -1029,6 +1035,7 @@ $oldPid = {current_pid}
 $targetExe = '{str(target_exe)}'
 $updateFile = '{str(update_file)}'
 $appDir = '{str(app_dir)}'
+$defaultExe = '{str(default_exe)}'
 $targetVersion = '{str(target_version or '')}'
 $logPath = '{str(update_log_path)}'
 $lockPath = '{str(lock_file_path)}'
@@ -1068,12 +1075,12 @@ Start-Sleep -Seconds 1
 $success = $false
 if ($isInstaller) {{
     Write-UpdateLog "Executing installer: $updateFile"
-    $p = Start-Process -FilePath $updateFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$appDir`"" -Wait -PassThru -WindowStyle Hidden
-    if ($p.ExitCode -eq 0 -and (Test-Path $targetExe)) {{
+    $p = Start-Process -FilePath $updateFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=`"$appDir`"" -Wait -PassThru -WindowStyle Hidden
+    if ($p.ExitCode -eq 0 -and (Test-Path $targetExe -or (Test-Path "$appDir\\iHRMS Monitor.exe") -or (Test-Path $defaultExe))) {{
         $success = $true
         Write-UpdateLog "Installer completed successfully."
     }} else {{
-        Write-UpdateLog "Installer failed with code $($p.ExitCode)"
+        Write-UpdateLog "Installer exit code $($p.ExitCode)"
     }}
 }} else {{
     Write-UpdateLog "Direct EXE replacement: $targetExe <= $updateFile"
@@ -1101,12 +1108,18 @@ if ($isInstaller) {{
     }}
 }}
 
+$launchTarget = ""
 if (Test-Path $targetExe) {{
-    Write-UpdateLog "Launching application: $targetExe"
-    Start-Process -FilePath $targetExe -WindowStyle Normal
+    $launchTarget = $targetExe
 }} elseif (Test-Path "$appDir\\iHRMS Monitor.exe") {{
-    Write-UpdateLog "Launching application from appDir: $appDir\\iHRMS Monitor.exe"
-    Start-Process -FilePath "$appDir\\iHRMS Monitor.exe" -WindowStyle Normal
+    $launchTarget = "$appDir\\iHRMS Monitor.exe"
+}} elseif (Test-Path $defaultExe) {{
+    $launchTarget = $defaultExe
+}}
+
+if ($launchTarget -ne "") {{
+    Write-UpdateLog "Launching application: $launchTarget"
+    Start-Process -FilePath $launchTarget -WindowStyle Normal
 }} else {{
     Write-UpdateLog "CRITICAL: targetExe does not exist: $targetExe"
 }}
@@ -1609,20 +1622,14 @@ class UpdatePipelineWorker(QThread):
             UpdateService()._is_force_update = force_update
 
             # Finalize active tracking session and flush pending records right before installer execution
-            is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
-            if getattr(sys, "frozen", False) or is_running_tests:
-                try:
-                    flush_pending_data_before_update(max_retries=1, stop_tracker=True)
-                except Exception as final_flush_err:
-                    logger.debug("Pre-restart flush warning: %s", final_flush_err)
+            try:
+                flush_pending_data_before_update(max_retries=1, stop_tracker=True)
+            except Exception as final_flush_err:
+                logger.debug("Pre-restart flush warning: %s", final_flush_err)
 
-                # Automatically launch installer and restart application
-                time.sleep(1.0)
-                install_update_and_restart(str(installer_path), target_version=server_version)
-            else:
-                logger.info("Running in development/source mode; skipping automatic binary installer execution.")
-                self.phase_changed.emit("done", "Update available: installer downloaded.")
-                self.status_message.emit("Update ready.")
+            # Automatically launch installer and restart application
+            time.sleep(0.5)
+            install_update_and_restart(str(installer_path), target_version=server_version, exit_process=True)
 
         except Exception as err:
             logger.exception("Update pipeline error: %s", err)

@@ -122,10 +122,10 @@ class TestErrorReportService(unittest.TestCase):
             error_message="Mock error for dispatch testing",
         )
 
-        with patch.object(service, "_send_smtp_message", side_effect=Exception("Connection refused")) as mock_send:
+        with patch.object(service, "_dispatch_via_backend", return_value=False) as mock_backend:
             result = service._dispatch_email(context)
             self.assertFalse(result)
-            self.assertTrue(mock_send.called)
+            self.assertTrue(mock_backend.called)
 
     def test_listener_notification_on_report_error(self):
         service = self.service

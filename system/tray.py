@@ -73,10 +73,12 @@ class TrayController:
 
         self.start_action = QAction("Start Tracking", parent)
         self.start_action.triggered.connect(on_start_tracking)
+        self.start_action.setVisible(False)
         menu.addAction(self.start_action)
 
         self.stop_action = QAction("Stop Tracking", parent)
         self.stop_action.triggered.connect(on_stop_tracking)
+        self.stop_action.setVisible(False)
         menu.addAction(self.stop_action)
 
         self.today_action = QAction("Today's Activity", parent)
@@ -117,8 +119,12 @@ class TrayController:
         self.tray_icon.show()
 
     def set_tracking_state(self, is_tracking: bool) -> None:
-        self.start_action.setEnabled(not is_tracking)
-        self.stop_action.setEnabled(is_tracking)
+        if hasattr(self, "start_action") and self.start_action:
+            self.start_action.setEnabled(not is_tracking)
+            self.start_action.setVisible(False)
+        if hasattr(self, "stop_action") and self.stop_action:
+            self.stop_action.setEnabled(False)
+            self.stop_action.setVisible(False)
 
     def show_message(self, title: str, message: str) -> None:
         self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 3000)

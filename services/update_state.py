@@ -305,6 +305,15 @@ class UpdateStateManager:
                 state["last_error"] = None
                 self._write_raw(state)
 
+    def clear_state(self) -> None:
+        """Clear all stored state from state file."""
+        with self._io_lock:
+            if self._state_file.exists():
+                try:
+                    self._state_file.unlink()
+                except Exception:
+                    pass
+
     def _cleanup_downloaded_packages(self, current_target_version: str) -> None:
         """Purge temporary installer and update packages after success."""
         try:

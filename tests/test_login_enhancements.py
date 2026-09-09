@@ -151,8 +151,14 @@ class TestLoginEnhancements(unittest.TestCase):
         self.assertEqual(info["employee_id"], "EMP_888")
         self.assertEqual(info["company_code"], "CYBERDYNE")
 
-        dialog = UserDeviceDialog(information=info)
-        self.assertEqual(dialog.windowTitle(), "User, Device & Fleet Update Verification")
+    def test_login_payload_matches_api_spec(self):
+        """Verify login API payload dynamically sends imei_number='', os_type='window', and dynamic device_detail."""
+        from utils.device import get_dynamic_os_type, get_device_detail, get_device_info
+        info = get_device_info()
+        self.assertIn("os_type", info)
+        self.assertIn("device_detail", info)
+        self.assertEqual(get_dynamic_os_type(), "window")
+        self.assertTrue(len(get_device_detail()) > 0)
 
 
 if __name__ == "__main__":

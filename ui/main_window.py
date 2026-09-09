@@ -471,29 +471,12 @@ class MainWindow(QMainWindow):
         if initial_settings.start_with_system:
             startup.set_enabled(True)
 
-        # Check tracking persistence state: restore active tracking or keep stopped if manually stopped
-        from services.secure_session import SessionStore
-        session_store = SessionStore()
-        tracking_manually_stopped = session_store.is_tracking_manually_stopped()
-
+        # Auto-start tracking on startup based on active session & RBAC permissions
         from services.session_service import SessionService
         session = SessionService().current_user
 
         if session is not None and not getattr(session, "tracking_permitted", True):
             logger.info("Auto-starting tracking skipped due to RBAC permissions.")
-            if hasattr(self, "dashboard_page") and self.dashboard_page:
-                self.dashboard_page.set_tracking_active(False)
-        elif tracking_manually_stopped:
-            logger.info("Tracking was previously manually stopped by the user; keeping it stopped on restart.")
-            self.status_badge.setText("Not Tracking")
-            self.status_badge.setProperty("tracking", "false")
-            self._refresh_badge_style()
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            if hasattr(self, "tray") and self.tray:
-                self.tray.set_tracking_state(False)
-            if hasattr(self, "settings_page") and self.settings_page:
-                self.settings_page.update_capture_status(False)
             if hasattr(self, "dashboard_page") and self.dashboard_page:
                 self.dashboard_page.set_tracking_active(False)
         else:
@@ -502,7 +485,7 @@ class MainWindow(QMainWindow):
 
         is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
 
-        # Post-render check: ensure tracking is definitely active if not manually stopped
+        # Post-render check: ensure tracking is definitely active
         from PySide6.QtCore import QTimer
         if not is_running_tests:
             QTimer.singleShot(200, self._ensure_tracking_started)
@@ -667,25 +650,27 @@ class MainWindow(QMainWindow):
         self.status_badge = QLabel("Not Tracking")
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("tracking", "false")
-        self.status_badge.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.status_badge.setToolTip("Click to start tracking")
-        self.status_badge.mousePressEvent = lambda event: self._on_status_badge_clicked(event)
+        self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
+        self.status_badge.setToolTip("Activity Tracking Status")
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
-        # Tracking controls
+        # Tracking controls (Internal, hidden from all users)
         # ------------------------------------------------------
 
         self.start_button = QPushButton("Start Tracking")
         self.start_button.setObjectName("PrimaryButton")
         self.start_button.clicked.connect(self.start_tracking)
-        header_layout.addWidget(self.start_button)
+        self.start_button.setVisible(False)
         self.start_button.hide()
+        header_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop Tracking")
         self.stop_button.setObjectName("SecondaryButton")
-        self.stop_button.clicked.connect(lambda: self.stop_tracking(manual=True))
+        self.stop_button.clicked.connect(lambda: self.stop_tracking(manual=False))
         self.stop_button.setEnabled(False)
+        self.stop_button.setVisible(False)
+        self.stop_button.hide()
         header_layout.addWidget(self.stop_button)
 
         self.user_button = QPushButton(
@@ -985,25 +970,26 @@ class MainWindow(QMainWindow):
         from services.session_service import SessionService
         session = SessionService().current_user
 
-        # Unconditionally hide "Stop Tracking" and "Start Tracking" buttons
+        # Unconditionally hide "Stop Tracking" and "Start Tracking" buttons for all users
+        self.stop_button.setVisible(False)
         self.stop_button.hide()
+        self.start_button.setVisible(False)
         self.start_button.hide()
         if hasattr(self, "tray") and self.tray:
-            self.tray.stop_action.setVisible(False)
+            if hasattr(self.tray, "stop_action") and self.tray.stop_action:
+                self.tray.stop_action.setVisible(False)
+            if hasattr(self.tray, "start_action") and self.tray.start_action:
+                self.tray.start_action.setVisible(False)
 
         if session and not session.tracking_permitted:
-            logger.info("Enforcing RBAC tracking restrictions: hiding tracking controls")
+            logger.info("Enforcing RBAC tracking restrictions: hiding tracking status")
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.hide()
             self.status_badge.hide()
-            if hasattr(self, "tray") and self.tray:
-                self.tray.start_action.setVisible(False)
         else:
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.show()
             self.status_badge.show()
-            if hasattr(self, "tray") and self.tray:
-                self.tray.start_action.setVisible(True)
 
         # Dynamic User / Device control visibility and access
         allow_user_device = getattr(session, "allow_user_device", True) if session else True

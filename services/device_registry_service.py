@@ -28,7 +28,22 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Threshold in seconds after which an inactive device is marked Offline / Not Recently Seen
-OFFLINE_THRESHOLD_SECONDS = 2 * 60 * 60  # 2 hours
+DEFAULT_OFFLINE_THRESHOLD_SECONDS = 2 * 60 * 60  # 2 hours
+OFFLINE_THRESHOLD_SECONDS = DEFAULT_OFFLINE_THRESHOLD_SECONDS
+
+
+def get_configured_offline_threshold() -> int:
+    """Retrieve the configurable server-side offline threshold in seconds."""
+    import os
+    env_val = os.environ.get("OFFLINE_THRESHOLD_SECONDS")
+    if env_val:
+        try:
+            val = int(env_val.strip())
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return DEFAULT_OFFLINE_THRESHOLD_SECONDS
 
 
 class DeviceRegistryService:
@@ -36,11 +51,13 @@ class DeviceRegistryService:
 
     _instance: Optional[DeviceRegistryService] = None
     _lock = threading.Lock()
+    _offline_alerted_devices: set[str] = set()
 
     def __new__(cls) -> DeviceRegistryService:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
+                cls._instance._offline_alerted_devices = set()
             return cls._instance
 
     @staticmethod
@@ -50,17 +67,20 @@ class DeviceRegistryService:
         last_seen: Optional[datetime] = None,
         has_failed: bool = False,
         failure_reason: Optional[str] = None,
+        threshold_seconds: Optional[int] = None,
     ) -> str:
         """Evaluate real-time update status for a device."""
         if has_failed or failure_reason:
             return "Update Failed"
+
+        effective_threshold = threshold_seconds or get_configured_offline_threshold()
 
         if last_seen:
             now = datetime.now(timezone.utc)
             # Normalize naive datetimes if needed
             if last_seen.tzinfo is None:
                 last_seen = last_seen.replace(tzinfo=timezone.utc)
-            if (now - last_seen).total_seconds() > OFFLINE_THRESHOLD_SECONDS:
+            if (now - last_seen).total_seconds() > effective_threshold:
                 return "Offline / Not Recently Seen"
 
         if latest_version and is_newer_version(latest_version, installed_version):
@@ -84,6 +104,15 @@ class DeviceRegistryService:
         version = installed_version or get_running_app_version()
         os_user = getpass.getuser()
         now = datetime.now(timezone.utc)
+
+        # Reset offline alert flag when device reports heartbeat again
+        with self._lock:
+            if dev_id in self._offline_alerted_devices:
+                self._offline_alerted_devices.discard(dev_id)
+                logger.info(
+                    "Device %s came back online. Offline alert flag reset for future events.",
+                    dev_id,
+                )
 
         db = get_session()
         try:
@@ -141,6 +170,15 @@ class DeviceRegistryService:
         """Update last_sync and last_seen timestamp on successful activity sync."""
         dev_id = device_identifier or get_device_identifier()
         now = datetime.now(timezone.utc)
+
+        with self._lock:
+            if dev_id in self._offline_alerted_devices:
+                self._offline_alerted_devices.discard(dev_id)
+                logger.info(
+                    "Device %s synced successfully. Offline alert flag reset.",
+                    dev_id,
+                )
+
         db = get_session()
         try:
             stmt = select(EnrolledDevice).where(EnrolledDevice.device_identifier == dev_id)
@@ -247,7 +285,7 @@ class DeviceRegistryService:
         finally:
             db.close()
 
-    def get_all_devices(self) -> List[Dict[str, Any]]:
+    def get_all_devices(self, threshold_seconds: Optional[int] = None) -> List[Dict[str, Any]]:
         """Retrieve all enrolled devices with refreshed real-time status."""
         db = get_session()
         try:
@@ -262,6 +300,7 @@ class DeviceRegistryService:
                     last_seen=d.last_seen,
                     has_failed=bool(d.failure_reason),
                     failure_reason=d.failure_reason,
+                    threshold_seconds=threshold_seconds,
                 )
                 result.append({
                     "id": d.id,
@@ -283,9 +322,9 @@ class DeviceRegistryService:
         finally:
             db.close()
 
-    def get_device_summary(self) -> Dict[str, int]:
+    def get_device_summary(self, threshold_seconds: Optional[int] = None) -> Dict[str, int]:
         """Return counts of devices grouped by update status."""
-        devices = self.get_all_devices()
+        devices = self.get_all_devices(threshold_seconds=threshold_seconds)
         summary = {
             "total": len(devices),
             "updated": 0,
@@ -306,3 +345,93 @@ class DeviceRegistryService:
                 summary["offline"] += 1
 
         return summary
+
+    # =========================================================================
+    # OFFLINE DEVICE FLEET MONITORING (FLEET STATUS ONLY - NOT UNINSTALL)
+    # =========================================================================
+
+    def reset_offline_alert(self, device_identifier: str) -> None:
+        """Reset offline tracking for a specific device identifier."""
+        with self._lock:
+            self._offline_alerted_devices.discard(device_identifier)
+
+    def clear_all_offline_alerts(self) -> None:
+        """Clear all recorded offline states."""
+        with self._lock:
+            self._offline_alerted_devices.clear()
+
+    def get_offline_alerted_devices(self) -> List[str]:
+        """Return list of device identifiers that are currently tracked offline."""
+        with self._lock:
+            return list(self._offline_alerted_devices)
+
+    def check_offline_devices(
+        self,
+        threshold_seconds: Optional[int] = None,
+        send_email: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scan enrolled devices to identify devices that are currently offline / inactive.
+
+        Note: Heartbeat timeout alone indicates network inactivity or offline status,
+        and is NEVER treated as an application uninstall. True uninstalls are reported
+        only via the uninstallation event lifecycle (services.uninstall_reporter).
+        """
+        effective_threshold = threshold_seconds or get_configured_offline_threshold()
+        now = datetime.now(timezone.utc)
+        offline_devices: List[Dict[str, Any]] = []
+
+        db = get_session()
+        try:
+            stmt = select(EnrolledDevice)
+            devices = db.execute(stmt).scalars().all()
+
+            for d in devices:
+                last_seen = d.last_seen or d.last_sync
+                if not last_seen:
+                    continue
+
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+
+                offline_duration = (now - last_seen).total_seconds()
+                if offline_duration > effective_threshold:
+                    dev_id = d.device_identifier
+                    with self._lock:
+                        already_tracked = dev_id in self._offline_alerted_devices
+
+                    # Fetch company code if available from current session or environment
+                    company_code = "N/A"
+                    try:
+                        from services.secure_session import SessionStore
+                        saved = SessionStore().load_session()
+                        if saved and saved.get("company_code"):
+                            company_code = saved["company_code"]
+                    except Exception:
+                        pass
+
+                    device_info = {
+                        "device_identifier": dev_id,
+                        "hostname": d.hostname,
+                        "platform": d.platform,
+                        "os_username": d.os_username,
+                        "employee_id": d.employee_id or "N/A",
+                        "username": d.username or d.os_username or "Unknown",
+                        "company_code": company_code,
+                        "installed_version": d.installed_version,
+                        "latest_version": d.latest_version or "N/A",
+                        "last_seen": last_seen.isoformat(),
+                        "offline_duration_seconds": int(offline_duration),
+                        "offline_threshold_seconds": effective_threshold,
+                    }
+
+                    with self._lock:
+                        self._offline_alerted_devices.add(dev_id)
+
+                    offline_devices.append(device_info)
+
+            return offline_devices
+        finally:
+            db.close()
+
+

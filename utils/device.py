@@ -120,21 +120,78 @@ def get_device_identifier() -> str:
     return identifier
 
 
+def get_dynamic_os_type() -> str:
+    """
+    Return dynamic operating-system type matching backend API expectations.
+
+    The backend expects 'window' on Windows (singular lowercase),
+    'macos' on macOS, and 'linux' on Linux.
+    """
+    system = platform.system().lower()
+    if "win" in system:
+        return "window"
+    elif "darwin" in system or "mac" in system:
+        return "macos"
+    elif "linux" in system:
+        return "linux"
+    return system
+
+
 def get_device_detail() -> str:
     """
-    Return a human-readable description of this machine.
+    Return a dynamically detected, human-readable description of this machine
+    (e.g., 'Dell Inc. Latitude 7490', 'Samsung PC', or 'MacBookPro18,1').
 
     Sent as ``device_detail``: the desktop equivalent of a handset model.
     """
+    system = platform.system()
 
+    if system == "Windows":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\BIOS",
+            ) as key:
+                try:
+                    mfg, _ = winreg.QueryValueEx(key, "SystemManufacturer")
+                except Exception:
+                    mfg = ""
+                try:
+                    prod, _ = winreg.QueryValueEx(key, "SystemProductName")
+                except Exception:
+                    prod = ""
+
+            mfg = str(mfg or "").strip()
+            prod = str(prod or "").strip()
+
+            # Ignore generic placeholders
+            generic = ("system manufacturer", "system product name", "to be filled by o.e.m.", "default string")
+            parts = []
+            if mfg and mfg.lower() not in generic:
+                parts.append(mfg)
+            if prod and prod.lower() not in generic:
+                parts.append(prod)
+
+            if parts:
+                return " ".join(" ".join(parts).split())
+        except Exception:
+            pass
+
+    elif system == "Darwin":
+        try:
+            import subprocess
+            model = subprocess.check_output(["sysctl", "-n", "hw.model"], text=True, timeout=3).strip()
+            if model:
+                return f"Apple {model}"
+        except Exception:
+            pass
+
+    # Fallback to system and machine architecture
     machine = platform.machine() or "unknown"
-
     release = platform.release() or ""
-
-    system = platform.system() or "unknown"
-
     detail = f"{system} {release} ({machine})".strip()
-
     return " ".join(detail.split())
 
 
@@ -144,6 +201,7 @@ def get_device_info() -> dict[str, str]:
     return {
         "device_identifier": get_device_identifier(),
         "device_detail": get_device_detail(),
+        "os_type": get_dynamic_os_type(),
         "hostname": socket.gethostname(),
         "platform": platform.system(),
         "os_username": _safe_username(),
@@ -156,3 +214,4 @@ def _safe_username() -> str:
 
     except Exception:  # noqa: BLE001
         return "unknown"
+

@@ -536,17 +536,8 @@ class ErrorReportService:
         return self._build_report_text(context)
 
     def _dispatch_email(self, context: dict[str, Any]) -> bool:
-        """Alias for dispatching report."""
-        if hasattr(self, "_send_smtp_message"):
-            try:
-                self._send_smtp_message("dummy", 25, "from", "to", "msg")
-            except Exception:
-                return False
+        """Alias for dispatching report via backend HTTP API."""
         return self._dispatch_via_backend(context)
-
-    def _send_smtp_message(self, *args: Any, **kwargs: Any) -> bool:
-        """No-op stub for backward compatibility with legacy tests."""
-        return False
 
     # ==============================================================
     # PUBLIC API
