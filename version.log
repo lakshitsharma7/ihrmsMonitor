@@ -1,0 +1,84 @@
+================================================================================
+iHRMS Monitor - Version History
+================================================================================
+Maintained automatically. Add a new block at the top for each release.
+Do not duplicate version entries. Preserve all previous entries below.
+================================================================================
+
+Version 2.0.1
+Date: 09-09-2026
+
+New Features:
+- Idle duration is now sent to the backend in the window_title field for idle
+  sessions, matching the value displayed on the Dashboard.
+- "Last successful sync" label added to the Dashboard status section.
+
+Improvements:
+- Login API payload updated to match actual backend requirements:
+    * imei_number is always sent as an empty string (desktop has no IMEI).
+    * os_type is dynamically detected (WINDOWS / MACOS) at runtime.
+    * device_detail is dynamically generated from the current machine.
+- Dashboard "Tracking & Sync Status" cleaned up:
+    * Removed "API Sync: Sent" row (redundant).
+    * Removed "Last successful API sync" row; renamed to "Last successful sync".
+- Installer shortcut permission issue fixed (PrivilegesRequired=lowest).
+- Embedded Python EXE startup issue resolved.
+- Device validation no longer relies on a hardcoded IMEI/device-ID retry loop.
+
+Bug Fixes:
+- Fixed stale device-ID candidate list being iterated on every login attempt.
+- Fixed window_title carrying the previous active-app title into idle records
+  sent to the API.
+- Fixed dashboard sync-error branch writing to a removed label.
+- Fixed Seqrite Endpoint Protection "Trusted Email Client" popup by replacing
+  direct SMTP socket connections from desktop EXE with backend HTTP API dispatch
+  and local file logging fallback.
+- Fixed API Sync failure details capturing (HTTP status, error responses, and
+  network timeouts) to prevent generic error displays and enable safe retry.
+- Fixed pre-update pending data flush session detection, lock acquisition, and
+  SessionStore fallback so 0-pending update proceeds immediately and pending data
+  is safely preserved without data loss during server interruptions.
+
+--------------------------------------------------------------------------------
+
+Version 2.0.0
+Date: 01-09-2026
+
+New Features:
+- Automatic application update system with force-update support.
+- Tracking resumes automatically after application restart (session persistence).
+- Company Code verification flow added to the login screen (two-step login).
+- Dynamic RBAC / permission flags pushed from server (tracking, logout, device).
+- Device enrollment via enroll_device API on first login.
+- Secure encrypted session storage across restarts.
+- System tray with live tracking controls and status.
+- Dashboard "Tracking & Sync Status" section with live counters.
+- Activity batch sync with pagination (batches of 25 records per request).
+- Screenshot capture on window switch and on custom interval.
+- Idle detection with configurable threshold (fetched from server settings).
+- Per-user activity isolation (multi-user support on shared machines).
+- Windows startup (auto-launch with system) support.
+- AppController endpoint for resolving company-specific API base URL.
+- Version check API integration (check_new_version) after login.
+
+Improvements:
+- Replaced hardcoded API URLs with company-code-resolved base URL.
+- Sync interval and idle threshold fetched dynamically from server each cycle.
+- Activity records deduplicated and sorted before submission.
+- Idle session idle_seconds accumulated correctly across multiple idle periods
+  within the same application session.
+- Single-instance guard using QLockFile to prevent duplicate background
+  processes conflicting on the SQLite database.
+- Sleep/resume handled: idle duration spanning system sleep is discarded.
+
+Bug Fixes:
+- Fixed activity sessions not closing correctly on application switch.
+- Fixed duplicate device enrollment on re-login.
+- Fixed screenshot not being associated with the correct server session ID.
+- Fixed settings not persisting across restarts when DB write failed.
+
+--------------------------------------------------------------------------------
+
+================================================================================
+End of version.log
+================================================================================

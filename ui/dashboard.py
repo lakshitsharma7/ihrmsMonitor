@@ -239,6 +239,7 @@ class DashboardPage(QWidget):
         self.update_status_label = QLabel(
             "Status: Updated"
         )
+        self.sync_status_label = self.update_status_label
 
         # Give them StatusLabel object names
         self.tracking_status_label.setObjectName("StatusLabel")

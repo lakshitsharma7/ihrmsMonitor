@@ -51,6 +51,7 @@ class SyncService:
 
     # Global tracking properties for UI dashboard display
     last_sync_status: str = "Sent"  # Sending / Sent / Failed
+    last_sync_error: str = ""
     last_successful_sync_time: str = "Never"
     records_currently_sending: int = 0
     current_sync_interval_seconds: int = 300  # Default 300 seconds until first API settings load
@@ -84,11 +85,22 @@ class SyncService:
         # Resolved from the fixed Company Code by ApiConfig, so the base URL
         # is defined in exactly one place for the whole application.
         if api_url is None:
-            from config.api_config import ApiConfig
+            try:
+                from config.api_config import ApiConfig
+                api_url = ApiConfig().base_url
+            except Exception:
+                api_url = None
 
-            api_url = ApiConfig().base_url
+            if not api_url:
+                try:
+                    from services.secure_session import SessionStore
+                    s = SessionStore().load_session()
+                    if s and s.get("base_url"):
+                        api_url = s.get("base_url")
+                except Exception:
+                    pass
 
-        self._api_url = api_url.rstrip("/")
+        self._api_url = (api_url or "").rstrip("/")
         self._synced_session_ids = set()
 
         # Restore last successfully received settings from persistent cache
@@ -348,6 +360,7 @@ class SyncService:
     def reset_sync_state(cls) -> None:
         """Reset sync status flags and counters when switching users or on logout."""
         cls.last_sync_status = "Sent"
+        cls.last_sync_error = ""
         cls.last_successful_sync_time = "Never"
         cls.records_currently_sending = 0
 
@@ -401,6 +414,7 @@ class SyncService:
     def sync_activity_now(
         self,
         exclude_session_ids: list[int] | set[int] | None = None,
+        timeout: float | None = 10.0,
     ) -> bool:
         """
         Immediately send activity data for the last 5 minutes.
@@ -409,7 +423,13 @@ class SyncService:
 
         It processes records in batches of 100 max, divided into 4 requests of 25 records each.
         """
-        if not self._sync_lock.acquire(blocking=False):
+        acquired = False
+        if timeout is not None and timeout > 0:
+            acquired = self._sync_lock.acquire(timeout=timeout)
+        else:
+            acquired = self._sync_lock.acquire(blocking=False)
+
+        if not acquired:
             logger.info("Activity sync already in progress; skipping duplicate trigger.")
             return False
 
@@ -419,7 +439,8 @@ class SyncService:
             device_token = self._require_device_token()
 
             if not device_token:
-                SyncService.last_sync_status = "Failed"
+                SyncService.last_sync_status = "Failed (No Device Token)"
+                SyncService.last_sync_error = "Device is not enrolled - no device token available."
                 SyncService.records_currently_sending = 0
                 logger.error("Sync FAILURE: No device token available - device is not enrolled.")
                 return False
@@ -513,10 +534,13 @@ class SyncService:
                         
                         res_data = self._send_request_with_retry(new_payload, page=page_num)
                         if not res_data or res_data.get("response") != "Success":
-                            error_msg = res_data.get("message") if res_data else "No response from server"
+                            error_msg = res_data.get("message") if res_data else (SyncService.last_sync_error or "No response from server")
                             logger.error("Activity sync batch page failed: %s. Halting sync.", error_msg)
-                            SyncService.last_sync_status = "Failed"
                             SyncService.records_currently_sending = 0
+                            if not SyncService.last_sync_error:
+                                SyncService.last_sync_error = str(error_msg)
+                            if SyncService.last_sync_status not in ("Failed", "Failed (Network Error)", "Failed (Timeout)") and not SyncService.last_sync_status.startswith("Failed ("):
+                                SyncService.last_sync_status = f"Failed ({error_msg[:25]})" if error_msg else "Failed"
                             try:
                                 from services.error_report_service import ErrorReportService
                                 ErrorReportService().report_error(
@@ -526,7 +550,7 @@ class SyncService:
                                         "endpoint": "/tracking/save_activity_batch",
                                         "api_url": self._api_url,
                                         "page": page_num,
-                                        "response_error": res_data,
+                                        "response_error": res_data or SyncService.last_sync_error,
                                     },
                                 )
                             except Exception:
@@ -610,6 +634,7 @@ class SyncService:
 
             from datetime import datetime, timedelta
             SyncService.last_sync_status = "Sent"
+            SyncService.last_sync_error = ""
             SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             SyncService.records_currently_sending = 0
 
@@ -632,7 +657,9 @@ class SyncService:
 
         except Exception as exc:
             logger.exception("Sync FAILURE: Unexpected error during activity sync: %s", exc)
-            SyncService.last_sync_status = "Failed"
+            SyncService.last_sync_error = str(exc)
+            if not SyncService.last_sync_status.startswith("Failed"):
+                SyncService.last_sync_status = "Failed"
             SyncService.records_currently_sending = 0
 
             from datetime import datetime, timedelta
@@ -684,24 +711,48 @@ class SyncService:
                 )
                 response.raise_for_status()
                 try:
-                    return response.json()
+                    data = response.json()
+                    SyncService.last_sync_error = ""
+                    return data
                 except Exception:
                     logger.exception("Failed to parse JSON response for page %d", page)
+                    SyncService.last_sync_error = f"Invalid JSON response: {response.text[:100]}"
+                    SyncService.last_sync_status = "Failed (Invalid JSON)"
                     return None
             except requests.RequestException as exc:
+                http_code = getattr(getattr(exc, "response", None), "status_code", None)
+                resp_text = getattr(getattr(exc, "response", None), "text", None)
+                if http_code:
+                    SyncService.last_sync_error = f"HTTP {http_code}: {resp_text[:120] if resp_text else exc}"
+                    SyncService.last_sync_status = f"Failed (HTTP {http_code})"
+                elif isinstance(exc, requests.exceptions.Timeout):
+                    SyncService.last_sync_error = f"Connection timed out: {exc}"
+                    SyncService.last_sync_status = "Failed (Timeout)"
+                elif isinstance(exc, requests.exceptions.ConnectionError):
+                    SyncService.last_sync_error = f"Server unreachable: {exc}"
+                    SyncService.last_sync_status = "Failed (Offline)"
+                else:
+                    SyncService.last_sync_error = str(exc)
+                    SyncService.last_sync_status = "Failed"
+
                 logger.warning(
-                    "[API_RESPONSE_ERROR] Activity sync page %d failed (attempt %d/%d): %s",
+                    "[API_RESPONSE_ERROR] Activity sync page %d failed (attempt %d/%d): %s (HTTP=%s Response=%s)",
                     page,
                     attempt,
                     retries,
                     exc,
+                    http_code,
+                    resp_text[:200] if resp_text else None,
                 )
                 if attempt == retries:
-                    logger.error("Activity sync failed after maximum retries. Error: %s", exc)
+                    logger.error(
+                        "Activity sync failed after maximum retries. URL=%s/tracking/save_activity_batch HTTP=%s Error: %s",
+                        self._api_url,
+                        http_code,
+                        exc,
+                    )
                     try:
                         from services.error_report_service import ErrorReportService
-                        http_code = getattr(getattr(exc, "response", None), "status_code", None)
-                        resp_text = getattr(getattr(exc, "response", None), "text", None)
                         ErrorReportService().report_error(
                             error_type="ACTIVITY_SYNC_ERROR",
                             error_message=f"Activity sync failed after {retries} retries: {exc}",
@@ -800,10 +851,22 @@ class SyncService:
                 idle_start_str = start_time_str
                 idle_end_str = end_time_str
 
+            # For idle sessions, send the human-readable idle duration as window_title
+            # so the backend receives the same value that the Dashboard displays.
+            # For active sessions the real window title is sent unchanged.
+            if is_idle:
+                if idle_seconds < 60:
+                    _idle_duration_str = f"{idle_seconds} seconds"
+                else:
+                    _idle_duration_str = f"{idle_seconds // 60} minutes {idle_seconds % 60} seconds"
+                _window_title_value = _idle_duration_str
+            else:
+                _window_title_value = session.window_title or ""
+
             activities.append({
                 "activity_session_id": session.id,
                 "application_name": session.application_name,
-                "window_title": session.window_title or "",
+                "window_title": _window_title_value,
                 "process_id": session.process_id,
                 "status": idle_status,
                 "idle_status": idle_status,

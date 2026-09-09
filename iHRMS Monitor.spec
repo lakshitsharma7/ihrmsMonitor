@@ -45,6 +45,7 @@ all_binaries = extra_binaries + shiboken_binaries + shiboken_explicit_binaries
 all_datas = [
     ('assets', 'assets'),
     ('VERSION', '.'),
+    ('version.log', '.'),
 ] + shiboken_datas
 
 a = Analysis(

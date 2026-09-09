@@ -567,6 +567,14 @@ def flush_pending_data_before_update(
         emp_id = session.employee_id if session else None
     except Exception:
         pass
+    if not emp_id:
+        try:
+            from services.secure_session import SessionStore
+            sdata = SessionStore().load_session()
+            if sdata:
+                emp_id = sdata.get("employee_id") or sdata.get("indo_code") or sdata.get("username")
+        except Exception:
+            pass
 
     # First check if there is any pending data
     db = get_session()
@@ -607,7 +615,7 @@ def flush_pending_data_before_update(
         if sync_service:
             try:
                 logger.info("Executing pre-update sync attempt %d/%d...", attempt, max_retries)
-                sync_service.sync_activity_now()
+                sync_service.sync_activity_now(timeout=10.0)
             except Exception as sync_err:
                 logger.exception("Pre-update sync attempt %d failed: %s", attempt, sync_err)
 

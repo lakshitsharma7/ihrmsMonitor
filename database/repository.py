@@ -614,9 +614,21 @@ class ActivityRepository:
                     employee_id = str(u.employee_id or u.indo_code or u.username or "")
             except Exception:
                 pass
+            if not employee_id:
+                try:
+                    from services.secure_session import SessionStore
+                    sdata = SessionStore().load_session()
+                    if sdata:
+                        employee_id = str(sdata.get("employee_id") or sdata.get("indo_code") or sdata.get("username") or "")
+                except Exception:
+                    pass
 
         if employee_id:
-            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+            stmt = stmt.where(
+                (ActivitySession.employee_id == employee_id)
+                | (ActivitySession.employee_id.is_(None))
+                | (ActivitySession.employee_id == "")
+            )
         else:
             return []
 
@@ -643,9 +655,21 @@ class ActivityRepository:
                     employee_id = str(u.employee_id or u.indo_code or u.username or "")
             except Exception:
                 pass
+            if not employee_id:
+                try:
+                    from services.secure_session import SessionStore
+                    sdata = SessionStore().load_session()
+                    if sdata:
+                        employee_id = str(sdata.get("employee_id") or sdata.get("indo_code") or sdata.get("username") or "")
+                except Exception:
+                    pass
 
         if employee_id:
-            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+            stmt = stmt.where(
+                (ActivitySession.employee_id == employee_id)
+                | (ActivitySession.employee_id.is_(None))
+                | (ActivitySession.employee_id == "")
+            )
         else:
             return []
 
@@ -677,9 +701,21 @@ class ActivityRepository:
                     employee_id = str(u.employee_id or u.indo_code or u.username or "")
             except Exception:
                 pass
+            if not employee_id:
+                try:
+                    from services.secure_session import SessionStore
+                    sdata = SessionStore().load_session()
+                    if sdata:
+                        employee_id = str(sdata.get("employee_id") or sdata.get("indo_code") or sdata.get("username") or "")
+                except Exception:
+                    pass
 
         if employee_id:
-            stmt = stmt.where(ActivitySession.employee_id == employee_id)
+            stmt = stmt.where(
+                (ActivitySession.employee_id == employee_id)
+                | (ActivitySession.employee_id.is_(None))
+                | (ActivitySession.employee_id == "")
+            )
 
         return self._session.execute(stmt).scalar() or 0
 
