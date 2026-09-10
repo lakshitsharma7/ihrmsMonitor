@@ -365,76 +365,18 @@ class DashboardPage(QWidget):
         middle_row.addWidget(
             today_group,
         )
-
-        # --------------------------------------------------------------
-        # Applications
-        # --------------------------------------------------------------
-
-        usage_group = QGroupBox(
-            "Applications"
-        )
-
-        usage_layout = QVBoxLayout(
-            usage_group
-        )
-
-        usage_layout.setContentsMargins(
-            10,
-            8,
-            10,
-            8,
-        )
-        usage_layout.setSpacing(0)
-
-        self.usage_table = ApplicationUsageTable()
-
-        usage_layout.addWidget(
-            self.usage_table
-        )
-
-        middle_row.addWidget(
-            usage_group,
-            stretch=1,
-        )
+        middle_row.addStretch(1)
 
         root.addLayout(
             middle_row,
-            stretch=1,
         )
+        root.addStretch(1)
 
-        # ==============================================================
-        # Activity Timeline
-        # ==============================================================
-
-        timeline_group = QGroupBox(
-            "Activity Timeline"
-        )
-
-        timeline_layout = QVBoxLayout(
-            timeline_group
-        )
-
-        timeline_layout.setContentsMargins(
-            10,
-            8,
-            10,
-            8,
-        )
-
-        timeline_layout.setSpacing(0)
-
-        # IMPORTANT:
-        # This is now a QTableWidget just like Applications.
+        # Retain table instances (hidden) for seamless data/test compatibility without rendering on Dashboard
+        self.usage_table = ApplicationUsageTable()
+        self.usage_table.setVisible(False)
         self.timeline_table = ActivityTimelineTable()
-
-        timeline_layout.addWidget(
-            self.timeline_table
-        )
-
-        root.addWidget(
-            timeline_group,
-            stretch=2,
-        )
+        self.timeline_table.setVisible(False)
 
     def update_tracker_state(
         self,
