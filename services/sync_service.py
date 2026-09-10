@@ -863,6 +863,25 @@ class SyncService:
             else:
                 _window_title_value = session.window_title or ""
 
+            try:
+                from utils.system_health import get_system_health
+                sys_health = get_system_health()
+            except Exception:
+                sys_health = {
+                    "cpu_usage_percent": 0.0,
+                    "cpu_logical_cores": 1,
+                    "ram_usage_percent": 0.0,
+                    "ram_total_mb": 0.0,
+                    "ram_used_mb": 0.0,
+                    "ram_available_mb": 0.0,
+                    "disk_usage_percent": 0.0,
+                    "disk_total_gb": 0.0,
+                    "disk_free_gb": 0.0,
+                    "network_status": "disconnected",
+                    "network_sent_mb": 0.0,
+                    "network_received_mb": 0.0,
+                }
+
             activities.append({
                 "activity_session_id": session.id,
                 "application_name": session.application_name,
@@ -889,6 +908,7 @@ class SyncService:
                 "idle_start_time": idle_start_str,
                 "idle_end": idle_end_str,
                 "idle_end_time": idle_end_str,
+                "system_health": sys_health,
             })
 
             totals_map[session.application_name] = totals_map.get(session.application_name, 0) + duration_seconds
