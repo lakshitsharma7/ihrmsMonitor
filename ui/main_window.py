@@ -1571,28 +1571,49 @@ class MainWindow(QMainWindow):
                 self._periodic_update_timer.stop()
             if hasattr(self, "_offline_update_retry_timer") and self._offline_update_retry_timer and self._offline_update_retry_timer.isActive():
                 self._offline_update_retry_timer.stop()
-            if hasattr(self, "_pipeline_worker") and self._pipeline_worker and self._pipeline_worker.isRunning():
-                self._pipeline_worker.cancel()
+            if hasattr(self, "_pipeline_worker") and self._pipeline_worker:
+                if self._pipeline_worker.isRunning():
+                    self._pipeline_worker.cancel()
+                    self._pipeline_worker.quit()
+                    self._pipeline_worker.wait(2000)
             from services.session_service import SessionService
             SessionService().unregister_permission_listener(self._apply_rbac_permissions)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Error stopping timers/listeners during shutdown: %s", e)
 
         try:
             if hasattr(self, "_tracker") and self._tracker:
                 self._tracker.stop()
-            QMetaObject.invokeMethod(
-                self._worker,
-                "stop_tracking",
-                Qt.ConnectionType.QueuedConnection,
-            )
+            if hasattr(self, "_worker") and self._worker:
+                from PySide6.QtCore import QThread
+                conn_type = (
+                    Qt.ConnectionType.DirectConnection
+                    if hasattr(self, "_thread") and self._thread and QThread.currentThread() == self._thread
+                    else Qt.ConnectionType.BlockingQueuedConnection
+                )
+                try:
+                    QMetaObject.invokeMethod(
+                        self._worker,
+                        "stop_tracking",
+                        conn_type,
+                    )
+                except Exception:
+                    QMetaObject.invokeMethod(
+                        self._worker,
+                        "stop_tracking",
+                        Qt.ConnectionType.QueuedConnection,
+                    )
         except Exception:
             logger.exception(
                 "Error stopping tracker during shutdown"
             )
 
-        self._thread.quit()
-        self._thread.wait(500)
+        if hasattr(self, "_thread") and self._thread:
+            if self._thread.isRunning():
+                self._thread.quit()
+                if not self._thread.wait(3000):
+                    self._thread.terminate()
+                    self._thread.wait(1000)
 
     # ==========================================================
     # AUTOMATIC UPDATES
@@ -1706,7 +1727,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Check for Updates", f"Update error ({phase}):\n{err_msg}")
 
             def on_ready_to_install(installer_path: str):
-                logger.info("Pipeline update ready to install received on Main Thread: %s", installer_path)
+                logger.info("Pipeline update ready to install received on Main Thread: %s (target_version=%s)", installer_path, self._latest_version)
                 self._latest_installer_path = installer_path
                 self._really_quit = True
                 if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
@@ -1715,7 +1736,7 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
                 from services.update_service import install_update_and_restart
-                install_update_and_restart(installer_path, exit_process=True)
+                install_update_and_restart(installer_path, target_version=self._latest_version, exit_process=True)
 
             self._pipeline_worker = UpdateService().start_pipeline(
                 api_url=api_url,

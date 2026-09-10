@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 # ==============================================================
 
 def parse_version(version_str: str) -> tuple[int, ...]:
-    """Parse a version string (e.g. '1.0.0', '2.18', 'v1.2.3') into a comparable tuple of integers."""
+    """Parse a version string (e.g. '1.0.0', '2.01', '2.18', 'v1.2.3') into a comparable tuple of integers."""
     if not version_str:
         return (0,)
     v = version_str.lstrip("vV").strip()
@@ -57,7 +57,12 @@ def parse_version(version_str: str) -> tuple[int, ...]:
     for p in parts:
         match = re.match(r"^\d+", p)
         if match:
-            nums.append(int(match.group()))
+            val_str = match.group()
+            if len(val_str) > 1 and val_str.startswith("0"):
+                for ch in val_str:
+                    nums.append(int(ch))
+            else:
+                nums.append(int(val_str))
         else:
             nums.append(0)
     return tuple(nums) if nums else (0,)
@@ -731,6 +736,31 @@ def verify_post_restart_update(running_version: str | None = None) -> tuple[bool
         return True, str(err)
 
 
+def get_installed_executable_path() -> Path:
+    """
+    Dynamically resolve the real installed iHRMS Monitor executable path on the user's machine.
+    Never points to development or workspace dist directories.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    prog_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    prog_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+
+    candidates = [
+        default_exe,
+        Path(prog_files) / "iHRMS Monitor" / "iHRMS Monitor.exe",
+        Path(prog_files_x86) / "iHRMS Monitor" / "iHRMS Monitor.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c.resolve()
+
+    return default_exe.resolve()
+
+
 _is_installing_update = False
 
 
@@ -804,13 +834,8 @@ def install_update_and_restart(
     update_log_path = log_dir / "update.log"
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
-    if getattr(sys, "frozen", False):
-        target_exe = Path(sys.executable).resolve()
-    elif Path("dist/iHRMS Monitor/iHRMS Monitor.exe").exists():
-        target_exe = Path("dist/iHRMS Monitor/iHRMS Monitor.exe").resolve()
-    else:
-        target_exe = default_exe.resolve()
+    default_exe = (Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe").resolve()
+    target_exe = get_installed_executable_path()
 
     app_dir = target_exe.parent
     update_file = path.resolve()
@@ -915,7 +940,7 @@ WriteLog "Starting background updater: targetExe=" & targetExe & " | updateFile=
 \' 1. Wait for old process (oldPid) to terminate
 Set objWMI = GetObject("winmgmts:\\\\.\\root\\cimv2")
 waited = 0
-Do While waited < 40
+Do While waited < 30
     Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
     If colProc.Count = 0 Then
         Exit Do
@@ -924,14 +949,13 @@ Do While waited < 40
     waited = waited + 1
 Loop
 
-Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
-If colProc.Count > 0 Then
-    WriteLog "Old process PID " & oldPid & " still active after 20s. Force terminating..."
-    wshShell.Run "taskkill /F /PID " & oldPid, 0, True
-    WScript.Sleep 1000
-Else
-    WriteLog "Old process PID " & oldPid & " terminated cleanly."
-End If
+\' Force terminate old process tree and any lingering instances to ensure file handles are released
+wshShell.Run "taskkill /F /PID " & oldPid & " /T", 0, True
+WScript.Sleep 500
+wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
+WScript.Sleep 1000
+
+WriteLog "All previous iHRMS Monitor processes terminated."
 
 \' 2. Clean single-instance lock file
 If fso.FileExists(lockPath) Then
@@ -947,14 +971,19 @@ success = False
 
 If isInstaller Then
     WriteLog "Running Inno Setup installer silently: " & updateFile & " /DIR=" & appDir
-    exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
-    WriteLog "Installer exit code: " & exitCode
-    If exitCode = 0 And (fso.FileExists(targetExe) Or fso.FileExists(appDir & "\iHRMS Monitor.exe") Or fso.FileExists(defaultExe)) Then
-        success = True
-        WriteLog "Installer finished successfully."
-    Else
-        WriteLog "Installer returned exit code " & exitCode
-    End If
+    For i = 1 To 2
+        exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
+        WriteLog "Installer attempt " & i & " exit code: " & exitCode
+        If exitCode = 0 Then
+            success = True
+            WriteLog "Installer finished successfully."
+            Exit For
+        Else
+            WriteLog "Installer attempt " & i & " returned code " & exitCode & ". Retrying after killing lingering processes..."
+            wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
+            WScript.Sleep 2000
+        End If
+    Next
 Else
     WriteLog "Performing direct EXE replacement: " & targetExe & " <= " & updateFile
     Dim bakFile
@@ -1052,7 +1081,7 @@ function Write-UpdateLog($msg) {{
 Write-UpdateLog "Starting PowerShell updater: targetExe=$targetExe | oldPid=$oldPid"
 
 $waited = 0
-while ($waited -lt 40) {{
+while ($waited -lt 30) {{
     if (-not (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {{
         break
     }}
@@ -1060,13 +1089,12 @@ while ($waited -lt 40) {{
     $waited++
 }}
 
-if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {{
-    Write-UpdateLog "Old process still active after 20s. Force stopping..."
-    Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-}} else {{
-    Write-UpdateLog "Old process terminated cleanly."
-}}
+Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+Stop-Process -Name "iHRMS Monitor" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+Write-UpdateLog "All previous iHRMS Monitor processes terminated."
 
 if (Test-Path $lockPath) {{
     Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
@@ -1078,12 +1106,18 @@ Start-Sleep -Seconds 1
 $success = $false
 if ($isInstaller) {{
     Write-UpdateLog "Executing installer: $updateFile"
-    $p = Start-Process -FilePath $updateFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=`"$appDir`"" -Wait -PassThru -WindowStyle Hidden
-    if ($p.ExitCode -eq 0 -and (Test-Path $targetExe -or (Test-Path "$appDir\\iHRMS Monitor.exe") -or (Test-Path $defaultExe))) {{
-        $success = $true
-        Write-UpdateLog "Installer completed successfully."
-    }} else {{
-        Write-UpdateLog "Installer exit code $($p.ExitCode)"
+    for ($i = 1; $i -le 2; $i++) {{
+        $p = Start-Process -FilePath $updateFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=`"$appDir`"" -Wait -PassThru -WindowStyle Hidden
+        Write-UpdateLog "Installer attempt $i exit code: $($p.ExitCode)"
+        if ($p.ExitCode -eq 0) {{
+            $success = $true
+            Write-UpdateLog "Installer completed successfully."
+            break
+        }} else {{
+            Write-UpdateLog "Installer attempt $i failed with code $($p.ExitCode). Retrying..."
+            Stop-Process -Name "iHRMS Monitor" -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }}
     }}
 }} else {{
     Write-UpdateLog "Direct EXE replacement: $targetExe <= $updateFile"
@@ -1114,8 +1148,8 @@ if ($isInstaller) {{
 $launchTarget = ""
 if (Test-Path $targetExe) {{
     $launchTarget = $targetExe
-}} elseif (Test-Path "$appDir\\iHRMS Monitor.exe") {{
-    $launchTarget = "$appDir\\iHRMS Monitor.exe"
+}} elseif (Test-Path (Join-Path $appDir "iHRMS Monitor.exe")) {{
+    $launchTarget = Join-Path $appDir "iHRMS Monitor.exe"
 }} elseif (Test-Path $defaultExe) {{
     $launchTarget = $defaultExe
 }}
@@ -1190,7 +1224,7 @@ Write-UpdateLog "PowerShell updater finished."
 
         is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
 
-        # 1. Close Qt windows and stop UI gracefully
+        # 1. Close Qt windows and stop all background workers gracefully
         try:
             from PySide6.QtWidgets import QApplication
             from PySide6.QtCore import QCoreApplication
@@ -1199,15 +1233,41 @@ Write-UpdateLog "PowerShell updater finished."
                 for widget in app.topLevelWidgets():
                     if hasattr(widget, "_really_quit"):
                         widget._really_quit = True
+                    if hasattr(widget, "_shutdown"):
+                        try:
+                            widget._shutdown()
+                        except Exception as s_err:
+                            logger.debug("Error in widget._shutdown(): %s", s_err)
                     try:
                         widget.close()
                     except Exception:
                         pass
+
+                # Stop active UpdatePipelineWorker thread if running
+                try:
+                    svc = UpdateService()
+                    if svc._pipeline_worker and svc._pipeline_worker.isRunning():
+                        svc._pipeline_worker.quit()
+                        if not svc._pipeline_worker.wait(3000):
+                            svc._pipeline_worker.terminate()
+                            svc._pipeline_worker.wait(1000)
+                except Exception:
+                    pass
+
+                # Dispose of database engine connection pools to release SQLite file handles
+                try:
+                    from database.database import get_engine
+                    engine = get_engine()
+                    if engine:
+                        engine.dispose()
+                except Exception:
+                    pass
+
                 if exit_process and not is_running_tests:
                     app.quit()
                     QCoreApplication.processEvents()
         except Exception as q_err:
-            logger.debug("Error closing Qt application: %s", q_err)
+            logger.debug("Error stopping application during update handoff: %s", q_err)
 
         # 2. Release lock file in Python
         try:
@@ -1226,6 +1286,7 @@ Write-UpdateLog "PowerShell updater finished."
 
         # 4. Immediate, definitive exit - releases all OS file locks immediately
         if exit_process and not is_running_tests:
+            time.sleep(0.5)
             os._exit(0)
 
         if not exit_process or is_running_tests:
@@ -1456,18 +1517,16 @@ class UpdatePipelineWorker(QThread):
 
             upload_success = flush_pending_data_before_update(max_retries=2, on_progress=_on_flush_progress, stop_tracker=False)
             if not upload_success:
-                err_msg = "Could not upload pending activity logs/screenshots. Update postponed."
-                logger.error("Pipeline: %s", err_msg)
-                try:
-                    from services.device_registry_service import DeviceRegistryService
-                    DeviceRegistryService().record_update_failure(err_msg, target_version=server_version)
-                except Exception:
-                    pass
-                self.error_occurred.emit("uploading_pending", err_msg)
-                return
+                logger.warning(
+                    "Pipeline: Pre-update upload encountered backend/network errors; all pending activity logs and screenshots "
+                    "remain safely preserved in local database for subsequent sync cycles. Proceeding to download update v%s.",
+                    server_version,
+                )
+                self.status_message.emit("Pending data saved locally. Proceeding with update...")
+            else:
+                self.status_message.emit("Pending data upload complete. Starting download...")
 
             self.progress_changed.emit(100, 100, 100)
-            self.status_message.emit("Pending data upload complete. Starting download...")
             self.upload_completed.emit()
 
             if self._is_cancelled:
@@ -1618,21 +1677,17 @@ class UpdatePipelineWorker(QThread):
             # --------------------------------------------------
             self.phase_changed.emit("installing", "Launching update installer and restarting...")
             self.status_message.emit("Launching update installer and restarting...")
-            self.ready_to_install.emit(str(installer_path))
 
             UpdateService()._downloaded_installer = str(installer_path)
             UpdateService()._available_version = server_version
             UpdateService()._is_force_update = force_update
 
-            # Finalize active tracking session and flush pending records right before installer execution
-            try:
-                flush_pending_data_before_update(max_retries=1, stop_tracker=True)
-            except Exception as final_flush_err:
-                logger.debug("Pre-restart flush warning: %s", final_flush_err)
+            # Emit ready_to_install signal
+            self.ready_to_install.emit(str(installer_path))
 
             # Automatically launch installer and restart application
-            time.sleep(0.5)
             install_update_and_restart(str(installer_path), target_version=server_version, exit_process=True)
+            return
 
         except Exception as err:
             logger.exception("Update pipeline error: %s", err)
@@ -1748,8 +1803,14 @@ class UpdateService(QObject):
             self._pipeline_worker.status_message.connect(on_status)
         if on_upload_completed:
             self._pipeline_worker.upload_completed.connect(on_upload_completed)
+
         if on_ready_to_install:
             self._pipeline_worker.ready_to_install.connect(on_ready_to_install)
+        else:
+            def _default_on_ready_to_install(installer_p: str):
+                install_update_and_restart(installer_p, target_version=self._available_version, exit_process=True)
+            self._pipeline_worker.ready_to_install.connect(_default_on_ready_to_install)
+
         if on_error:
             self._pipeline_worker.error_occurred.connect(on_error)
 
@@ -1819,7 +1880,9 @@ class UpdateService(QObject):
         if pre_flush:
             logger.info("Uploading pending activity and screenshot data prior to update...")
             if not flush_pending_data_before_update():
-                logger.error("Update aborted: pending activity/screenshot data could not be uploaded.")
-                return False
+                logger.warning(
+                    "Pre-update data flush encountered backend/network errors; all pending data remains safely "
+                    "stored in local database. Continuing with update installation."
+                )
 
         return install_update_and_restart(self._downloaded_installer, target_version=self._available_version)

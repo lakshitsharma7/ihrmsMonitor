@@ -673,8 +673,21 @@ class DashboardPage(QWidget):
             short_msg = str(error_message).strip()
             if "\n" in short_msg:
                 short_msg = short_msg.split("\n")[0].strip()
-            if len(short_msg) > 35:
-                short_msg = short_msg[:32] + "..."
+
+            # Clean redundant prefixes so the actual root reason/HTTP code is visible
+            for prefix in (
+                "Activity upload batch failed: ",
+                "Activity sync batch failed: ",
+                "Activity sync failed: ",
+                "Sync API fetch settings failed: ",
+                "Pre-update flush failed: ",
+            ):
+                if short_msg.startswith(prefix):
+                    short_msg = short_msg[len(prefix):].strip()
+                    break
+
+            if len(short_msg) > 60:
+                short_msg = short_msg[:57] + "..."
 
             err_upper = str(error_type).upper()
             if any(k in err_upper for k in ("SYNC", "UPLOAD", "API", "NETWORK", "HTTP")):

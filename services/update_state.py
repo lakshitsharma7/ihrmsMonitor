@@ -39,7 +39,15 @@ def _parse_version(v_str: str) -> tuple[int, ...]:
     nums = []
     for p in parts:
         m = re.match(r"^\d+", p)
-        nums.append(int(m.group()) if m else 0)
+        if m:
+            val_str = m.group()
+            if len(val_str) > 1 and val_str.startswith("0"):
+                for ch in val_str:
+                    nums.append(int(ch))
+            else:
+                nums.append(int(val_str))
+        else:
+            nums.append(0)
     return tuple(nums) if nums else (0,)
 
 

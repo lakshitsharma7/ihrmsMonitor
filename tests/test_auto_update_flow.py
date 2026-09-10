@@ -12,6 +12,19 @@ from config.api_config import ApiConfig
 
 
 class TestAutoUpdateFlow(unittest.TestCase):
+    def setUp(self):
+        try:
+            from services.update_state import UpdateStateManager
+            UpdateStateManager().clear_state()
+        except Exception:
+            pass
+
+    def tearDown(self):
+        try:
+            from services.update_state import UpdateStateManager
+            UpdateStateManager().clear_state()
+        except Exception:
+            pass
 
     def test_version_comparisons(self):
         # Current version 1.0.0
@@ -93,14 +106,14 @@ class TestAutoUpdateFlow(unittest.TestCase):
 
             self.assertTrue(len(upload_completed_events) > 0)
 
-    def test_pipeline_halts_and_emits_error_when_upload_fails(self):
-        """Pipeline halts before download/install if pre-flush fails."""
+    def test_pipeline_continues_when_upload_encounters_backend_error(self):
+        """Pipeline does not depend forever on pre-flush; pending data remains in DB and update proceeds."""
         from unittest.mock import patch, MagicMock
         from services.update_service import UpdatePipelineWorker
 
         worker = UpdatePipelineWorker(api_url="https://test.api")
-        error_events = []
-        worker.error_occurred.connect(lambda phase, err: error_events.append((phase, err)))
+        upload_completed_events = []
+        worker.upload_completed.connect(lambda: upload_completed_events.append(True))
 
         mock_v_resp = MagicMock()
         mock_v_resp.status_code = 200
@@ -118,10 +131,8 @@ class TestAutoUpdateFlow(unittest.TestCase):
 
             worker.run()
 
-            # Verify error occurred in uploading_pending phase
-            self.assertTrue(any(e[0] == "uploading_pending" for e in error_events))
-            # Verify install was NEVER called
-            mock_install.assert_not_called()
+            # Verify upload_completed was emitted so pipeline progresses to download/install
+            self.assertTrue(len(upload_completed_events) > 0)
 
     def test_update_dialog_auto_advance(self):
         """UpdateDialog automatically transitions states and auto-initiates install."""

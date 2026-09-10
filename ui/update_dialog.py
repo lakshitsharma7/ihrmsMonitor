@@ -266,4 +266,7 @@ class UpdateDialog(QDialog):
         if self._installer_path:
             self.status_label.setText("Starting update installer and restarting...")
             self.install_btn.setEnabled(False)
-            install_update_and_restart(self._installer_path)
+            parent_win = self.parent()
+            if parent_win and hasattr(parent_win, "_really_quit"):
+                parent_win._really_quit = True
+            install_update_and_restart(self._installer_path, target_version=self._version, exit_process=True)
