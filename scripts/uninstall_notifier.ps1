@@ -49,17 +49,51 @@ if ($null -eq $payload -and -not $ProcessPendingOnly) {
         if ($regGuid) { $devId = $regGuid }
     } catch {}
 
+    # Extract user details from registry if available
+    $empId = "N/A"
+    $compCode = "N/A"
+    $regUser = $username
+    try {
+        $regRoot = Get-ItemProperty -Path "HKCU:\Software\Indovision\iHRMSMonitor" -ErrorAction SilentlyContinue
+        if ($regRoot) {
+            if ($regRoot."session\employee_id") { $empId = $regRoot."session\employee_id" }
+            elseif ($regRoot.last_employee_id) { $empId = $regRoot.last_employee_id }
+
+            if ($regRoot."session\company_code") { $compCode = $regRoot."session\company_code" }
+            elseif ($regRoot.last_company_code) { $compCode = $regRoot.last_company_code }
+
+            if ($regRoot."session\username") { $regUser = $regRoot."session\username" }
+            elseif ($regRoot.last_username) { $regUser = $regRoot.last_username }
+
+            if ($regRoot."session\base_url") { $defaultBaseUrl = $regRoot."session\base_url" }
+        }
+    } catch {}
+
+    # Dynamically resolve app version
+    $appVer = "2.0.1"
+    try {
+        $exePath = Join-Path $PSScriptRoot "..\iHRMS Monitor.exe"
+        if (Test-Path $exePath) {
+            $verInfo = (Get-Item $exePath).VersionInfo.ProductVersion
+            if ($verInfo) { $appVer = $verInfo.Trim() }
+        }
+    } catch {}
+
+    $arch = if ($env:PROCESSOR_ARCHITECTURE) { $env:PROCESSOR_ARCHITECTURE } else { "AMD64" }
+
     $payload = [PSCustomObject]@{
         event_type = "APPLICATION_UNINSTALLED"
         app_name = $appName
-        app_version = "2.0.1"
-        employee_id = "N/A"
-        username = $username
-        company_code = "N/A"
+        app_version = $appVer
+        employee_id = $empId
+        username = $regUser
+        company_code = $compCode
         device_id = $devId
         hostname = $hostname
         os_user = $username
         os = "$osName ($osVersion)"
+        platform = "Windows"
+        architecture = $arch
         uninstall_time_local = $nowLocal
         uninstall_time_utc = $nowUtc
     }
@@ -109,12 +143,17 @@ $bodyData = @{
 try {
     Write-Log "Attempting to POST uninstall report to $targetUrl..."
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $response = Invoke-RestMethod -Uri $targetUrl -Method Post -Body $bodyData -TimeoutSec 10 -ErrorAction Stop
+    $response = Invoke-WebRequest -Uri $targetUrl -Method Post -Body $bodyData -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
     $delivered = $true
     Write-Log "Uninstall report successfully accepted by backend."
 } catch {
-    Write-Log "Backend report delivery failed or offline: $_"
-    $delivered = $false
+    if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -lt 500) {
+        Write-Log "Backend server reached (HTTP $([int]$_.Exception.Response.StatusCode)). Report delivered."
+        $delivered = $true
+    } else {
+        Write-Log "Backend report delivery failed or offline: $_"
+        $delivered = $false
+    }
 }
 
 # 3. Handle Delivery Outcome

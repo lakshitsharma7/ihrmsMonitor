@@ -68,11 +68,20 @@ def collect_uninstall_context(
     if not (resolved_emp_id and resolved_username and resolved_company):
         try:
             from services.secure_session import SessionStore
-            saved = SessionStore().load_session()
+            store = SessionStore()
+            saved = store.load_session()
             if saved:
                 resolved_emp_id = resolved_emp_id or saved.get("employee_id")
                 resolved_username = resolved_username or saved.get("username")
                 resolved_company = resolved_company or saved.get("company_code")
+            
+            # Additional fallback to direct settings keys
+            if not resolved_emp_id:
+                resolved_emp_id = store.settings.value("session/employee_id") or store.settings.value("last_employee_id")
+            if not resolved_username:
+                resolved_username = store.settings.value("session/username") or store.settings.value("last_username")
+            if not resolved_company:
+                resolved_company = store.settings.value("session/company_code") or store.settings.value("last_company_code")
         except Exception:
             pass
 

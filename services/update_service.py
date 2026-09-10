@@ -29,7 +29,10 @@ from utils.logger import get_logger
 from utils.paths import get_updates_directory, get_app_data_directory
 
 API_TIMEOUT_SECONDS = 15
-DEFAULT_CENTRAL_VERSION_URL = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
+DEFAULT_CENTRAL_VERSION_URL = os.environ.get(
+    "IHRMS_VERSION_URL",
+    "https://indovisionservices.in/info/dev/v15/acitivity-tracker",
+)
 
 CACHE_BUST_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",

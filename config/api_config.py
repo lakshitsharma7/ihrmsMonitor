@@ -47,9 +47,9 @@ logger = get_logger(__name__)
 # it is always supplied by the user - there is no default and no fallback.
 # ==================================================================
 
-APP_CONTROLLER_URL = (
-    "https://info.indovisionservices.in/dev/v15/hrms_api/v7/api"
-    "/appcontroller/appcontroller"
+APP_CONTROLLER_URL = os.environ.get(
+    "IHRMS_APP_CONTROLLER_URL",
+    "https://info.indovisionservices.in/dev/v15/hrms_api/v7/api/appcontroller/appcontroller",
 )
 
 # How long to wait for the App Controller bootstrap call.
