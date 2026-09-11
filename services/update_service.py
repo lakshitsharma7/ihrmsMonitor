@@ -261,7 +261,11 @@ class UpdateCheckWorker(QThread):
             # 2. Company Endpoint (/punch/check_new_version)
             # ----------------------------------------------------------
             if not server_version or server_version.upper() == "NA":
-                check_url = f"{self._api_url}/punch/check_new_version"
+                try:
+                    from config.api_config import ApiConfig
+                    check_url = ApiConfig().check_version_url
+                except Exception:
+                    check_url = f"{self._api_url}/punch/check_new_version"
                 payload = {
                     "indo_code": self._indo_code,
                     "key": self._api_key,
@@ -1431,7 +1435,11 @@ class UpdatePipelineWorker(QThread):
             # 2. Company Endpoint (/punch/check_new_version)
             # --------------------------------------------------
             if not server_version or server_version.upper() == "NA":
-                check_url = f"{self._api_url}/punch/check_new_version"
+                try:
+                    from config.api_config import ApiConfig
+                    check_url = ApiConfig().check_version_url
+                except Exception:
+                    check_url = f"{self._api_url}/punch/check_new_version"
                 payload = {
                     "indo_code": self._indo_code,
                     "key": self._api_key,

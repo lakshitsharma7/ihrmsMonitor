@@ -854,7 +854,7 @@ class LoginWindow(QMainWindow):
             return
 
         api_url = api_config.base_url
-        url = f"{api_url}/login/login"
+        url = api_config.login_url
 
         from utils.device import get_device_info, get_dynamic_os_type
 
@@ -947,7 +947,7 @@ class LoginWindow(QMainWindow):
                 try:
                     os_name = platform.system().upper()
                     os_type = "MACOS" if os_name == "DARWIN" else "WINDOWS"
-                    version_url = f"{api_url}/punch/check_new_version"
+                    version_url = api_config.check_version_url
                     version_data = {
                         "indo_code": indo_code,
                         "key": api_key,
@@ -1017,7 +1017,7 @@ class LoginWindow(QMainWindow):
                 # ----------------------------------------------
                 # Device Enrollment
                 # ----------------------------------------------
-                enroll_url = f"{api_url}/tracking/enroll_device"
+                enroll_url = api_config.enroll_device_url
 
                 enroll_data = {
                     "indo_code": indo_code,

@@ -412,15 +412,13 @@ class ErrorReportService:
         """
         try:
             from config.api_config import ApiConfig
-            base_url = ApiConfig().base_url
+            report_url = ApiConfig().report_error_url
         except Exception:
             logger.debug(
                 "ErrorReportService: no verified API base URL available; "
                 "skipping backend dispatch."
             )
             return False
-
-        report_url = f"{base_url}/tracking/report_error"
 
         # Build a compact form-data payload — consistent with other tracking
         # endpoints that already use requests.post(data=...).

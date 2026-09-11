@@ -241,6 +241,13 @@ class ActivityTracker:
 
             self._last_screenshot_time = self._clock()
 
+            # Record system and tracking start time
+            try:
+                from services.attendance_service import AttendanceService
+                AttendanceService().record_tracking_start()
+            except Exception as att_err:
+                logger.debug("Could not record tracking start time in AttendanceService: %s", att_err)
+
             logger.info(
                 "Activity tracker started"
             )

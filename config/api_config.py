@@ -398,6 +398,90 @@ class ApiConfig:
         """Version URL configured in AppController (fallback to activity_tracker_link)."""
         return self._details.get("version_url") or self._details.get("activity_tracker_link")
 
+    @property
+    def punch_url(self) -> str | None:
+        """Configurable punch endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_PUNCH_API_URL")
+            or self._details.get("punch_url")
+            or self._details.get("punch_api_url")
+            or (self.endpoint("punch/get_punch_time") if self.is_verified else None)
+        )
+        if url and not (url.lower().endswith("get_punch_time") or url.lower().endswith("get_punch_time/")):
+            if url.rstrip("/").lower().endswith("punch"):
+                url = f"{url.rstrip('/')}/get_punch_time"
+            else:
+                url = f"{url.rstrip('/')}/punch/get_punch_time"
+        return url
+
+    @property
+    def login_url(self) -> str:
+        """Configurable login endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_LOGIN_API_URL")
+            or self._details.get("login_url")
+            or self._details.get("login_api_url")
+            or self.endpoint("login/login")
+        )
+
+    @property
+    def enroll_device_url(self) -> str:
+        """Configurable device enrollment endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_ENROLL_DEVICE_API_URL")
+            or self._details.get("enroll_device_url")
+            or self._details.get("enroll_url")
+            or self.endpoint("tracking/enroll_device")
+        )
+
+    @property
+    def get_settings_url(self) -> str:
+        """Configurable get_settings endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_GET_SETTINGS_API_URL")
+            or self._details.get("get_settings_url")
+            or self._details.get("settings_url")
+            or self.endpoint("tracking/get_settings")
+        )
+
+    @property
+    def save_activity_batch_url(self) -> str:
+        """Configurable activity batch save endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_SAVE_ACTIVITY_BATCH_API_URL")
+            or self._details.get("save_activity_batch_url")
+            or self._details.get("activity_batch_url")
+            or self.endpoint("tracking/save_activity_batch")
+        )
+
+    @property
+    def upload_screenshot_url(self) -> str:
+        """Configurable screenshot upload endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_UPLOAD_SCREENSHOT_API_URL")
+            or self._details.get("upload_screenshot_url")
+            or self._details.get("screenshot_url")
+            or self.endpoint("tracking/upload_screenshot")
+        )
+
+    @property
+    def check_version_url(self) -> str:
+        """Configurable check new version endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_CHECK_VERSION_API_URL")
+            or self._details.get("check_version_url")
+            or self.endpoint("punch/check_new_version")
+        )
+
+    @property
+    def report_error_url(self) -> str:
+        """Configurable error report endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_REPORT_ERROR_API_URL")
+            or self._details.get("report_error_url")
+            or self.endpoint("tracking/report_error")
+        )
+
     def endpoint(
         self,
         path: str,

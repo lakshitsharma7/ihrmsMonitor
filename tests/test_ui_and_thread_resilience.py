@@ -47,7 +47,7 @@ class TestUIAndThreadResilience(unittest.TestCase):
         svc = SyncService(api_url="https://test.api")
         
         # Simulate lock already held by another thread
-        acquired = svc._sync_lock.acquire(blocking=False)
+        acquired = svc._sync_lock.acquire(timeout=5.0)
         self.assertTrue(acquired)
         try:
             # Calling sync_activity_now while lock is held must return False immediately

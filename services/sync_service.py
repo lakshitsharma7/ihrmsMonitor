@@ -139,6 +139,42 @@ class SyncService:
             self.current_idle_threshold_seconds,
         )
 
+    @property
+    def get_settings_url(self) -> str:
+        """Dynamic get_settings endpoint URL."""
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if cfg.is_verified or os.environ.get("IHRMS_GET_SETTINGS_API_URL"):
+                return cfg.get_settings_url
+        except Exception:
+            pass
+        return f"{self._api_url}/tracking/get_settings"
+
+    @property
+    def save_activity_batch_url(self) -> str:
+        """Dynamic save_activity_batch endpoint URL."""
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if cfg.is_verified or os.environ.get("IHRMS_SAVE_ACTIVITY_BATCH_API_URL"):
+                return cfg.save_activity_batch_url
+        except Exception:
+            pass
+        return f"{self._api_url}/tracking/save_activity_batch"
+
+    @property
+    def upload_screenshot_url(self) -> str:
+        """Dynamic upload_screenshot endpoint URL."""
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if cfg.is_verified or os.environ.get("IHRMS_UPLOAD_SCREENSHOT_API_URL"):
+                return cfg.upload_screenshot_url
+        except Exception:
+            pass
+        return f"{self._api_url}/tracking/upload_screenshot"
+
     def fetch_settings(self) -> dict:
         """
         Fetch latest configuration from tracking/get_settings at the beginning of each sync cycle
@@ -153,7 +189,7 @@ class SyncService:
             if not device_token:
                 return {}
             response = requests.post(
-                f"{self._api_url}/tracking/get_settings",
+                self.get_settings_url,
                 data={"device_token": device_token},
                 timeout=5,
             )
@@ -448,6 +484,13 @@ class SyncService:
             # Fetch latest settings from existing API and apply returned values
             self.fetch_settings()
 
+            # Non-blocking punch time check from dynamic Punch API (rate-limited internally)
+            try:
+                from services.attendance_service import AttendanceService
+                AttendanceService().fetch_punch_time()
+            except Exception as punch_err:
+                logger.debug("Non-blocking punch time check skipped: %s", punch_err)
+
             from datetime import datetime, timedelta
             next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
             next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -516,7 +559,11 @@ class SyncService:
                         import json
                         new_payload = {
                             "device_token": device_token,
-                            "sessions": json.dumps(payload["activities"])
+                            "system_started_at": payload.get("system_started_at"),
+                            "tracking_started_at": payload.get("tracking_started_at"),
+                            "punch_in": payload.get("punch_in"),
+                            "punch_out": payload.get("punch_out"),
+                            "sessions": json.dumps(payload["activities"]),
                         }
 
                         logger.info(
@@ -698,7 +745,7 @@ class SyncService:
         for attempt in range(1, retries + 1):
             try:
                 response = requests.post(
-                    f"{self._api_url}/tracking/save_activity_batch",
+                    self.save_activity_batch_url,
                     data=payload,
                     timeout=15,
                 )
@@ -882,6 +929,17 @@ class SyncService:
                     "network_received_mb": 0.0,
                 }
 
+            try:
+                from services.attendance_service import AttendanceService
+                att_ctx = AttendanceService().get_daily_attendance(local_start.strftime("%Y-%m-%d"))
+            except Exception:
+                att_ctx = {
+                    "system_started_at": None,
+                    "tracking_started_at": None,
+                    "punch_in": None,
+                    "punch_out": None,
+                }
+
             activities.append({
                 "activity_session_id": session.id,
                 "application_name": session.application_name,
@@ -909,6 +967,10 @@ class SyncService:
                 "idle_end": idle_end_str,
                 "idle_end_time": idle_end_str,
                 "system_health": sys_health,
+                "system_started_at": att_ctx.get("system_started_at"),
+                "tracking_started_at": att_ctx.get("tracking_started_at"),
+                "punch_in": att_ctx.get("punch_in"),
+                "punch_out": att_ctx.get("punch_out"),
             })
 
             totals_map[session.application_name] = totals_map.get(session.application_name, 0) + duration_seconds
@@ -922,6 +984,17 @@ class SyncService:
         ]
         totals.sort(key=lambda item: item["total_duration_seconds"], reverse=True)
 
+        try:
+            from services.attendance_service import AttendanceService
+            today_att = AttendanceService().get_daily_attendance()
+        except Exception:
+            today_att = {
+                "system_started_at": None,
+                "tracking_started_at": None,
+                "punch_in": None,
+                "punch_out": None,
+            }
+
         return {
             "device": {
                 "username": self._get_username(),
@@ -932,6 +1005,10 @@ class SyncService:
                 "from_": sync_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "to": sync_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
+            "system_started_at": today_att.get("system_started_at"),
+            "tracking_started_at": today_att.get("tracking_started_at"),
+            "punch_in": today_att.get("punch_in"),
+            "punch_out": today_att.get("punch_out"),
             "activities": activities,
             "totals": totals,
             "page": page,
@@ -1423,7 +1500,7 @@ class SyncService:
             )
 
             response = requests.post(
-                f"{self._api_url}/tracking/upload_screenshot",
+                self.upload_screenshot_url,
                 files=files,
                 data=data,
                 timeout=60,
