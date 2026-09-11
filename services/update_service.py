@@ -48,17 +48,20 @@ logger = get_logger(__name__)
 # ==============================================================
 
 def parse_version(version_str: str) -> tuple[int, ...]:
-    """Parse a version string (e.g. '1.0.0', '2.01', '2.18', 'v1.2.3') into a comparable tuple of integers."""
+    """Parse a version string (e.g. '1.0.0', '2.0.1', '2.0.2', '2.1', 'v1.2.3') into a comparable tuple of integers."""
     if not version_str:
         return (0,)
-    v = version_str.lstrip("vV").strip()
+    v = str(version_str).lstrip("vV").strip()
+    if v.upper() in ("NA", "NONE", "NULL", ""):
+        return (0,)
     parts = re.split(r"[.\-_]", v)
     nums = []
     for p in parts:
         match = re.match(r"^\d+", p)
         if match:
             val_str = match.group()
-            if len(val_str) > 1 and val_str.startswith("0"):
+            # If a two-digit decimal like '01' in '2.01', split into digits unless all zeros
+            if len(val_str) > 1 and val_str.startswith("0") and not all(c == "0" for c in val_str):
                 for ch in val_str:
                     nums.append(int(ch))
             else:
@@ -70,6 +73,8 @@ def parse_version(version_str: str) -> tuple[int, ...]:
 
 def is_newer_version(server_version: str, current_version: str | None = None) -> bool:
     """Return True if server_version is strictly newer than current_version."""
+    if not server_version or str(server_version).strip().upper() in ("NA", "NONE", "NULL", ""):
+        return False
     if current_version is None:
         current_version = get_running_app_version()
     try:

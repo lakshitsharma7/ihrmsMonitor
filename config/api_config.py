@@ -482,6 +482,39 @@ class ApiConfig:
             or self.endpoint("tracking/report_error")
         )
 
+    @property
+    def get_kra_url(self) -> str | None:
+        """Configurable KRA / Task fetch endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_GET_KRA_API_URL")
+            or self._details.get("get_kra_url")
+            or self._details.get("kra_url")
+            or (self.endpoint("TaskPMS/get_kra") if self.is_verified else None)
+        )
+        return url
+
+    @property
+    def get_draft_kra_date_url(self) -> str | None:
+        """Configurable Draft KRA fetch endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_GET_DRAFT_KRA_DATE_API_URL")
+            or self._details.get("get_draft_kra_date_url")
+            or self._details.get("draft_kra_date_url")
+            or (self.endpoint("TaskPMS/get_draft_kra_date") if self.is_verified else None)
+        )
+        return url
+
+    @property
+    def get_submit_kra_date_url(self) -> str | None:
+        """Configurable Submit KRA fetch endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_GET_SUBMIT_KRA_DATE_API_URL")
+            or self._details.get("get_submit_kra_date_url")
+            or self._details.get("submit_kra_date_url")
+            or (self.endpoint("TaskPMS/get_submit_kra_date_v2") if self.is_verified else None)
+        )
+        return url
+
     def endpoint(
         self,
         path: str,
