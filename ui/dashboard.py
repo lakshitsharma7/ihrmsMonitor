@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import threading
+from typing import Any
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QFrame,
@@ -20,14 +21,63 @@ from PySide6.QtWidgets import (
 
 from config.settings import get_running_app_version
 from services.activity_service import ActivityService
+from services.attendance_service import AttendanceService
+from services.task_service import TaskService
 from tracker.activity_tracker import TrackerState
 from ui.activity_table import (
     ActivityTimelineTable,
     ApplicationUsageTable,
 )
+from ui.task_table import AssignedTasksTable
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _format_time_ampm(time_val: Any) -> str | None:
+    """Convert datetime or time string to user-friendly HH:MM AM/PM format."""
+    if not time_val:
+        return None
+    s = str(time_val).strip()
+    if not s or s.lower() in ("none", "null", "-", "00:00:00"):
+        return None
+
+    # Already contains AM/PM
+    if "am" in s.lower() or "pm" in s.lower():
+        return s
+
+    # Full datetime string "YYYY-MM-DD HH:MM:SS"
+    if len(s) >= 19 and s[4] == "-" and s[7] == "-":
+        try:
+            dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%I:%M %p")
+        except Exception:
+            pass
+
+    # Time string "HH:MM:SS" or "HH:MM"
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+            dt = datetime(2000, 1, 1, hour, minute)
+            return dt.strftime("%I:%M %p")
+        except Exception:
+            pass
+
+    return s
+
+
+def format_hh_mm_ss(total_seconds: Any) -> str:
+    """Format total seconds strictly as HH:MM:SS format."""
+    try:
+        s = max(0, int(total_seconds or 0))
+    except Exception:
+        s = 0
+    h = s // 3600
+    m = (s % 3600) // 60
+    sec = s % 60
+    return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
 class DashboardPage(QWidget):
@@ -72,6 +122,31 @@ class DashboardPage(QWidget):
 
         self._build_ui()
 
+        try:
+            att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
+            self._update_attendance_ui(att)
+        except Exception:
+            pass
+
+    def _update_attendance_ui(self, attendance: dict) -> None:
+        """Update Start Time and Punch Time labels based on daily attendance."""
+        if not isinstance(attendance, dict):
+            return
+
+        start_val = attendance.get("tracking_started_at") or attendance.get("system_started_at")
+        start_formatted = _format_time_ampm(start_val)
+        if start_formatted:
+            self.start_time_label.setText(f"Start Time: {start_formatted}")
+        else:
+            self.start_time_label.setText("Start Time: --:-- --")
+
+        punch_val = attendance.get("punch_in")
+        punch_formatted = _format_time_ampm(punch_val)
+        if punch_formatted:
+            self.punch_time_label.setText(f"Punch Time: {punch_formatted}")
+        else:
+            self.punch_time_label.setText("Punch Time: Not Punched")
+
     def _save_persisted_today_seconds(self, seconds: int, cal_date) -> None:
         try:
             from services.secure_session import SessionStore
@@ -97,279 +172,203 @@ class DashboardPage(QWidget):
         """Build the dashboard interface."""
 
         # The dashboard lives inside a scroll area so that a short window
-        # scrolls instead of clipping the Activity Timeline off the bottom.
+        # scrolls cleanly without clipping content off the bottom.
         page_layout = QVBoxLayout(self)
-
         page_layout.setContentsMargins(0, 0, 0, 0)
-
         page_layout.setSpacing(0)
 
         scroll = QScrollArea()
-
         scroll.setWidgetResizable(True)
-
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
         content = QWidget()
-
         root = QVBoxLayout(content)
-
-        root.setContentsMargins(14, 8, 14, 14)
-
-        root.setSpacing(10)
+        root.setContentsMargins(16, 12, 16, 16)
+        root.setSpacing(12)
 
         scroll.setWidget(content)
-
         page_layout.addWidget(scroll)
 
-        # Top Row containing Current Application and Tracking & Sync Status
+        # ==============================================================
+        # 1. Top Row: [ Today's Time ] [ Attendance ] [ Tracking & Sync Status ]
+        # ==============================================================
         top_row = QHBoxLayout()
-        top_row.setSpacing(10)
+        top_row.setSpacing(12)
 
-        # ==============================================================
-        # Current Application
-        # ==============================================================
+        # --------------------------------------------------------------
+        # 1. Today's Time
+        # Two equal side-by-side sections: Active Time and Idle Time (HH:MM:SS)
+        # --------------------------------------------------------------
+        today_group = QGroupBox("Today's Time")
+        today_layout = QVBoxLayout(today_group)
+        today_layout.setContentsMargins(14, 12, 14, 12)
+        today_layout.setSpacing(6)
 
-        current_group = QGroupBox(
-            "Current Application"
+        times_row = QHBoxLayout()
+        times_row.setSpacing(16)
+
+        # Active Time Section (Left)
+        active_layout = QVBoxLayout()
+        active_layout.setSpacing(4)
+        active_title = QLabel("Active Time")
+        active_title.setObjectName("StatusLabel")
+        active_title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500;")
+        self.active_time_val_label = QLabel(
+            format_hh_mm_ss(self._cached_today_total_seconds)
         )
+        self.active_time_val_label.setObjectName("TimeValueLabel")
+        self.active_time_val_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        active_layout.addWidget(active_title)
+        active_layout.addWidget(self.active_time_val_label)
+        times_row.addLayout(active_layout, stretch=1)
 
-        current_layout = QVBoxLayout(
-            current_group
+        # Idle Time Section (Right)
+        idle_layout = QVBoxLayout()
+        idle_layout.setSpacing(4)
+        idle_title = QLabel("Idle Time")
+        idle_title.setObjectName("StatusLabel")
+        idle_title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500;")
+        self.today_idle_val_label = QLabel(
+            format_hh_mm_ss(self._cached_today_idle)
         )
+        self.today_idle_val_label.setObjectName("TimeValueLabel")
+        self.today_idle_val_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        idle_layout.addWidget(idle_title)
+        idle_layout.addWidget(self.today_idle_val_label)
+        times_row.addLayout(idle_layout, stretch=1)
 
-        current_layout.setContentsMargins(
-            12,
-            10,
-            12,
-            10,
+        # Retain aliases for backward and test compatibility
+        self.active_time_label = self.active_time_val_label
+        self.today_idle_label = self.today_idle_val_label
+
+        # Retain hidden widgets for test suite and backward compatibility
+        self.today_total_label = QLabel(
+            ActivityService.format_duration(self._cached_today_total_seconds)
         )
+        self.today_total_label.setVisible(False)
 
-        current_layout.setSpacing(4)
+        self.refresh_button = QPushButton("↻ Refresh")
+        self.refresh_button.setVisible(False)
+        self.refresh_button.clicked.connect(lambda: self.refresh(async_mode=True))
 
-        self.current_app_label = QLabel(
-            "Not tracking"
-        )
+        self.weekly_timeline_button = QPushButton("Weekly Timeline →")
+        self.weekly_timeline_button.setObjectName("WeeklyTimelineButton")
+        self.weekly_timeline_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.weekly_timeline_button.setToolTip("View weekly active usage graph (Monday–Sunday)")
+        self.weekly_timeline_button.clicked.connect(self.weekly_timeline_requested.emit)
 
-        self.current_app_label.setObjectName(
-            "CurrentAppName"
-        )
+        today_layout.addStretch(1)
+        today_layout.addLayout(times_row)
+        today_layout.addSpacing(6)
+        today_layout.addWidget(self.weekly_timeline_button)
+        today_layout.addStretch(1)
 
-        self.current_window_label = QLabel(
-            ""
-        )
-
-        self.current_window_label.setObjectName(
-            "CurrentWindowTitle"
-        )
-
-        current_layout.addWidget(
-            self.current_app_label
-        )
-
-        current_layout.addWidget(
-            self.current_window_label
-        )
-
-        self.current_window_label.setWordWrap(True)
-
-        current_layout.addStretch()
-
-        current_group.setSizePolicy(
+        today_group.setMinimumHeight(135)
+        today_group.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
+        )
+        top_row.addWidget(today_group, stretch=1)
+
+        # --------------------------------------------------------------
+        # 2. Attendance (Start Time & Punch Time)
+        # --------------------------------------------------------------
+        attendance_group = QGroupBox("Attendance")
+        attendance_layout = QVBoxLayout(attendance_group)
+        attendance_layout.setContentsMargins(14, 12, 14, 12)
+        attendance_layout.setSpacing(8)
+
+        self.start_time_label = QLabel("Start Time: --:-- --")
+        self.start_time_label.setObjectName("StatusLabel")
+
+        self.punch_time_label = QLabel("Punch Time: Not Punched")
+        self.punch_time_label.setObjectName("StatusLabel")
+
+        attendance_layout.addStretch(1)
+        attendance_layout.addWidget(self.start_time_label)
+        attendance_layout.addSpacing(8)
+        attendance_layout.addWidget(self.punch_time_label)
+        attendance_layout.addStretch(1)
+
+        attendance_group.setMinimumHeight(135)
+        attendance_group.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
+        top_row.addWidget(attendance_group, stretch=1)
 
-        top_row.addWidget(
-            current_group,
-            stretch=1,
-        )
+        # --------------------------------------------------------------
+        # 3. Tracking & Sync Status
+        # Contains ONLY: Tracking, Idle Time, Records uploading,
+        # Records Uploaded, Version, Status
+        # --------------------------------------------------------------
+        status_group = QGroupBox("Tracking && Sync Status")
+        status_grid = QGridLayout(status_group)
+        status_grid.setContentsMargins(14, 12, 14, 12)
+        status_grid.setHorizontalSpacing(18)
+        status_grid.setVerticalSpacing(8)
 
-        # ==============================================================
-        # Tracking & Sync Status
-        # ==============================================================
+        self.tracking_status_label = QLabel("Tracking: Inactive")
+        self.tracking_status_label.setObjectName("StatusLabel")
 
-        status_group = QGroupBox(
-            "Tracking && Sync Status"
-        )
+        self.idle_time_label = QLabel("Idle Time: 0 seconds")
+        self.idle_time_label.setObjectName("StatusLabel")
 
-        status_grid = QGridLayout(
-            status_group
-        )
+        self.unsynced_records_label = QLabel("Records uploading: 0")
+        self.unsynced_records_label.setObjectName("StatusLabel")
 
-        status_grid.setContentsMargins(
-            12,
-            10,
-            12,
-            10,
-        )
+        self.version_label = QLabel(f"Version: {get_running_app_version()}")
+        self.version_label.setObjectName("StatusLabel")
 
-        status_grid.setHorizontalSpacing(16)
-        status_grid.setVerticalSpacing(4)
+        self.records_uploaded_label = QLabel("Records Uploaded: 0")
+        self.records_uploaded_label.setObjectName("StatusLabel")
 
-        self.tracking_status_label = QLabel(
-            "Tracking: Inactive"
-        )
-
-
-        self.last_sync_label = QLabel(
-            "Last successful sync: Never"
-        )
-
-        self.records_uploaded_label = QLabel(
-            "Records Uploaded: 0"
-        )
-
-        self.unsynced_records_label = QLabel(
-            "Records uploading: 0"
-        )
-
-        self.idle_time_label = QLabel(
-            "Idle Time: 0 seconds"
-        )
-
-        self.version_label = QLabel(
-            f"Version: {get_running_app_version()}"
-        )
-
-        self.update_status_label = QLabel(
-            "Status: Updated"
-        )
+        self.update_status_label = QLabel("Status: Updated")
+        self.update_status_label.setObjectName("StatusLabel")
         self.sync_status_label = self.update_status_label
 
-        # Give them StatusLabel object names
-        self.tracking_status_label.setObjectName("StatusLabel")
-        self.last_sync_label.setObjectName("StatusLabel")
-        self.records_uploaded_label.setObjectName("StatusLabel")
-        self.unsynced_records_label.setObjectName("StatusLabel")
-        self.idle_time_label.setObjectName("StatusLabel")
-        self.version_label.setObjectName("StatusLabel")
-        self.update_status_label.setObjectName("StatusLabel")
+        # Retained internally for seamless background updates and test compatibility
+        self.last_sync_label = QLabel("Last successful sync: Never")
+        self.last_sync_label.setVisible(False)
+        self.current_app_label = QLabel("Not tracking")
+        self.current_app_label.setVisible(False)
+        self.current_window_label = QLabel("")
+        self.current_window_label.setVisible(False)
 
-        # Column 0
+        # 6-item symmetrical grid (3 rows x 2 cols)
         status_grid.addWidget(self.tracking_status_label, 0, 0)
-        status_grid.addWidget(self.records_uploaded_label, 1, 0)
-        status_grid.addWidget(self.last_sync_label, 2, 0)
-
-        # Column 1
         status_grid.addWidget(self.idle_time_label, 0, 1)
-        status_grid.addWidget(self.unsynced_records_label, 1, 1)
-        status_grid.addWidget(self.version_label, 2, 1)
-        status_grid.addWidget(self.update_status_label, 3, 1)
 
+        status_grid.addWidget(self.unsynced_records_label, 1, 0)
+        status_grid.addWidget(self.version_label, 1, 1)
+
+        status_grid.addWidget(self.records_uploaded_label, 2, 0)
+        status_grid.addWidget(self.update_status_label, 2, 1)
+
+        status_group.setMinimumHeight(135)
         status_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-
-        top_row.addWidget(
-            status_group,
-            stretch=1,
-        )
+        top_row.addWidget(status_group, stretch=1)
 
         root.addLayout(top_row)
 
         # ==============================================================
-        # Today's Time + Applications
+        # 2. Below Top Row: Assigned Tasks (Full Width)
         # ==============================================================
+        tasks_group = QGroupBox("Assigned Tasks")
+        tasks_layout = QVBoxLayout(tasks_group)
+        tasks_layout.setContentsMargins(14, 12, 14, 12)
+        tasks_layout.setSpacing(6)
 
-        middle_row = QHBoxLayout()
-        middle_row.setSpacing(10)
+        self.task_table = AssignedTasksTable()
+        tasks_layout.addWidget(self.task_table)
 
-        # --------------------------------------------------------------
-        # Today's Time
-        # --------------------------------------------------------------
-
-        today_group = QGroupBox(
-            "Today's Time"
-        )
-
-        today_layout = QVBoxLayout(
-            today_group
-        )
-
-        today_layout.setContentsMargins(
-            12,
-            10,
-            12,
-            10,
-        )
-
-        today_layout.setSpacing(6)
-
-        self.today_total_label = QLabel(
-            ActivityService.format_duration(self._cached_today_total_seconds)
-        )
-
-        self.today_total_label.setObjectName(
-            "BigTimeLabel"
-        )
-
-        self.today_total_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        self.refresh_button = QPushButton(
-            "↻ Refresh"
-        )
-        self.refresh_button.setObjectName(
-            "RefreshButton"
-        )
-        self.refresh_button.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        self.refresh_button.setToolTip(
-            "Refresh today's activity sessions and timeline"
-        )
-        self.refresh_button.clicked.connect(
-            lambda: self.refresh(async_mode=True)
-        )
-
-        self.weekly_timeline_button = QPushButton(
-            "Weekly Timeline →"
-        )
-        self.weekly_timeline_button.setObjectName(
-            "WeeklyTimelineButton"
-        )
-        self.weekly_timeline_button.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        self.weekly_timeline_button.setToolTip(
-            "View weekly active usage graph (Monday–Sunday)"
-        )
-        self.weekly_timeline_button.clicked.connect(
-            self.weekly_timeline_requested.emit
-        )
-
-        today_layout.addStretch(1)
-        today_layout.addWidget(
-            self.today_total_label
-        )
-        today_layout.addSpacing(4)
-        today_layout.addWidget(
-            self.refresh_button
-        )
-        today_layout.addSpacing(4)
-        today_layout.addWidget(
-            self.weekly_timeline_button
-        )
-        today_layout.addStretch(1)
-
-        today_group.setMinimumWidth(180)
-        today_group.setMaximumWidth(210)
-
-        middle_row.addWidget(
-            today_group,
-        )
-        middle_row.addStretch(1)
-
-        root.addLayout(
-            middle_row,
-        )
+        root.addWidget(tasks_group)
         root.addStretch(1)
 
         # Retain table instances (hidden) for seamless data/test compatibility without rendering on Dashboard
@@ -453,12 +452,20 @@ class DashboardPage(QWidget):
             self._cached_today_total_seconds = 0
             self._cached_today_idle = 0
             self._save_persisted_today_seconds(0, current_date)
+            self.active_time_val_label.setText("00:00:00")
+            self.today_idle_val_label.setText("00:00:00")
             self.today_total_label.setText(ActivityService.format_duration(0))
+            try:
+                att = AttendanceService().get_daily_attendance(current_date.strftime("%Y-%m-%d"))
+                self._update_attendance_ui(att)
+            except Exception:
+                pass
 
         # Continuous accumulation throughout the day:
         # If tracking is active and user is not idle, accumulate active tracked time
         if state.is_tracking and not state.is_idle:
             self._cached_today_total_seconds += 1
+            self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
             self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
             if self._cached_today_total_seconds % 5 == 0:
                 self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
@@ -491,6 +498,7 @@ class DashboardPage(QWidget):
                         self._cached_today_total_seconds = total_seconds
                     else:
                         self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
+                    self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
                     self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
                     self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
             except Exception as err:
@@ -506,6 +514,7 @@ class DashboardPage(QWidget):
             try:
                 today_idle = self._service.get_today_total_idle_seconds()
                 self._cached_today_idle = today_idle
+                self.today_idle_val_label.setText(format_hh_mm_ss(today_idle))
                 if self.idle_time_label.text() == "Idle Time: 0 seconds" and today_idle > 0:
                     if today_idle < 60:
                         self.idle_time_label.setText(f"Idle Time: {today_idle} seconds")
@@ -520,6 +529,19 @@ class DashboardPage(QWidget):
                 self.timeline_table.set_entries(timeline)
             except Exception as err:
                 logger.debug("Sync refresh timeline error: %s", err)
+
+            try:
+                tasks = TaskService().fetch_assigned_tasks(force=True)
+                self.task_table.set_tasks(tasks)
+            except Exception as err:
+                logger.debug("Sync refresh tasks error: %s", err)
+
+            try:
+                AttendanceService().fetch_punch_time(force=True)
+                att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
+                self._update_attendance_ui(att)
+            except Exception as err:
+                logger.debug("Sync refresh attendance error: %s", err)
             return
 
         if getattr(self, "_is_refreshing", False):
@@ -532,11 +554,30 @@ class DashboardPage(QWidget):
                 uploaded_count = self._service.get_uploaded_records_count()
                 today_idle = self._service.get_today_total_idle_seconds()
                 timeline = self._service.get_today_timeline()
+                try:
+                    tasks = TaskService().fetch_assigned_tasks()
+                except Exception as task_err:
+                    logger.debug("Async fetch tasks error: %s", task_err)
+                    tasks = []
+
+                try:
+                    AttendanceService().fetch_punch_time()
+                    attendance = AttendanceService().get_daily_attendance()
+                except Exception as att_err:
+                    logger.debug("Async fetch attendance error: %s", att_err)
+                    try:
+                        attendance = AttendanceService().get_daily_attendance()
+                    except Exception:
+                        attendance = {}
+
                 data = {
                     "total_seconds": total_seconds,
                     "uploaded_count": uploaded_count,
                     "today_idle": today_idle,
                     "timeline": timeline,
+                    "tasks": tasks,
+                    "task_error": TaskService().last_error,
+                    "attendance": attendance,
                 }
                 self.data_refreshed.emit(data)
             except Exception as err:
@@ -559,6 +600,7 @@ class DashboardPage(QWidget):
                 else:
                     self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
 
+                self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
                 self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
                 self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
@@ -568,6 +610,7 @@ class DashboardPage(QWidget):
 
             today_idle = data.get("today_idle", 0)
             self._cached_today_idle = today_idle
+            self.today_idle_val_label.setText(format_hh_mm_ss(today_idle))
             if self.idle_time_label.text() == "Idle Time: 0 seconds" and today_idle > 0:
                 if today_idle < 60:
                     self.idle_time_label.setText(f"Idle Time: {today_idle} seconds")
@@ -577,6 +620,16 @@ class DashboardPage(QWidget):
             timeline = data.get("timeline", [])
             self.usage_table.set_entries(timeline)
             self.timeline_table.set_entries(timeline)
+
+            tasks = data.get("tasks")
+            if tasks is not None:
+                self.task_table.set_tasks(tasks)
+            elif data.get("task_error"):
+                self.task_table.show_error(data.get("task_error"))
+
+            attendance = data.get("attendance")
+            if attendance:
+                self._update_attendance_ui(attendance)
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 

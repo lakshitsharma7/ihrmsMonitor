@@ -57,18 +57,20 @@ QMainWindow {
 
 QGroupBox {
     background-color: #ffffff;
-    border: 1px solid #e0e0e0;
+    border: 1px solid #dfe3eb;
     border-radius: 8px;
     margin-top: 10px;
-    padding: 16px 12px 12px 12px;
+    padding: 16px 14px 12px 14px;
     font-weight: 600;
+    font-size: 13px;
 }
 
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
-    color: #444444;
+    left: 12px;
+    padding: 0 6px;
+    color: #374151;
+    font-weight: 600;
 }
 
 QPushButton {
@@ -110,64 +112,65 @@ QPushButton#SecondaryButton:hover {
 QPushButton#RefreshButton {
     background-color: #ffffff;
     color: #1a73e8;
-    border: 1px solid #c2e7ff;
+    border: 1px solid #bfdbfe;
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 7px 14px;
     font-weight: 600;
     font-size: 12px;
 }
 
 QPushButton#RefreshButton:hover {
-    background-color: #eaf1fd;
-    border-color: #1a73e8;
-    color: #1765cc;
+    background-color: #eff6ff;
+    border-color: #3b82f6;
+    color: #1d4ed8;
 }
 
 QPushButton#WeeklyTimelineButton {
     background-color: #f0f7ff;
     color: #1a73e8;
-    border: 1px solid #c2e7ff;
+    border: 1px solid #bfdbfe;
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 7px 14px;
     font-weight: 600;
     font-size: 12px;
 }
 
 QPushButton#WeeklyTimelineButton:hover {
     background-color: #e0f2fe;
-    border-color: #7dd3fc;
-    color: #0284c7;
+    border-color: #38bdf8;
+    color: #0369a1;
 }
 
 QTableWidget {
     background-color: #ffffff;
-    alternate-background-color: #f8f9fb;
-    border: 1px solid #e0e0e0;
+    alternate-background-color: #f8fafc;
+    border: 1px solid #dfe3eb;
     border-radius: 6px;
-    gridline-color: #f0f0f0;
+    gridline-color: #f1f5f9;
 }
 
 QTableWidget::item {
-    padding: 0 8px;
-    color: #202124;
+    padding: 4px 10px;
+    color: #1e293b;
     border: none;
 }
 
 QHeaderView {
-    background-color: #fafafa;
+    background-color: #f8fafc;
 }
 
 QHeaderView::section {
-    background-color: #fafafa;
-    color: #5f6368;
-    padding: 6px 8px;
+    background-color: #f8fafc;
+    color: #475569;
+    padding: 8px 10px;
     border: none;
-    border-bottom: 1px solid #e0e0e0;
+    border-bottom: 1px solid #e2e8f0;
     font-weight: 600;
+    font-size: 12px;
 }
 
 QTableCornerButton::section {
-    background-color: #fafafa;
+    background-color: #f8fafc;
     border: none;
 }
 

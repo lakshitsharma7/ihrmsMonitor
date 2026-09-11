@@ -671,7 +671,12 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.stop_button.setVisible(False)
         self.stop_button.hide()
-        header_layout.addWidget(self.stop_button)
+        self.refresh_button = QPushButton("↻ Refresh")
+        self.refresh_button.setObjectName("SecondaryButton")
+        self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_button.setToolTip("Refresh today's activity, attendance, and tasks")
+        self.refresh_button.clicked.connect(self._on_header_refresh_clicked)
+        header_layout.addWidget(self.refresh_button)
 
         self.user_button = QPushButton(
             "User / Device"
@@ -761,6 +766,13 @@ class MainWindow(QMainWindow):
         )
 
         self.dashboard_page.refresh()
+
+    def _on_header_refresh_clicked(self) -> None:
+        """Trigger asynchronous dashboard and timeline refresh from top header button."""
+        if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
+            self.dashboard_page.refresh(async_mode=True)
+        if hasattr(self, "weekly_page") and self.weekly_page is not None and hasattr(self, "tabs") and self.tabs.currentWidget() == self.weekly_page:
+            self.weekly_page.refresh()
 
     # ==========================================================
     # USER / DEVICE
