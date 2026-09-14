@@ -1433,22 +1433,25 @@ class ActivityTracker:
             else:
                 effective_idle = float(self._last_resumed_idle_seconds)
 
+        if self._is_idle:
+            idle_int = max(0, int(effective_idle))
+            h = idle_int // 3600
+            m = (idle_int % 3600) // 60
+            s = idle_int % 60
+            idle_win_title = f"Idle - {h:02d}:{m:02d}:{s:02d}"
+            app_name = self._current.application_name if self._current else (self._idle_application_name or "Idle")
+        else:
+            idle_win_title = self._current.window_title if self._current else None
+            app_name = self._current.application_name if self._current else None
+
         return TrackerState(
             is_tracking=self._is_tracking,
 
             is_idle=self._is_idle,
 
-            current_application=(
-                self._current.application_name
-                if self._current
-                else None
-            ),
+            current_application=app_name,
 
-            current_window_title=(
-                self._current.window_title
-                if self._current
-                else None
-            ),
+            current_window_title=idle_win_title,
 
             idle_seconds=effective_idle,
         )

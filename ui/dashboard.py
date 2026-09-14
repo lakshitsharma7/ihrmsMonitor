@@ -394,11 +394,11 @@ class DashboardPage(QWidget):
 
         elif state.is_idle:
             self.current_app_label.setText(
-                "Idle"
+                state.current_application or "Idle"
             )
 
             self.current_window_label.setText(
-                ""
+                state.current_window_title or ""
             )
 
         elif state.current_application:

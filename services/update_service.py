@@ -990,6 +990,23 @@ If fso.FileExists(lockPath) Then
     WriteLog "Deleted lock file: " & lockPath
 End If
 
+\' 2b. Verify target executable is fully unlocked before running installer
+If fso.FileExists(targetExe) Then
+    Dim lockWaited, testFile
+    lockWaited = 0
+    Do While lockWaited < 20
+        Err.Clear
+        Set testFile = fso.OpenTextFile(targetExe, 8, False)
+        If Err.Number = 0 Then
+            testFile.Close
+            WriteLog "Verified target executable file lock is released: " & targetExe
+            Exit Do
+        End If
+        WScript.Sleep 500
+        lockWaited = lockWaited + 1
+    Loop
+End If
+
 WScript.Sleep 500
 
 \' 3. Execute installation or direct executable replacement
@@ -1129,6 +1146,24 @@ Write-UpdateLog "All previous iHRMS Monitor processes terminated."
 if (Test-Path $lockPath) {{
     Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
     Write-UpdateLog "Deleted lock file: $lockPath"
+}}
+
+if (Test-Path $targetExe) {{
+    $lockWaited = 0
+    while ($lockWaited -lt 20) {{
+        try {{
+            $stream = [System.IO.File]::Open($targetExe, 'Open', 'ReadWrite', 'None')
+            if ($stream) {{
+                $stream.Close()
+                $stream.Dispose()
+                Write-UpdateLog "Verified target executable file lock is released: $targetExe"
+                break
+            }}
+        }} catch {{
+            Start-Sleep -Milliseconds 500
+            $lockWaited++
+        }}
+    }}
 }}
 
 Start-Sleep -Milliseconds 500
