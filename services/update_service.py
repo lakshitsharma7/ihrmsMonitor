@@ -837,10 +837,8 @@ def install_update_and_restart(
         return False
 
     updates_dir = get_updates_directory()
-    from utils.paths import get_app_data_directory
-    log_dir = get_app_data_directory() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    update_log_path = log_dir / "update.log"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    update_log_path = updates_dir / "updater.log"
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     default_exe = (Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe").resolve()
@@ -872,33 +870,40 @@ def install_update_and_restart(
         logger.debug("Could not record install start in update state: %s", state_err)
 
     # ----------------------------------------------------------
-    # 1. Backward-compatible silent_update.bat (kept for test assertions)
+    # 1. Backward-compatible silent_update.bat (kept for test assertions & legacy fallback)
     # ----------------------------------------------------------
     bat_path = updates_dir / "silent_update.bat"
     bat_content = f"""@echo off
 setlocal
-rem 1. Wait for parent process to exit and release file handles
+rem 1. Log to updater.log
+echo %date% %time% ^| [UPDATER-BAT] Starting batch updater for target: {target_exe} (PID: {current_pid}) >> "{update_log_path}"
+
+rem 2. Wait for parent process to exit and release file handles
 timeout /t 1 /nobreak > NUL
 
-rem 2. Terminate running instance if still shutting down
+rem 3. Terminate running instance if still shutting down
+taskkill /F /PID {current_pid} > NUL 2>&1
 taskkill /F /IM "iHRMS Monitor.exe" > NUL 2>&1
-
-rem 3. Brief wait for file unlock
 timeout /t 1 /nobreak > NUL
 
 rem 4. Clear single-instance lock file so new app starts without delay
 if exist "{lock_file_path}" del /f /q "{lock_file_path}" > NUL 2>&1
 
 rem 5. Execute Inno Setup installer silently
-start "" /wait "{update_file}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /SP-
+echo %date% %time% ^| [UPDATER-BAT] Executing installer: {update_file} >> "{update_log_path}"
+start "" /wait "{update_file}" /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR="{app_dir}"
+echo %date% %time% ^| [UPDATER-BAT] Installer finished with exit code %errorlevel% >> "{update_log_path}"
 
 rem 6. Wait for installer completion
 timeout /t 1 /nobreak > NUL
 
-rem 7. Launch updated application
+rem 7. Launch updated application with appDir as working directory
+cd /d "{app_dir}"
 if exist "{target_exe}" (
+    echo %date% %time% ^| [UPDATER-BAT] Launching application: {target_exe} >> "{update_log_path}"
     start "" "{target_exe}"
 ) else if exist "{default_exe}" (
+    echo %date% %time% ^| [UPDATER-BAT] Launching fallback application: {default_exe} >> "{update_log_path}"
     start "" "{default_exe}"
 )
 
@@ -921,7 +926,7 @@ Option Explicit
 
 Dim fso, wshShell, objWMI, colProc
 Dim oldPid, targetExe, updateFile, targetVersion, appDir, defaultExe, logPath, lockPath, isInstaller
-Dim logFile, i, waited, exitCode, success, launchTarget
+Dim logFile, i, waited, exitCode, success, launchTarget, installedVer, procRunning
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set wshShell = CreateObject("WScript.Shell")
@@ -937,11 +942,14 @@ lockPath = "{str(lock_file_path)}"
 isInstaller = {vbs_is_installer_str}
 
 On Error Resume Next
+If Not fso.FolderExists(fso.GetParentFolderName(logPath)) Then
+    fso.CreateFolder(fso.GetParentFolderName(logPath))
+End If
 Set logFile = fso.OpenTextFile(logPath, 8, True)
 
 Sub WriteLog(msg)
     On Error Resume Next
-    logFile.WriteLine Now & " | [UPDATER] " & msg
+    logFile.WriteLine Now & " | [UPDATER-VBS] " & msg
 End Sub
 
 WriteLog "Starting background updater: targetExe=" & targetExe & " | updateFile=" & updateFile & " | targetVersion=" & targetVersion & " | oldPid=" & oldPid & " | isInstaller=" & isInstaller
@@ -950,15 +958,24 @@ WriteLog "Starting background updater: targetExe=" & targetExe & " | updateFile=
 Set objWMI = GetObject("winmgmts:\\\\.\\root\\cimv2")
 waited = 0
 Do While waited < 30
-    Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
-    If colProc.Count = 0 Then
+    procRunning = False
+    If Not objWMI Is Nothing Then
+        Set colProc = objWMI.ExecQuery("Select ProcessId from Win32_Process Where ProcessId = " & oldPid)
+        If Not colProc Is Nothing Then
+            If colProc.Count > 0 Then
+                procRunning = True
+            End If
+        End If
+    End If
+    If Not procRunning Then
+        WriteLog "Old process (PID " & oldPid & ") terminated."
         Exit Do
     End If
     WScript.Sleep 500
     waited = waited + 1
 Loop
 
-\' Force terminate old process tree and any lingering instances to ensure file handles are released
+\' Terminate lingering instances if any to release file handles
 wshShell.Run "taskkill /F /PID " & oldPid & " /T", 0, True
 WScript.Sleep 500
 wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
@@ -973,28 +990,28 @@ If fso.FileExists(lockPath) Then
     WriteLog "Deleted lock file: " & lockPath
 End If
 
-WScript.Sleep 1000
+WScript.Sleep 500
 
 \' 3. Execute installation or direct executable replacement
 success = False
 
 If isInstaller Then
-    WriteLog "Running Inno Setup installer silently: " & updateFile & " /DIR=" & appDir
+    WriteLog "Executing Inno Setup installer silently: " & updateFile & " /DIR=" & appDir
     For i = 1 To 2
         exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & appDir & Chr(34), 0, True)
         WriteLog "Installer attempt " & i & " exit code: " & exitCode
         If exitCode = 0 Then
             success = True
-            WriteLog "Installer finished successfully."
+            WriteLog "Installer completed successfully with exit code 0."
             Exit For
         Else
-            WriteLog "Installer attempt " & i & " returned code " & exitCode & ". Retrying after killing lingering processes..."
+            WriteLog "Installer attempt " & i & " failed with exit code " & exitCode & ". Retrying..."
             wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
             WScript.Sleep 2000
         End If
     Next
 Else
-    WriteLog "Performing direct EXE replacement: " & targetExe & " <= " & updateFile
+    WriteLog "Direct EXE replacement: " & targetExe & " <= " & updateFile
     Dim bakFile
     bakFile = targetExe & ".bak"
 
@@ -1039,25 +1056,28 @@ Else
     End If
 End If
 
-\' 4. Launch Target Executable
+\' 4. Verify Installed Executable & Version and Launch
 launchTarget = ""
 If fso.FileExists(targetExe) Then
     launchTarget = targetExe
-ElseIf fso.FileExists(appDir & "\iHRMS Monitor.exe") Then
-    launchTarget = appDir & "\iHRMS Monitor.exe"
+ElseIf fso.FileExists(appDir & "\\iHRMS Monitor.exe") Then
+    launchTarget = appDir & "\\iHRMS Monitor.exe"
 ElseIf fso.FileExists(defaultExe) Then
     launchTarget = defaultExe
 End If
 
 If launchTarget <> "" Then
-    WriteLog "Launching application: " & launchTarget
+    installedVer = fso.GetFileVersion(launchTarget)
+    WriteLog "Verified installed EXE at: " & launchTarget & " (version: " & installedVer & ")"
+    WriteLog "Launching application: " & launchTarget & " from working directory: " & appDir
+    wshShell.CurrentDirectory = appDir
     wshShell.Run Chr(34) & launchTarget & Chr(34), 1, False
-    WriteLog "Application launch requested."
+    WriteLog "Application launch command issued successfully."
 Else
-    WriteLog "CRITICAL: No target executable found to launch. Checked: " & targetExe & ", " & appDir & "\iHRMS Monitor.exe, " & defaultExe
+    WriteLog "CRITICAL: No target executable found to launch. Checked: " & targetExe & ", " & appDir & "\\iHRMS Monitor.exe, " & defaultExe
 End If
 
-WriteLog "Background updater finished."
+WriteLog "VBScript updater finished."
 logFile.Close
 '''
     try:
@@ -1087,11 +1107,12 @@ function Write-UpdateLog($msg) {{
     Add-Content -Path $logPath -Value $line -ErrorAction SilentlyContinue
 }}
 
-Write-UpdateLog "Starting PowerShell updater: targetExe=$targetExe | oldPid=$oldPid"
+Write-UpdateLog "Starting PowerShell updater: targetExe=$targetExe | updateFile=$updateFile | oldPid=$oldPid"
 
 $waited = 0
 while ($waited -lt 30) {{
     if (-not (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {{
+        Write-UpdateLog "Old process (PID $oldPid) exited."
         break
     }}
     Start-Sleep -Milliseconds 500
@@ -1110,7 +1131,7 @@ if (Test-Path $lockPath) {{
     Write-UpdateLog "Deleted lock file: $lockPath"
 }}
 
-Start-Sleep -Seconds 1
+Start-Sleep -Milliseconds 500
 
 $success = $false
 if ($isInstaller) {{
@@ -1120,7 +1141,7 @@ if ($isInstaller) {{
         Write-UpdateLog "Installer attempt $i exit code: $($p.ExitCode)"
         if ($p.ExitCode -eq 0) {{
             $success = $true
-            Write-UpdateLog "Installer completed successfully."
+            Write-UpdateLog "Installer completed successfully with exit code 0."
             break
         }} else {{
             Write-UpdateLog "Installer attempt $i failed with code $($p.ExitCode). Retrying..."
@@ -1164,8 +1185,11 @@ if (Test-Path $targetExe) {{
 }}
 
 if ($launchTarget -ne "") {{
-    Write-UpdateLog "Launching application: $launchTarget"
-    Start-Process -FilePath $launchTarget -WindowStyle Normal
+    $installedVer = (Get-Item -Path $launchTarget -ErrorAction SilentlyContinue).VersionInfo.FileVersion
+    Write-UpdateLog "Verified installed EXE at: $launchTarget (version: $installedVer)"
+    Write-UpdateLog "Launching application: $launchTarget from working directory: $appDir"
+    Start-Process -FilePath $launchTarget -WorkingDirectory $appDir -WindowStyle Normal
+    Write-UpdateLog "Application launched successfully."
 }} else {{
     Write-UpdateLog "CRITICAL: targetExe does not exist: $targetExe"
 }}
@@ -1236,7 +1260,7 @@ Write-UpdateLog "PowerShell updater finished."
         # 1. Close Qt windows and stop all background workers gracefully
         try:
             from PySide6.QtWidgets import QApplication
-            from PySide6.QtCore import QCoreApplication
+            from PySide6.QtCore import QCoreApplication, QThreadPool
             app = QApplication.instance()
             if app:
                 for widget in app.topLevelWidgets():
@@ -1256,10 +1280,28 @@ Write-UpdateLog "PowerShell updater finished."
                 try:
                     svc = UpdateService()
                     if svc._pipeline_worker and svc._pipeline_worker.isRunning():
+                        svc._pipeline_worker.cancel()
                         svc._pipeline_worker.quit()
-                        if not svc._pipeline_worker.wait(3000):
+                        if not svc._pipeline_worker.wait(2000):
                             svc._pipeline_worker.terminate()
                             svc._pipeline_worker.wait(1000)
+                except Exception:
+                    pass
+
+                # Stop active UpdateCheckWorker thread if running
+                try:
+                    svc = UpdateService()
+                    if svc._worker and svc._worker.isRunning():
+                        svc._worker.quit()
+                        if not svc._worker.wait(2000):
+                            svc._worker.terminate()
+                            svc._worker.wait(1000)
+                except Exception:
+                    pass
+
+                # Wait for any active QThreadPool global tasks
+                try:
+                    QThreadPool.globalInstance().waitForDone(1000)
                 except Exception:
                     pass
 
@@ -1295,7 +1337,7 @@ Write-UpdateLog "PowerShell updater finished."
 
         # 4. Immediate, definitive exit - releases all OS file locks immediately
         if exit_process and not is_running_tests:
-            time.sleep(0.5)
+            time.sleep(0.3)
             os._exit(0)
 
         if not exit_process or is_running_tests:

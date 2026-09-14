@@ -132,25 +132,32 @@ class TestUpdateStateAndExecution(unittest.TestCase):
                 self.assertTrue(vbs.exists())
                 vbs_text = vbs.read_text(encoding="utf-8")
                 self.assertIn("iHRMS Monitor Silent Background Updater", vbs_text)
+                self.assertIn("updater.log", vbs_text)
                 self.assertIn("/DIR=", vbs_text)
                 self.assertIn("ihrms_monitor.lock", vbs_text)
                 self.assertIn("taskkill /F /PID", vbs_text)
                 self.assertIn("Select ProcessId from Win32_Process Where ProcessId =", vbs_text)
+                self.assertIn("fso.GetFileVersion", vbs_text)
+                self.assertIn("wshShell.CurrentDirectory = appDir", vbs_text)
 
                 # 2. PowerShell fallback updater check
                 ps1 = tmp_path / "hidden_updater.ps1"
                 self.assertTrue(ps1.exists())
                 ps1_text = ps1.read_text(encoding="utf-8")
                 self.assertIn("iHRMS Monitor Silent Background Updater Fallback", ps1_text)
+                self.assertIn("updater.log", ps1_text)
                 self.assertIn("/DIR=", ps1_text)
+                self.assertIn("-WorkingDirectory $appDir", ps1_text)
 
                 # 3. Batch script compatibility check
                 bat = tmp_path / "silent_update.bat"
                 self.assertTrue(bat.exists())
                 bat_text = bat.read_text(encoding="utf-8")
                 self.assertIn("/VERYSILENT", bat_text)
+                self.assertIn("updater.log", bat_text)
                 self.assertIn('taskkill /F /IM "iHRMS Monitor.exe"', bat_text)
 
 
 if __name__ == "__main__":
     unittest.main()
+

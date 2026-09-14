@@ -186,5 +186,42 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("Window handle invalid", page.tracking_status_label.text())
 
 
+    def test_dispatch_via_backend_handles_404_as_failure(self):
+        """Verify that HTTP 404 from backend is treated as failure (returns False) and not accepted."""
+        from config.api_config import ApiConfig
+        service = self.service
+        context = service._collect_context(
+            error_type="TEST_404_ERROR",
+            error_message="Testing 404 response handling",
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+
+        with patch.object(ApiConfig, "report_error_url", "https://example.com/tracking/report_error"), \
+             patch("requests.post", return_value=mock_resp):
+            result = service._dispatch_via_backend(context)
+            self.assertFalse(result, "HTTP 404 must return False and fall back to local logging.")
+
+    def test_dispatch_via_backend_accepts_200_ok(self):
+        """Verify that HTTP 200 OK from backend returns True."""
+        from config.api_config import ApiConfig
+        service = self.service
+        context = service._collect_context(
+            error_type="TEST_200_ERROR",
+            error_message="Testing 200 OK response handling",
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        with patch.object(ApiConfig, "report_error_url", "https://example.com/tracking/report_error"), \
+             patch("requests.post", return_value=mock_resp):
+            result = service._dispatch_via_backend(context)
+            self.assertTrue(result, "HTTP 200 must return True.")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -69,8 +69,10 @@ class TestAttendanceDashboardCard(unittest.TestCase):
         mock_svc.get_today_timeline.return_value = []
 
         # Record daily tracking start and punch in
+        from datetime import datetime
+        today_str = datetime.now().strftime("%Y-%m-%d")
         AttendanceService().record_tracking_start()
-        AttendanceService().record_punch_in("2026-09-11 09:45:00", date_str="2026-09-11")
+        AttendanceService().record_punch_in(f"{today_str} 09:45:00", date_str=today_str)
 
         dashboard = DashboardPage(activity_service=mock_svc)
         dashboard.refresh(async_mode=False)

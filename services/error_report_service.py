@@ -462,9 +462,7 @@ class ErrorReportService:
         try:
             import requests as _requests
             response = _requests.post(report_url, data=payload, timeout=12)
-            # Accept any non-5xx status — a 404 just means the backend endpoint
-            # hasn't been deployed yet, but no SMTP was attempted.
-            if response.status_code < 500:
+            if 200 <= response.status_code < 300:
                 logger.info(
                     "ErrorReportService: backend accepted error report "
                     "(HTTP %d) at %s",
@@ -472,9 +470,10 @@ class ErrorReportService:
                     report_url,
                 )
                 return True
-            logger.debug(
-                "ErrorReportService: backend returned HTTP %d for error report.",
+            logger.warning(
+                "ErrorReportService: backend returned HTTP %d for error report at %s",
                 response.status_code,
+                report_url,
             )
         except Exception as http_err:
             logger.debug(
