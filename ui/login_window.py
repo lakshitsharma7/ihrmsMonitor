@@ -1130,6 +1130,8 @@ class LoginWindow(QMainWindow):
                     res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {},
                     res_json.get("permissions", {}) if isinstance(res_json.get("permissions"), dict) else {},
                     res_json.get("settings", {}) if isinstance(res_json.get("settings"), dict) else {},
+                    enroll_json if isinstance(enroll_json, dict) else {},
+                    enroll_json.get("data", {}) if isinstance(enroll_json, dict) and isinstance(enroll_json.get("data"), dict) else {},
                 ]
 
                 allow_logout = True
