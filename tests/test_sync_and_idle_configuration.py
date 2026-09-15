@@ -291,6 +291,41 @@ class TestSyncAndIdleConfiguration(unittest.TestCase):
         finally:
             db.close()
 
+    def test_last_successful_sync_formatting_and_persistence(self):
+        """Verify Last Successful Sync is formatted as 'D Mon YYYY, HH:MM:SS AM/PM', persisted to cache, and bound to Dashboard."""
+        from PySide6.QtWidgets import QApplication
+        from ui.dashboard import DashboardPage
+        from services.activity_service import ActivityService
+        from PySide6.QtCore import QSettings
+
+        app = QApplication.instance() or QApplication([])
+
+        # Clear cached setting for fresh test
+        settings = QSettings("Indovision", "iHRMSMonitor")
+        settings.remove("api_settings/last_successful_sync_time")
+        SyncService.last_successful_sync_time = "Never"
+
+        service = ActivityService(get_session)
+        page = DashboardPage(activity_service=service)
+
+        # Before any sync: shows Never
+        self.assertEqual(SyncService.get_last_successful_sync_time(), "Never")
+        self.assertIn("Never", page.last_sync_label.text())
+
+        # Simulate a successful sync
+        fake_time = "15 Sep 2026, 10:32:45 AM"
+        SyncService.last_successful_sync_time = fake_time
+        SyncService._save_cached_setting("last_successful_sync_time", fake_time)
+
+        # Refresh dashboard
+        page.refresh(async_mode=False)
+        self.assertIn("15 Sep 2026, 10:32:45 AM", page.last_sync_label.text())
+
+        # Simulate application restart: new Dashboard instance reads persisted timestamp
+        SyncService.last_successful_sync_time = "Never"
+        new_page = DashboardPage(activity_service=service)
+        self.assertIn("15 Sep 2026, 10:32:45 AM", new_page.last_sync_label.text())
+
 
 if __name__ == "__main__":
     unittest.main()

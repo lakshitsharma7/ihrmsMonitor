@@ -77,6 +77,17 @@ class SyncService:
         except Exception:
             return None
 
+    @classmethod
+    def get_last_successful_sync_time(cls) -> str:
+        """Return the formatted timestamp of the most recent successfully completed sync."""
+        if cls.last_successful_sync_time and cls.last_successful_sync_time != "Never":
+            return cls.last_successful_sync_time
+        cached = cls._load_cached_setting("last_successful_sync_time")
+        if cached and str(cached).strip() and str(cached).strip().lower() != "none":
+            cls.last_successful_sync_time = str(cached).strip()
+            return cls.last_successful_sync_time
+        return "Never"
+
     def __init__(
         self,
         api_url: str | None = None,
@@ -680,9 +691,12 @@ class SyncService:
                 logger.debug("Periodic screenshot cleanup error: %s", cleanup_err)
 
             from datetime import datetime, timedelta
+            now_dt = datetime.now()
+            formatted_time = f"{now_dt.day} {now_dt.strftime('%b %Y, %I:%M:%S %p')}"
             SyncService.last_sync_status = "Sent"
             SyncService.last_sync_error = ""
-            SyncService.last_successful_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            SyncService.last_successful_sync_time = formatted_time
+            SyncService._save_cached_setting("last_successful_sync_time", formatted_time)
             SyncService.records_currently_sending = 0
 
             next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)

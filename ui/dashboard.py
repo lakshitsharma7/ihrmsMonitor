@@ -200,45 +200,27 @@ class DashboardPage(QWidget):
 
         # --------------------------------------------------------------
         # 1. Today's Time
-        # Two equal side-by-side sections: Active Time and Idle Time (HH:MM:SS)
+        # Shows Active Time (HH:MM:SS) and Weekly Timeline button
         # --------------------------------------------------------------
         today_group = QGroupBox("Today's Time")
         today_layout = QVBoxLayout(today_group)
         today_layout.setContentsMargins(14, 12, 14, 12)
-        today_layout.setSpacing(6)
+        today_layout.setSpacing(4)
 
-        times_row = QHBoxLayout()
-        times_row.setSpacing(16)
-
-        # Active Time Section (Left)
-        active_layout = QVBoxLayout()
-        active_layout.setSpacing(4)
         active_title = QLabel("Active Time")
         active_title.setObjectName("StatusLabel")
-        active_title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500;")
+        active_title.setStyleSheet("color: #64748b; font-size: 12px; font-weight: 500;")
         self.active_time_val_label = QLabel(
             format_hh_mm_ss(self._cached_today_total_seconds)
         )
         self.active_time_val_label.setObjectName("TimeValueLabel")
-        self.active_time_val_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
-        active_layout.addWidget(active_title)
-        active_layout.addWidget(self.active_time_val_label)
-        times_row.addLayout(active_layout, stretch=1)
+        self.active_time_val_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
 
-        # Idle Time Section (Right)
-        idle_layout = QVBoxLayout()
-        idle_layout.setSpacing(4)
-        idle_title = QLabel("Idle Time")
-        idle_title.setObjectName("StatusLabel")
-        idle_title.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500;")
+        # Retain today_idle_val_label internally for background tracking and test compatibility
         self.today_idle_val_label = QLabel(
             format_hh_mm_ss(self._cached_today_idle)
         )
-        self.today_idle_val_label.setObjectName("TimeValueLabel")
-        self.today_idle_val_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
-        idle_layout.addWidget(idle_title)
-        idle_layout.addWidget(self.today_idle_val_label)
-        times_row.addLayout(idle_layout, stretch=1)
+        self.today_idle_val_label.setVisible(False)
 
         # Retain aliases for backward and test compatibility
         self.active_time_label = self.active_time_val_label
@@ -261,7 +243,8 @@ class DashboardPage(QWidget):
         self.weekly_timeline_button.clicked.connect(self.weekly_timeline_requested.emit)
 
         today_layout.addStretch(1)
-        today_layout.addLayout(times_row)
+        today_layout.addWidget(active_title)
+        today_layout.addWidget(self.active_time_val_label)
         today_layout.addSpacing(6)
         today_layout.addWidget(self.weekly_timeline_button)
         today_layout.addStretch(1)
@@ -330,15 +313,22 @@ class DashboardPage(QWidget):
         self.update_status_label.setObjectName("StatusLabel")
         self.sync_status_label = self.update_status_label
 
-        # Retained internally for seamless background updates and test compatibility
-        self.last_sync_label = QLabel("Last successful sync: Never")
-        self.last_sync_label.setVisible(False)
+        # Initial last successful sync timestamp
+        from services.sync_service import SyncService
+        init_sync_time = (
+            SyncService.get_last_successful_sync_time()
+            if hasattr(SyncService, "get_last_successful_sync_time")
+            else SyncService.last_successful_sync_time
+        )
+        self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}")
+        self.last_sync_label.setObjectName("StatusLabel")
+
         self.current_app_label = QLabel("Not tracking")
         self.current_app_label.setVisible(False)
         self.current_window_label = QLabel("")
         self.current_window_label.setVisible(False)
 
-        # 6-item symmetrical grid (3 rows x 2 cols)
+        # 7-item layout (3 rows x 2 cols + 1 full-width row for Last Successful Sync)
         status_grid.addWidget(self.tracking_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
@@ -347,6 +337,8 @@ class DashboardPage(QWidget):
 
         status_grid.addWidget(self.records_uploaded_label, 2, 0)
         status_grid.addWidget(self.update_status_label, 2, 1)
+
+        status_grid.addWidget(self.last_sync_label, 3, 0, 1, 2)
 
         status_group.setMinimumHeight(135)
         status_group.setSizePolicy(
@@ -436,7 +428,12 @@ class DashboardPage(QWidget):
         # Update sync info from SyncService
         from services.sync_service import SyncService
         self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
-        self.last_sync_label.setText(f"Last successful sync: {SyncService.last_successful_sync_time}")
+        sync_time_str = (
+            SyncService.get_last_successful_sync_time()
+            if hasattr(SyncService, "get_last_successful_sync_time")
+            else SyncService.last_successful_sync_time
+        )
+        self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
 
         self.set_records_uploaded(self._cached_uploaded_count)
 
@@ -542,6 +539,17 @@ class DashboardPage(QWidget):
                 self._update_attendance_ui(att)
             except Exception as err:
                 logger.debug("Sync refresh attendance error: %s", err)
+
+            try:
+                from services.sync_service import SyncService
+                sync_time_str = (
+                    SyncService.get_last_successful_sync_time()
+                    if hasattr(SyncService, "get_last_successful_sync_time")
+                    else SyncService.last_successful_sync_time
+                )
+                self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
+            except Exception as err:
+                logger.debug("Sync refresh last_sync_label error: %s", err)
             return
 
         if getattr(self, "_is_refreshing", False):
@@ -630,6 +638,14 @@ class DashboardPage(QWidget):
             attendance = data.get("attendance")
             if attendance:
                 self._update_attendance_ui(attendance)
+
+            from services.sync_service import SyncService
+            sync_time_str = (
+                SyncService.get_last_successful_sync_time()
+                if hasattr(SyncService, "get_last_successful_sync_time")
+                else SyncService.last_successful_sync_time
+            )
+            self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 

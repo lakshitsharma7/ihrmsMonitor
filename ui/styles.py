@@ -266,6 +266,12 @@ QLabel#StatusLabel {
     color: #3c4043;
 }
 
+QLabel#TimeValueLabel {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0F172A;
+}
+
 QLineEdit {
     background-color: #ffffff;
     border: 1px solid #c7c7c7;
