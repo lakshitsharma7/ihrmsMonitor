@@ -636,9 +636,6 @@ class MainWindow(QMainWindow):
 
         self.user_label = QLabel(f"Welcome, {display_name}")
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
-        self.user_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.user_label.setToolTip("Click to view User & Device information")
-        self.user_label.mousePressEvent = lambda event: self._show_user_device_info()
         header_layout.addWidget(self.user_label)
 
         # Tracking status icon next to status badge
@@ -671,24 +668,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.stop_button.setVisible(False)
         self.stop_button.hide()
-        self.refresh_button = QPushButton("↻ Refresh")
-        self.refresh_button.setObjectName("SecondaryButton")
-        self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_button.setToolTip("Refresh today's activity, attendance, and tasks")
-        self.refresh_button.clicked.connect(self._on_header_refresh_clicked)
-        header_layout.addWidget(self.refresh_button)
 
-        self.user_button = QPushButton(
-            "User / Device"
-        )
-
-        self.user_button.setObjectName(
-            "SecondaryButton"
-        )
-        self.user_button.clicked.connect(
-            self._show_user_device_info
-        )
-        header_layout.addWidget(self.user_button)
 
         self.update_button = QPushButton("🚀 Update Available")
         self.update_button.setObjectName("PrimaryButton")
@@ -1003,18 +983,7 @@ class MainWindow(QMainWindow):
                 self.status_icon.show()
             self.status_badge.show()
 
-        # Dynamic User / Device control visibility and access
-        allow_user_device = getattr(session, "allow_user_device", True) if session else True
-        if hasattr(self, "user_button") and self.user_button:
-            self.user_button.setVisible(allow_user_device)
-            self.user_button.setEnabled(allow_user_device)
-        if hasattr(self, "user_label") and self.user_label:
-            if allow_user_device:
-                self.user_label.setCursor(Qt.CursorShape.PointingHandCursor)
-                self.user_label.setToolTip("Click to view User & Device information")
-            else:
-                self.user_label.setCursor(Qt.CursorShape.ArrowCursor)
-                self.user_label.setToolTip("")
+        # User/Device button removed from UI; underlying logic retained.
 
         # Dynamic Logout control visibility and access
         allow_logout = getattr(session, "allow_logout", True) if session else True
