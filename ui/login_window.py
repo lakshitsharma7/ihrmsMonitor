@@ -733,7 +733,18 @@ class LoginWindow(QMainWindow):
             self.password_input.clear()
             self.login_button.setText("Login")
             self.login_button.setEnabled(True)
-            self.error_label.clear()
+
+            # If the config was loaded from offline cache, show a soft warning so
+            # the user knows they are working with saved (potentially stale) data.
+            if getattr(api_config, "_loaded_from_cache", False):
+                self.error_label.setStyleSheet("color: #f59e0b;")  # amber
+                self.error_label.setText(
+                    "\u26a0\ufe0f Offline mode: verification server unreachable. "
+                    "Using saved configuration."
+                )
+            else:
+                self.error_label.clear()
+                self.error_label.setStyleSheet("")
 
             self.username_input.setFocus()
 
@@ -747,6 +758,7 @@ class LoginWindow(QMainWindow):
             self.company_code_input.setReadOnly(False)
             self.login_button.setEnabled(True)
             self.company_code_input.setEnabled(True)
+            self.error_label.setStyleSheet("")
 
             # Surface the message the verification API itself returned.
             self.error_label.setText(str(config_err))

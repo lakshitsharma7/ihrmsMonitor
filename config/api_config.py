@@ -53,7 +53,9 @@ APP_CONTROLLER_URL = os.environ.get(
 )
 
 # How long to wait for the App Controller bootstrap call.
-APP_CONTROLLER_TIMEOUT_SECONDS = 15
+# Kept short so DNS failures are surfaced quickly rather than making
+# the user wait the full default socket timeout.
+APP_CONTROLLER_TIMEOUT_SECONDS = 8
 
 
 # ==================================================================
@@ -142,6 +144,7 @@ class ApiConfig:
         self._logo_url = None
         self._company_code = None
         self._details = {}
+        self._loaded_from_cache = False
 
     def reset(self) -> None:
         """
@@ -211,8 +214,20 @@ class ApiConfig:
                 payload = response.json()
 
             except Exception as exc:  # noqa: BLE001
+                exc_str = str(exc)
+                # Detect DNS resolution failures specifically so the error message
+                # is more actionable than a generic "check your connection" prompt.
+                is_dns_failure = (
+                    "getaddrinfo failed" in exc_str
+                    or "Name or service not known" in exc_str
+                    or "nodename nor servname" in exc_str
+                    or "Errno 11001" in exc_str   # Windows WSAHOST_NOT_FOUND
+                    or "Errno 11002" in exc_str   # Windows WSATRY_AGAIN
+                )
+
                 logger.warning(
-                    "App Controller request failed: %s",
+                    "App Controller request failed (%s): %s",
+                    "DNS failure" if is_dns_failure else "network error",
                     exc,
                 )
 
@@ -230,13 +245,33 @@ class ApiConfig:
                         import json
                         raw_det = st.value("ApiConfig/last_details", "{}")
                         self._details = json.loads(raw_det) if isinstance(raw_det, str) else {}
-                        logger.info("Using cached company configuration for %s: %s", cc, self._base_url)
+                        self._loaded_from_cache = True
+                        logger.info(
+                            "Verification service unreachable; using cached configuration "
+                            "for company %s: %s",
+                            cc,
+                            self._base_url,
+                        )
                         return
+                    else:
+                        logger.warning(
+                            "No cached configuration found for company code '%s' "
+                            "(cached code is '%s'). Cannot proceed offline.",
+                            cc,
+                            cached_cc,
+                        )
                 except Exception as cache_err:
                     logger.debug("Could not read cached config: %s", cache_err)
 
                 # Never fall back to another company's configuration.
                 self._clear_state()
+
+                if is_dns_failure:
+                    raise ApiConfigError(
+                        "Cannot reach the verification server "
+                        "(DNS resolution failed for the server address). "
+                        "Please check your internet connection and try again."
+                    ) from exc
 
                 raise ApiConfigError(
                     "Could not reach the verification service. "

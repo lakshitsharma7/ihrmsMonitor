@@ -302,6 +302,7 @@ class DashboardPage(QWidget):
 
         self.unsynced_records_label = QLabel("Records uploading: 0")
         self.unsynced_records_label.setObjectName("StatusLabel")
+        self.unsynced_records_label.setVisible(False)  # hidden from UI
 
         self.version_label = QLabel(f"Version: {get_running_app_version()}")
         self.version_label.setObjectName("StatusLabel")
@@ -328,15 +329,17 @@ class DashboardPage(QWidget):
         self.current_window_label = QLabel("")
         self.current_window_label.setVisible(False)
 
-        # 7-item layout (3 rows x 2 cols + 1 full-width row for Last Successful Sync)
+        # Layout: Row 0 – Tracking | Idle Time
+        #         Row 1 – Version  | Records Uploaded
+        #         Row 2 – Status   (spans both columns)
+        #         Row 3 – Last Successful Sync (full width)
         status_grid.addWidget(self.tracking_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
-        status_grid.addWidget(self.unsynced_records_label, 1, 0)
-        status_grid.addWidget(self.version_label, 1, 1)
+        status_grid.addWidget(self.version_label, 1, 0)
+        status_grid.addWidget(self.records_uploaded_label, 1, 1)
 
-        status_grid.addWidget(self.records_uploaded_label, 2, 0)
-        status_grid.addWidget(self.update_status_label, 2, 1)
+        status_grid.addWidget(self.update_status_label, 2, 0, 1, 2)
 
         status_grid.addWidget(self.last_sync_label, 3, 0, 1, 2)
 
@@ -427,7 +430,7 @@ class DashboardPage(QWidget):
 
         # Update sync info from SyncService
         from services.sync_service import SyncService
-        self.unsynced_records_label.setText(f"Records uploading: {SyncService.records_currently_sending}")
+        # (Records uploading count is intentionally not displayed — see unsynced_records_label)
         sync_time_str = (
             SyncService.get_last_successful_sync_time()
             if hasattr(SyncService, "get_last_successful_sync_time")
