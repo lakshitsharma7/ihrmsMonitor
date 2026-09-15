@@ -1530,12 +1530,33 @@ class SyncService:
 
             # Verify response JSON body for success
             res_json = response.json()
-            if res_json.get("response") != "Success":
+            res_val = res_json.get("response")
+            is_success = (
+                res_val == "Success"
+                or str(res_val).lower() == "success"
+                or res_val == 200
+                or str(res_val) == "200"
+                or res_json.get("status") in (1, "1", "Success", "success", True)
+            )
+            if not is_success:
                 error_msg = res_json.get("message") or "Screenshot upload failed on server."
                 logger.error("Screenshot upload failed on server: %s", error_msg)
                 raise ValueError(error_msg)
 
-            screenshot_id = res_json.get("data", {}).get("screenshot_id")
+            screenshot_id = None
+            data_val = res_json.get("data")
+            if isinstance(data_val, dict):
+                screenshot_id = data_val.get("screenshot_id")
+            elif isinstance(data_val, list) and data_val:
+                if isinstance(data_val[0], dict):
+                    screenshot_id = data_val[0].get("screenshot_id")
+                else:
+                    screenshot_id = str(data_val[0])
+            elif data_val is not None and not isinstance(data_val, (list, dict)):
+                screenshot_id = str(data_val)
+            if screenshot_id is None:
+                screenshot_id = res_json.get("screenshot_id")
+
             logger.info(
                 "Screenshot upload successful: %s (screenshot_id=%s)",
                 screenshot_path.name,

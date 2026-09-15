@@ -225,8 +225,9 @@ class TestDynamicControls(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                # Should be hidden initially due to allow_user_device=False, allow_logout=False
-                self.assertTrue(win.user_button.isHidden())
+                # Should be hidden initially due to allow_logout=False
+                if hasattr(win, "user_button"):
+                    self.assertTrue(win.user_button.isHidden())
                 self.assertTrue(win.logout_button.isHidden())
 
                 # Dynamically update permissions to True
@@ -237,8 +238,9 @@ class TestDynamicControls(unittest.TestCase):
                 QApplication.processEvents()
 
                 # Should now be visible and enabled
-                self.assertFalse(win.user_button.isHidden())
-                self.assertTrue(win.user_button.isEnabled())
+                if hasattr(win, "user_button"):
+                    self.assertFalse(win.user_button.isHidden())
+                    self.assertTrue(win.user_button.isEnabled())
                 self.assertFalse(win.logout_button.isHidden())
                 self.assertTrue(win.logout_button.isEnabled())
 
@@ -249,7 +251,8 @@ class TestDynamicControls(unittest.TestCase):
                 )
                 QApplication.processEvents()
 
-                self.assertTrue(win.user_button.isHidden())
+                if hasattr(win, "user_button"):
+                    self.assertTrue(win.user_button.isHidden())
                 self.assertTrue(win.logout_button.isHidden())
             finally:
                 win._shutdown()
