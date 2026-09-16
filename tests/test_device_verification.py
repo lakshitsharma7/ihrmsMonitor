@@ -54,24 +54,24 @@ class TestDeviceVerificationSystem(unittest.TestCase):
         )
         self.assertEqual(status, "Update Pending")
 
-        # Case 2: Laptop updates and restarts, now reports running 1.0.2 -> Updated
+        # Case 2: Laptop updates and restarts, now reports running 1.0.2 -> Update Successful
         status_after_update = DeviceRegistryService.calculate_device_status(
             installed_version="1.0.2",
             latest_version="1.0.2",
             last_seen=now,
         )
-        self.assertEqual(status_after_update, "Updated")
+        self.assertEqual(status_after_update, "Update Successful")
 
-        # Case 3: Laptop running newer hotfix 1.0.3 vs server 1.0.2 -> Updated
+        # Case 3: Laptop running newer hotfix 1.0.3 vs server 1.0.2 -> Update Successful
         status_hotfix = DeviceRegistryService.calculate_device_status(
             installed_version="1.0.3",
             latest_version="1.0.2",
             last_seen=now,
         )
-        self.assertEqual(status_hotfix, "Updated")
+        self.assertEqual(status_hotfix, "Update Successful")
 
     def test_status_update_failed_records_and_displays_failure_reason(self):
-        """Verify failed update transitions device to Update Failed and stores the reason."""
+        """Verify failed update transitions device to Update Error and stores the reason."""
         dev_id = "TEST-LAPTOP-FAIL"
         self.registry.record_heartbeat(
             device_identifier=dev_id,
@@ -89,7 +89,7 @@ class TestDeviceVerificationSystem(unittest.TestCase):
         devices = self.registry.get_all_devices()
         dev_entry = next(d for d in devices if d["device_identifier"] == dev_id)
 
-        self.assertEqual(dev_entry["update_status"], "Update Failed")
+        self.assertEqual(dev_entry["update_status"], "Update Error")
         self.assertEqual(dev_entry["failure_reason"], error_reason)
         self.assertEqual(dev_entry["latest_version"], "1.0.1")
 

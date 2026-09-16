@@ -310,7 +310,7 @@ class DashboardPage(QWidget):
         self.records_uploaded_label = QLabel("Records Uploaded: 0")
         self.records_uploaded_label.setObjectName("StatusLabel")
 
-        self.update_status_label = QLabel("Status: Updated")
+        self.update_status_label = QLabel("Status: Update Successful")
         self.update_status_label.setObjectName("StatusLabel")
         self.sync_status_label = self.update_status_label
 
@@ -664,11 +664,11 @@ class DashboardPage(QWidget):
         """Dynamically update the displayed device update verification status."""
         if status:
             self.update_status_label.setText(f"Status: {status}")
-            if "Updated" in status:
+            if "Successful" in status or "Updated" in status:
                 self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
             elif "Pending" in status:
                 self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
-            elif "Failed" in status:
+            elif "Failed" in status or "Error" in status:
                 self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
             else:
                 self.update_status_label.setStyleSheet("")

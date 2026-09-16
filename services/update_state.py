@@ -142,6 +142,7 @@ class UpdateStateManager:
                 logger.info(msg)
                 state.update({
                     "status": "success",
+                    "last_status": "Update Successful",
                     "last_installed_version": running_version,
                     "verified_at": now_iso,
                     "install_attempts": 0,
@@ -175,6 +176,7 @@ class UpdateStateManager:
                 )
                 logger.error(err_msg)
                 state["status"] = "failed"
+                state["last_status"] = "Update Error"
             else:
                 err_msg = (
                     f"Update verification FAILED: expected v{target_version}, but running application "
@@ -182,6 +184,7 @@ class UpdateStateManager:
                 )
                 logger.warning(err_msg)
                 state["status"] = "failed"
+                state["last_status"] = "Update Error"
 
             state.update({
                 "install_attempts": attempts,
@@ -217,6 +220,23 @@ class UpdateStateManager:
                 pass
 
             return False, err_msg
+
+    def get_persisted_update_status(self) -> str:
+        """Return the current verified update status for dashboard and status displays."""
+        with self._io_lock:
+            state = self._read_raw()
+            if not state:
+                return "Update Successful"
+            status = state.get("status")
+            if status == "success":
+                return "Update Successful"
+            elif status == "failed":
+                return "Update Error"
+            elif status in ("pending_install", "installing"):
+                return "Update Pending"
+            elif status == "downloading":
+                return "Downloading update..."
+            return state.get("last_status") or "Update Successful"
 
     def should_attempt_update(
         self,

@@ -71,7 +71,7 @@ class DeviceRegistryService:
     ) -> str:
         """Evaluate real-time update status for a device."""
         if has_failed or failure_reason:
-            return "Update Failed"
+            return "Update Error"
 
         effective_threshold = threshold_seconds or get_configured_offline_threshold()
 
@@ -86,7 +86,7 @@ class DeviceRegistryService:
         if latest_version and is_newer_version(latest_version, installed_version):
             return "Update Pending"
 
-        return "Updated"
+        return "Update Successful"
 
     def record_heartbeat(
         self,
@@ -130,7 +130,7 @@ class DeviceRegistryService:
                     device_token=device_token,
                     installed_version=version,
                     latest_version=latest_version,
-                    update_status="Updated" if (latest_version and not is_newer_version(latest_version, version)) else "Update Pending",
+                    update_status="Update Pending" if (latest_version and is_newer_version(latest_version, version)) else "Update Successful",
                     last_seen=now,
                 )
                 db.add(device)
@@ -242,15 +242,31 @@ class DeviceRegistryService:
             stmt = select(EnrolledDevice).where(EnrolledDevice.device_identifier == dev_id)
             device = db.execute(stmt).scalars().first()
             if not device:
-                device = self.record_heartbeat(device_identifier=dev_id)
+                import getpass, platform, socket
+                host = socket.gethostname()
+                os_user = getpass.getuser()
+                version = get_running_app_version()
+                device = EnrolledDevice(
+                    device_identifier=dev_id,
+                    hostname=host,
+                    platform=platform.system(),
+                    os_username=os_user,
+                    installed_version=version,
+                    latest_version=target_version,
+                    update_status="Update Error",
+                    failure_reason=str(reason)[:500],
+                    last_seen=now,
+                )
+                db.add(device)
+            else:
+                device.failure_reason = str(reason)[:500]
+                device.update_status = "Update Error"
+                if target_version:
+                    device.latest_version = target_version
+                device.last_seen = now
 
-            device.failure_reason = str(reason)[:500]
-            device.update_status = "Update Failed"
-            if target_version:
-                device.latest_version = target_version
-            device.last_seen = now
             db.commit()
-            logger.warning("Device %s marked Update Failed: %s", dev_id, reason)
+            logger.warning("Device %s marked Update Error: %s", dev_id, reason)
         except Exception as e:
             db.rollback()
             logger.debug("Could not record update failure: %s", e)
@@ -271,14 +287,31 @@ class DeviceRegistryService:
             stmt = select(EnrolledDevice).where(EnrolledDevice.device_identifier == dev_id)
             device = db.execute(stmt).scalars().first()
             if not device:
-                device = self.record_heartbeat(device_identifier=dev_id, installed_version=version)
+                import getpass, platform, socket
+                host = socket.gethostname()
+                os_user = getpass.getuser()
+                device = EnrolledDevice(
+                    device_identifier=dev_id,
+                    hostname=host,
+                    platform=platform.system(),
+                    os_username=os_user,
+                    installed_version=version,
+                    latest_version=version,
+                    update_status="Update Successful",
+                    failure_reason=None,
+                    last_seen=now,
+                )
+                db.add(device)
+            else:
+                device.installed_version = version
+                if device.latest_version and not is_newer_version(device.latest_version, version):
+                    device.latest_version = version
+                device.failure_reason = None
+                device.update_status = "Update Successful"
+                device.last_seen = now
 
-            device.installed_version = version
-            device.failure_reason = None
-            device.update_status = "Updated"
-            device.last_seen = now
             db.commit()
-            logger.info("Device %s verified and marked Updated (running v%s)", dev_id, version)
+            logger.info("Device %s verified and marked Update Successful (running v%s)", dev_id, version)
         except Exception as e:
             db.rollback()
             logger.debug("Could not record update success: %s", e)
@@ -335,11 +368,11 @@ class DeviceRegistryService:
 
         for d in devices:
             st = d["update_status"]
-            if st == "Updated":
+            if st in ("Updated", "Update Successful"):
                 summary["updated"] += 1
-            elif st == "Update Pending":
+            elif "Pending" in st:
                 summary["pending"] += 1
-            elif st == "Update Failed":
+            elif "Failed" in st or "Error" in st:
                 summary["failed"] += 1
             elif "Offline" in st:
                 summary["offline"] += 1
