@@ -210,6 +210,17 @@ class SessionStore:
             logger.exception("Failed to save session")
             return False
 
+    def update_device_token(self, device_token: str) -> bool:
+        """Update only the device token in secure session storage."""
+        try:
+            self.settings.setValue(
+                self._KEY_DEVICE_TOKEN, self._simple_encrypt(device_token)
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to update device token in session store")
+            return False
+
     def load_session(self) -> Dict[str, Any] | None:
         """Load and validate a previously saved session.
         
