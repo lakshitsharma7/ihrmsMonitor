@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import getpass
+import os
 import platform
+import sys
 import threading
 import time
+import webbrowser
 
-from PySide6.QtCore import QMetaObject, Qt, Signal, Slot
+from PySide6.QtCore import QMetaObject, QSize, Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -25,6 +29,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+def _asset_path(relative: str) -> str:
+    """Return the absolute path to a bundled asset."""
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS  # type: ignore[attr-defined]
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
 
 
 from config.settings import APP_NAME, get_running_app_version
@@ -71,6 +84,7 @@ def get_mac_user_info() -> tuple[str, str]:
     # ----------------------------------------------------------
 
     try:
+        # pyrefly: ignore [missing-import]
         from Foundation import (
             NSFullUserName,
             NSUserName,
@@ -106,6 +120,7 @@ def get_mac_user_info() -> tuple[str, str]:
     # ----------------------------------------------------------
 
     try:
+        # pyrefly: ignore [missing-import]
         from Contacts import (
             CNContactEmailAddressesKey,
             CNContactStore,
@@ -361,7 +376,7 @@ class UserDeviceDialog(QDialog):
 
         # Status badge for this device
         from services.device_registry_service import DeviceRegistryService
-        cur_status = "Updated"
+        cur_status = "Update Successful"
         try:
             cur_dev = None
             for d in DeviceRegistryService().get_all_devices():
@@ -374,11 +389,11 @@ class UserDeviceDialog(QDialog):
             pass
 
         status_lbl = QLabel(cur_status)
-        if cur_status == "Updated":
+        if cur_status in ("Update Successful", "Updated"):
             status_lbl.setStyleSheet("font-weight: bold; color: #10b981;")
         elif "Pending" in cur_status:
             status_lbl.setStyleSheet("font-weight: bold; color: #f59e0b;")
-        elif "Failed" in cur_status:
+        elif "Failed" in cur_status or "Error" in cur_status:
             status_lbl.setStyleSheet("font-weight: bold; color: #ef4444;")
         else:
             status_lbl.setStyleSheet("color: #6b7280;")
@@ -514,16 +529,20 @@ class MainWindow(QMainWindow):
         else:
             self._periodic_update_timer = None
 
-        # Record device heartbeat with current running app version
+        # Verify post-restart update status and record device heartbeat with current running app version
         try:
+            from services.update_state import UpdateStateManager
             from services.device_registry_service import DeviceRegistryService
             from utils.device import get_device_identifier
+
+            UpdateStateManager().check_post_restart_status()
+
             DeviceRegistryService().record_heartbeat(
                 employee_id=getattr(session, "employee_id", None),
                 username=getattr(session, "username", None),
                 device_token=getattr(session, "device_token", None),
             )
-            my_status = "Updated"
+            my_status = "Update Successful"
             for d in DeviceRegistryService().get_all_devices():
                 if d["device_identifier"] == get_device_identifier():
                     my_status = d["update_status"]
@@ -650,6 +669,22 @@ class MainWindow(QMainWindow):
         self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
         self.status_badge.setToolTip("Activity Tracking Status")
         header_layout.addWidget(self.status_badge)
+
+        # ------------------------------------------------------
+        # HRMS Portal Button (with embedded HRMS Logo Icon)
+        # ------------------------------------------------------
+        self.hrms_button = QPushButton(" HRMS")
+        self.hrms_button.setObjectName("SecondaryButton")
+        self.hrms_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hrms_button.setToolTip("Open HRMS Web Portal (https://ihrms.indovisionservices.in)")
+
+        logo_path = _asset_path(os.path.join("assets", "ihrms_icon.png"))
+        if os.path.isfile(logo_path):
+            self.hrms_button.setIcon(QIcon(logo_path))
+            self.hrms_button.setIconSize(QSize(20, 20))
+
+        self.hrms_button.clicked.connect(self._open_hrms_portal)
+        header_layout.addWidget(self.hrms_button)
 
         # ------------------------------------------------------
         # Tracking controls (Internal, hidden from all users)
@@ -990,6 +1025,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logout_button") and self.logout_button:
             self.logout_button.setVisible(allow_logout)
             self.logout_button.setEnabled(allow_logout)
+
+        display_name = session.full_name if (session and session.full_name) else "User"
+        if hasattr(self, "user_label") and self.user_label:
+            self.user_label.setText(f"Welcome, {display_name}")
 
     def _update_status_icon(self) -> None:
         """Update the Shield+Pulse icon based on the current tracking/idle state."""
@@ -1629,7 +1668,7 @@ class MainWindow(QMainWindow):
                     self._offline_update_pending = False
                     from config.settings import get_running_app_version
                     self.dashboard_page.set_version(get_running_app_version())
-                    self.dashboard_page.set_update_status("Updated")
+                    self.dashboard_page.set_update_status("Update Successful")
                     self.update_button.setVisible(False)
                     if getattr(self, "_offline_update_retry_timer", None) and self._offline_update_retry_timer.isActive():
                         self._offline_update_retry_timer.stop()
@@ -1687,7 +1726,7 @@ class MainWindow(QMainWindow):
                     if getattr(self, "_offline_update_retry_timer", None) and not self._offline_update_retry_timer.isActive():
                         self._offline_update_retry_timer.start(30000)
                 else:
-                    self.dashboard_page.set_update_status("Failed")
+                    self.dashboard_page.set_update_status("Update Error")
                     self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
 
                 # Ensure active tracking is running and unaffected by update errors
@@ -1770,4 +1809,14 @@ class MainWindow(QMainWindow):
             worker=getattr(self, "_pipeline_worker", None),
         )
 
-        
+    def _open_hrms_portal(self) -> None:
+        """Open the iHRMS web portal in the user's default external browser."""
+        portal_url = "https://ihrms.indovisionservices.in"
+        logger.info("Opening HRMS portal in default browser: %s", portal_url)
+        try:
+            opened = QDesktopServices.openUrl(QUrl(portal_url))
+            if not opened:
+                webbrowser.open(portal_url)
+        except Exception as exc:
+            logger.warning("QDesktopServices.openUrl failed: %s; falling back to webbrowser", exc)
+            webbrowser.open(portal_url)
