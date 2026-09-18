@@ -1527,6 +1527,10 @@ class MainWindow(QMainWindow):
         if self._really_quit:
             self._shutdown()
             event.accept()
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app:
+                app.quit()
             return
 
         event.ignore()
@@ -1583,7 +1587,6 @@ class MainWindow(QMainWindow):
             "Shutting down application"
         )
 
-
         try:
             if hasattr(self, "_periodic_settings_timer") and self._periodic_settings_timer and self._periodic_settings_timer.isActive():
                 self._periodic_settings_timer.stop()
@@ -1601,37 +1604,40 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.debug("Error stopping timers/listeners during shutdown: %s", e)
 
+        # 1. Gracefully stop tracker and timer on worker thread before quitting event loop
         try:
-            if hasattr(self, "_tracker") and self._tracker:
-                self._tracker.stop()
             if hasattr(self, "_worker") and self._worker:
                 from PySide6.QtCore import QThread
-                conn_type = (
-                    Qt.ConnectionType.DirectConnection
-                    if hasattr(self, "_thread") and self._thread and QThread.currentThread() == self._thread
-                    else Qt.ConnectionType.BlockingQueuedConnection
-                )
-                try:
-                    QMetaObject.invokeMethod(
-                        self._worker,
-                        "stop_tracking",
-                        conn_type,
-                    )
-                except Exception:
-                    QMetaObject.invokeMethod(
-                        self._worker,
-                        "stop_tracking",
-                        Qt.ConnectionType.QueuedConnection,
-                    )
+                if hasattr(self, "_thread") and self._thread and self._thread.isRunning():
+                    if QThread.currentThread() == self._thread:
+                        self._worker.stop_tracking()
+                        self._worker.cleanup()
+                    else:
+                        QMetaObject.invokeMethod(
+                            self._worker,
+                            "stop_tracking",
+                            Qt.ConnectionType.BlockingQueuedConnection,
+                        )
+                        QMetaObject.invokeMethod(
+                            self._worker,
+                            "cleanup",
+                            Qt.ConnectionType.BlockingQueuedConnection,
+                        )
+                else:
+                    self._worker.stop_tracking()
+            elif hasattr(self, "_tracker") and self._tracker:
+                self._tracker.stop()
         except Exception:
             logger.exception(
                 "Error stopping tracker during shutdown"
             )
 
+        # 2. Tell QThread to quit event loop and wait for it to exit completely
         if hasattr(self, "_thread") and self._thread:
             if self._thread.isRunning():
                 self._thread.quit()
                 if not self._thread.wait(3000):
+                    logger.warning("Tracker thread did not exit cleanly within timeout, terminating.")
                     self._thread.terminate()
                     self._thread.wait(1000)
 

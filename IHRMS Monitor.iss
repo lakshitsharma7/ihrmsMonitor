@@ -1,23 +1,29 @@
+#ifndef MyAppVersion
+#define MyAppVersion "2.1"
+#endif
+
 [Setup]
 AppId={{8A8898F6-DFEE-4752-9A92-6F83BE800E5C}
 AppName=iHRMS Monitor
-AppVersion=2.0.1
+AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\iHRMS Monitor
 DefaultGroupName=iHRMS Monitor
+UsePreviousAppDir=no
 OutputDir=installer
 OutputBaseFilename=iHRMS-Monitor-Installer
 SetupIconFile=assets\ihrms-logo-icon.ico
 UninstallDisplayIcon={app}\iHRMS Monitor.exe
 Compression=lzma2
 SolidCompression=yes
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
-CloseApplications=yes
+CloseApplications=force
 RestartApplications=no
 
 [Files]
-Source: "dist\iHRMS Monitor\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "dist\iHRMS Monitor\iHRMS Monitor.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\iHRMS Monitor\_internal\*"; DestDir: "{app}\_internal"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "scripts\uninstall_notifier.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 [Icons]

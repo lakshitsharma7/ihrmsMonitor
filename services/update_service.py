@@ -754,19 +754,7 @@ def get_installed_executable_path() -> Path:
         return Path(sys.executable).resolve()
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    prog_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-    prog_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
-
-    candidates = [
-        default_exe,
-        Path(prog_files) / "iHRMS Monitor" / "iHRMS Monitor.exe",
-        Path(prog_files_x86) / "iHRMS Monitor" / "iHRMS Monitor.exe",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c.resolve()
-
     return default_exe.resolve()
 
 
@@ -1022,8 +1010,18 @@ If isInstaller Then
             WriteLog "Installer completed successfully with exit code 0."
             Exit For
         Else
-            WriteLog "Installer attempt " & i & " failed with exit code " & exitCode & ". Retrying..."
+            WriteLog "Installer attempt " & i & " failed with exit code " & exitCode & ". Retrying with default user directory..."
             wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
+            WScript.Sleep 1000
+            exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & fso.GetParentFolderName(defaultExe) & Chr(34), 0, True)
+            WriteLog "Installer fallback exit code: " & exitCode
+            If exitCode = 0 Then
+                success = True
+                appDir = fso.GetParentFolderName(defaultExe)
+                targetExe = defaultExe
+                WriteLog "Fallback installer completed successfully."
+                Exit For
+            End If
             WScript.Sleep 2000
         End If
     Next
@@ -1075,12 +1073,13 @@ End If
 
 \' 4. Verify Installed Executable & Version and Launch
 launchTarget = ""
-If fso.FileExists(targetExe) Then
-    launchTarget = targetExe
-ElseIf fso.FileExists(appDir & "\\iHRMS Monitor.exe") Then
-    launchTarget = appDir & "\\iHRMS Monitor.exe"
-ElseIf fso.FileExists(defaultExe) Then
+If fso.FileExists(defaultExe) Then
     launchTarget = defaultExe
+    appDir = fso.GetParentFolderName(defaultExe)
+ElseIf fso.FileExists(targetExe) Then
+    launchTarget = targetExe
+ElseIf fso.FileExists(appDir & "\iHRMS Monitor.exe") Then
+    launchTarget = appDir & "\iHRMS Monitor.exe"
 End If
 
 If launchTarget <> "" Then
@@ -1091,7 +1090,7 @@ If launchTarget <> "" Then
     wshShell.Run Chr(34) & launchTarget & Chr(34), 1, False
     WriteLog "Application launch command issued successfully."
 Else
-    WriteLog "CRITICAL: No target executable found to launch. Checked: " & targetExe & ", " & appDir & "\\iHRMS Monitor.exe, " & defaultExe
+    WriteLog "CRITICAL: No target executable found to launch. Checked: " & defaultExe & ", " & targetExe & ", " & appDir & "\iHRMS Monitor.exe"
 End If
 
 WriteLog "VBScript updater finished."

@@ -10,38 +10,7 @@ block_cipher = None
 # Collect full package for shiboken6 (critical binding layer for PySide6)
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all('shiboken6')
 
-# Explicitly ensure all files from shiboken6 are placed in 'shiboken6' subfolder
-shiboken_explicit_binaries = []
-try:
-    import shiboken6
-    shiboken_pkg_dir = Path(shiboken6.__file__).parent
-    for f in shiboken_pkg_dir.iterdir():
-        if f.is_file():
-            shiboken_explicit_binaries.append((str(f), 'shiboken6'))
-except Exception:
-    pass
-
-# Collect VC runtime and helper binaries from PySide6 if available
-extra_binaries = []
-try:
-    import PySide6
-    pyside6_dir = Path(PySide6.__file__).parent
-    for dll_name in [
-        'msvcp140.dll',
-        'msvcp140_1.dll',
-        'msvcp140_2.dll',
-        'vcruntime140.dll',
-        'vcruntime140_1.dll',
-        'concrt140.dll',
-        'vcomp140.dll',
-    ]:
-        dll_file = pyside6_dir / dll_name
-        if dll_file.is_file():
-            extra_binaries.append((str(dll_file), '.'))
-except Exception:
-    pass
-
-all_binaries = extra_binaries + shiboken_binaries + shiboken_explicit_binaries
+all_binaries = shiboken_binaries
 all_datas = [
     ('assets', 'assets'),
     ('VERSION', '.'),
@@ -69,6 +38,7 @@ a = Analysis(
         'platform_support.macos',
         'services',
         'services.activity_service',
+        'services.attendance_service',
         'services.device_registry_service',
         'services.error_report_service',
         'services.screenshot',
@@ -76,6 +46,8 @@ a = Analysis(
         'services.session_service',
         'services.settings_service',
         'services.sync_service',
+        'services.task_service',
+        'services.uninstall_reporter',
         'services.update_service',
         'services.update_state',
         'system',
@@ -102,6 +74,7 @@ a = Analysis(
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
+        'PySide6.QtNetwork',
         'sqlalchemy',
         'sqlalchemy.sql.default_comparator',
         'sqlalchemy.dialects.sqlite',
@@ -133,7 +106,6 @@ a = Analysis(
     hookspath=['hooks'],
     hooksconfig={},
     runtime_hooks=['hooks/rthook-pyside6-fix.py'],
-
     excludes=[
         'tkinter',
         'matplotlib',
@@ -173,19 +145,15 @@ exe = EXE(
     icon=['assets/ihrms-logo-icon.ico'],
 )
 
-from PyInstaller.building.datastruct import Tree
-
-shiboken_tree = Tree(str(Path(shiboken6.__file__).parent), prefix='shiboken6')
-
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    shiboken_tree,
     strip=False,
     upx=False,
     upx_exclude=[],
     name='iHRMS Monitor',
 )
+
 
 

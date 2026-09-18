@@ -44,7 +44,7 @@ class TrackerWorker(QObject):
     def setup(self) -> None:
         """Create the QTimer. Must be called after this object has moved to its thread."""
         if self._timer is None:
-            self._timer = QTimer()
+            self._timer = QTimer(self)
             self._timer.setInterval(self._poll_interval_ms)
             self._timer.timeout.connect(self._on_tick)
         if self._tracker.is_tracking and not self._timer.isActive():
@@ -101,6 +101,20 @@ class TrackerWorker(QObject):
             except Exception:
                 pass
 
+    @Slot()
+    def cleanup(self) -> None:
+        """Stop tracking timer and tracker instance before thread exit."""
+        try:
+            if self._timer is not None:
+                self._timer.stop()
+                self._timer.deleteLater()
+                self._timer = None
+            if self._tracker.is_tracking:
+                self._tracker.stop()
+                logger.info("TrackerWorker: tracking stopped on cleanup")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("TrackerWorker cleanup error: %s", exc)
+
     @Slot(float, bool, str, int, bool)
     def apply_settings(self, idle_threshold_seconds: float, track_window_titles: bool,
                        screenshot_interval_type: str, screenshot_custom_interval_seconds: int,
@@ -145,4 +159,5 @@ def build_tracker_thread(tracker: ActivityTracker) -> tuple[QThread, TrackerWork
     worker = TrackerWorker(tracker)
     worker.moveToThread(thread)
     thread.started.connect(worker.setup)
+    thread.finished.connect(worker.deleteLater)
     return thread, worker

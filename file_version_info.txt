@@ -4,8 +4,8 @@
 #
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 1, 0),
-    prodvers=(2, 0, 1, 0),
+    filevers=(2, 1, 0, 0),
+    prodvers=(2, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,12 +21,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Indovision Services'),
             StringStruct('FileDescription', 'iHRMS Monitor Desktop Client'),
-            StringStruct('FileVersion', '2.0.1.0'),
+            StringStruct('FileVersion', '2.1.0.0'),
             StringStruct('InternalName', 'iHRMS Monitor'),
             StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),
             StringStruct('OriginalFilename', 'iHRMS Monitor.exe'),
             StringStruct('ProductName', 'iHRMS Monitor'),
-            StringStruct('ProductVersion', '2.0.1.0')
+            StringStruct('ProductVersion', '2.1.0.0')
           ]
         )
       ]

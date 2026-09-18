@@ -7,15 +7,19 @@ setlocal enabledelayedexpansion
 echo ===================================================
 echo [1/3] Preparing Environment and Verifying Dependencies...
 echo ===================================================
+set "PYTHON_EXE=python"
+if exist "%~dp0venv\Scripts\python.exe" set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
+
+echo Using Python executable: "!PYTHON_EXE!"
 taskkill /F /IM "iHRMS Monitor.exe" 2>nul
-python -m pip install -r requirements.txt -r requirements-windows.txt
+"!PYTHON_EXE!" -m pip install -r requirements.txt -r requirements-windows.txt
 if errorlevel 1 goto :error
 
 echo.
 echo ===================================================
 echo [2/3] Generating Version Info and Building with PyInstaller...
 echo ===================================================
-python scripts\generate_version_info.py
+"!PYTHON_EXE!" scripts\generate_version_info.py
 if errorlevel 1 goto :error
 
 set "SPEC_FILE="
@@ -27,7 +31,7 @@ if not defined SPEC_FILE (
     set "SPEC_FILE=iHRMS Monitor.spec"
 )
 
-python -m PyInstaller --noconfirm --clean "!SPEC_FILE!"
+"!PYTHON_EXE!" -m PyInstaller --noconfirm --clean "!SPEC_FILE!"
 if errorlevel 1 goto :error
 
 echo.
@@ -55,7 +59,8 @@ if not defined ISCC (
     goto :done_pyinstaller
 )
 
-for /f "delims=" %%v in ('python -c "from config.settings import APP_VERSION; print(APP_VERSION)"') do set "APP_VER=%%v"
+set "APP_VER=2.0.1"
+if exist "VERSION" set /p APP_VER=<VERSION
 echo Using Inno Setup Compiler: "%ISCC%" for Version %APP_VER%
 "%ISCC%" /DMyAppVersion="%APP_VER%" "IHRMS Monitor.iss"
 if errorlevel 1 goto :error
