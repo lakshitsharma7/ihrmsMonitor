@@ -70,12 +70,12 @@ class TestUpdateStateAndExecution(unittest.TestCase):
         self.assertGreater(self.mgr.get_state()["cooldown_until"], time.time())
 
         # Should now be blocked by loop guard
-        allowed, reason = self.mgr.should_attempt_update("2.0.2", manual=False)
+        allowed, reason = self.mgr.should_attempt_update("2.0.2", running_version="2.0.1", manual=False)
         self.assertFalse(allowed)
         self.assertIn("cooldown", reason.lower())
 
         # Manual check should bypass/reset cooldown
-        allowed_manual, _ = self.mgr.should_attempt_update("2.0.2", manual=True)
+        allowed_manual, _ = self.mgr.should_attempt_update("2.0.2", running_version="2.0.1", manual=True)
         self.assertTrue(allowed_manual)
 
     def test_should_attempt_update_already_installed(self):

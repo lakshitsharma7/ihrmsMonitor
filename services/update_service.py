@@ -94,51 +94,98 @@ def is_newer_version(server_version: str, current_version: str | None = None) ->
 # DOWNLOAD CANDIDATE RESOLUTION
 # ==============================================================
 
+def _extract_version_from_url_or_name(text: str) -> str | None:
+    """Extract a version substring (e.g. '2.0.1' or '2.1') from a filename or URL."""
+    if not text:
+        return None
+    m = re.search(r"(?:[vV]|setup_v?|installer[_-]v?)(\d+(?:\.\d+)+)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(\d+(?:\.\d+)+)", text)
+    if m:
+        return m.group(1)
+    return None
+
+
 def resolve_download_candidates(
     api_url: str,
     file_name: str = "",
     download_url: str = "",
     activity_tracker_link: str = "",
+    server_version: str = "",
 ) -> list[str]:
     """Construct an ordered list of candidate download URLs for the update installer."""
-    candidates = []
+    raw_candidates = []
+    clean_v = str(server_version).lstrip("vV").strip() if server_version else ""
 
-    # 1. Explicit download URL from API response or configuration
+    parts = api_url.split("/hrms_api")
+    base_domain = parts[0].rstrip("/") if parts else api_url.rstrip("/")
+
+    # 1. Target-version prioritized filenames
+    if clean_v:
+        ver_names = [
+            f"iHRMSMonitorSetup_v{clean_v}.exe",
+            f"iHRMS-Monitor-Installer-{clean_v}.exe",
+            f"iHRMSMonitorSetup_v{clean_v}.0.exe",
+            f"iHRMS-Monitor-Installer-{clean_v}.0.exe",
+        ]
+        for vname in ver_names:
+            raw_candidates.append(f"{base_domain}/uploads/{vname}")
+            raw_candidates.append(f"{base_domain}/hrms_api/uploads/{vname}")
+            raw_candidates.append(f"{base_domain}/uploads/version/{vname}")
+            raw_candidates.append(f"{base_domain}/{vname}")
+            if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
+                raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{vname}")
+
+    # 2. Explicit download URL from API response or configuration
     if download_url and str(download_url).strip():
         u = str(download_url).strip()
         if u.startswith("http://") or u.startswith("https://"):
-            candidates.append(u)
+            raw_candidates.append(u)
 
-    # 2. If file_name is itself a full URL
+    # 3. If file_name is itself a full URL
     if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
-        candidates.append(str(file_name).strip())
+        raw_candidates.append(str(file_name).strip())
 
-    # 3. Base domain upload paths derived from api_url
+    # 4. Base domain upload paths derived from api_url
     if file_name and not str(file_name).startswith("http"):
         clean_file = str(file_name).strip()
-        parts = api_url.split("/hrms_api")
-        base_domain = parts[0].rstrip("/") if parts else api_url.rstrip("/")
+        raw_candidates.append(f"{base_domain}/uploads/{clean_file}")
+        raw_candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
+        raw_candidates.append(f"{base_domain}/uploads/version/{clean_file}")
+        raw_candidates.append(f"{base_domain}/{clean_file}")
 
-        candidates.append(f"{base_domain}/uploads/{clean_file}")
-        candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
-        candidates.append(f"{base_domain}/uploads/version/{clean_file}")
-        candidates.append(f"{base_domain}/{clean_file}")
-
-    # 4. Activity tracker link if it explicitly references an executable installer
+    # 5. Activity tracker link if it explicitly references an executable installer
     if activity_tracker_link and str(activity_tracker_link).strip():
         atl = str(activity_tracker_link).strip()
         if atl.lower().endswith(".exe"):
-            candidates.append(atl)
+            raw_candidates.append(atl)
         elif file_name and not str(file_name).startswith("http"):
-            candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
+            raw_candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
 
-    # Deduplicate while preserving order
+    # 6. Generic latest fallback filenames
+    generic_names = ["iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
+    for gname in generic_names:
+        raw_candidates.append(f"{base_domain}/uploads/{gname}")
+        raw_candidates.append(f"{base_domain}/hrms_api/uploads/{gname}")
+        raw_candidates.append(f"{base_domain}/uploads/version/{gname}")
+        raw_candidates.append(f"{base_domain}/{gname}")
+        if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
+            raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{gname}")
+
+    # Deduplicate while preserving order and filtering out candidates with strictly older version strings
     seen = set()
     unique_candidates = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            unique_candidates.append(c)
+    for c in raw_candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        if clean_v:
+            cand_ver = _extract_version_from_url_or_name(c)
+            if cand_ver and is_newer_version(clean_v, cand_ver):
+                # Candidate has an explicit version that is strictly older than target server_version
+                logger.debug("Filtering out outdated candidate URL: %s (cand_version=%s < target=%s)", c, cand_ver, clean_v)
+                continue
+        unique_candidates.append(c)
 
     return unique_candidates
 
@@ -426,6 +473,7 @@ class UpdateCheckWorker(QThread):
             api_url=self._api_url,
             file_name=file_name,
             download_url=download_url,
+            server_version=version,
         )
 
         try:
@@ -1451,6 +1499,12 @@ class UpdatePipelineWorker(QThread):
         self._installer_path: str | None = None
         self._server_version: str | None = None
         self._is_force: bool = False
+        self._auto_install_on_ready: bool = True
+        self.ready_to_install.connect(self._on_ready_to_install_internal)
+
+    def _on_ready_to_install_internal(self, installer_path: str) -> None:
+        if self._auto_install_on_ready:
+            install_update_and_restart(installer_path, target_version=self._server_version, exit_process=True)
 
     def cancel(self) -> None:
         self._is_cancelled = True
@@ -1655,6 +1709,7 @@ class UpdatePipelineWorker(QThread):
                     file_name=file_name,
                     download_url=download_url,
                     activity_tracker_link=getattr(api_cfg, "activity_tracker_link", ""),
+                    server_version=server_version,
                 )
                 logger.info("Pipeline: Candidate download URLs for v%s: %s", server_version, candidates)
 
@@ -1771,11 +1826,8 @@ class UpdatePipelineWorker(QThread):
             UpdateService()._available_version = server_version
             UpdateService()._is_force_update = force_update
 
-            # Emit ready_to_install signal
+            # Emit ready_to_install signal to dispatch safe installation on Main Thread
             self.ready_to_install.emit(str(installer_path))
-
-            # Automatically launch installer and restart application
-            install_update_and_restart(str(installer_path), target_version=server_version, exit_process=True)
             return
 
         except Exception as err:
@@ -1894,11 +1946,8 @@ class UpdateService(QObject):
             self._pipeline_worker.upload_completed.connect(on_upload_completed)
 
         if on_ready_to_install:
+            self._pipeline_worker._auto_install_on_ready = False
             self._pipeline_worker.ready_to_install.connect(on_ready_to_install)
-        else:
-            def _default_on_ready_to_install(installer_p: str):
-                install_update_and_restart(installer_p, target_version=self._available_version, exit_process=True)
-            self._pipeline_worker.ready_to_install.connect(_default_on_ready_to_install)
 
         if on_error:
             self._pipeline_worker.error_occurred.connect(on_error)

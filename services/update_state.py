@@ -178,6 +178,8 @@ class UpdateStateManager:
                 state["status"] = "failed"
                 state["last_status"] = "Update Error"
             else:
+                # Set a 1-hour cooldown on attempt 1 to prevent instant restart loop on startup
+                cooldown_until = time.time() + 3600
                 err_msg = (
                     f"Update verification FAILED: expected v{target_version}, but running application "
                     f"is still v{running_version}. (Attempt {attempts}/{max_attempts})"

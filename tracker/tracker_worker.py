@@ -107,7 +107,6 @@ class TrackerWorker(QObject):
         try:
             if self._timer is not None:
                 self._timer.stop()
-                self._timer.deleteLater()
                 self._timer = None
             if self._tracker.is_tracking:
                 self._tracker.stop()
