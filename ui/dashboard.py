@@ -310,8 +310,9 @@ class DashboardPage(QWidget):
         self.records_uploaded_label = QLabel("Records Uploaded: 0")
         self.records_uploaded_label.setObjectName("StatusLabel")
 
-        self.update_status_label = QLabel("Status: Update Successful")
+        self.update_status_label = QLabel("Status: Sync Successful")
         self.update_status_label.setObjectName("StatusLabel")
+        self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
         self.sync_status_label = self.update_status_label
 
         # Initial last successful sync timestamp
@@ -649,6 +650,26 @@ class DashboardPage(QWidget):
                 else SyncService.last_successful_sync_time
             )
             self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
+
+            # Keep sync status updated with current SyncService state
+            sync_st = getattr(SyncService, "last_sync_status", "Sent")
+            curr_text = self.update_status_label.text()
+            if not any(u in curr_text for u in ("Downloading", "Installing", "Restarting", "Ready to Restart", "Update Pending")):
+                if sync_st == "Sent":
+                    self.set_sync_status("Sync Successful")
+                elif sync_st == "Sending":
+                    self.set_sync_status("Syncing...")
+                elif sync_st == "Pending" or "Offline" in sync_st or "Timeout" in sync_st:
+                    self.set_sync_status("Sync Pending")
+                elif sync_st.startswith("Failed"):
+                    err_msg = getattr(SyncService, "last_sync_error", "")
+                    clean_msg = self._clean_status_text(err_msg)
+                    if clean_msg == "Sync Pending":
+                        self.set_sync_status("Sync Pending")
+                    elif "Auth" in clean_msg:
+                        self.set_sync_status("Sync Error (Auth Failed)")
+                    else:
+                        self.set_sync_status("Sync Error")
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 
@@ -660,18 +681,91 @@ class DashboardPage(QWidget):
                 v_str = f"Version: {v_str}"
             self.version_label.setText(v_str)
 
+    @staticmethod
+    def _clean_status_text(raw_text: str) -> str:
+        """Format raw technical errors/statuses into concise, user-friendly labels."""
+        if not raw_text:
+            return "Sync Successful"
+        t = str(raw_text).strip()
+        if t.startswith("Status:"):
+            t = t[len("Status:"):].strip()
+
+        t_lower = t.lower()
+        # Check for raw Python / network exception patterns
+        if any(exc in t_lower for exc in (
+            "httpsconnectionpool", "httpconnectionpool", "connectionerror", "max retries",
+            "failed to establish a new connection", "name resolution", "getaddrinfo",
+            "network is unreachable", "connection refused", "connection reset", "socket",
+            "urllib3", "requests.exceptions", "traceback", "winerror", "timeout", "timed out",
+            "offline", "unreachable"
+        )):
+            return "Sync Pending"
+
+        # Check for 5xx server errors
+        if any(srv in t_lower for srv in ("500", "502", "503", "504", "bad gateway", "server busy")):
+            return "Sync Pending"
+
+        # Check for auth/permission patterns
+        if any(auth in t_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403")):
+            return "Sync Error (Auth Failed)"
+
+        # Strip prefixes
+        for prefix in (
+            "Activity upload batch failed: ",
+            "Activity sync batch failed: ",
+            "Activity sync failed: ",
+            "Sync API fetch settings failed: ",
+            "Pre-update flush failed: ",
+        ):
+            if t.startswith(prefix):
+                t = t[len(prefix):].strip()
+                break
+
+        if len(t) > 30:
+            return t[:27] + "..."
+        return t
+
+    def set_sync_status(self, status: str) -> None:
+        """Dynamically update the displayed sync status with clean styling."""
+        if not status:
+            return
+        s = str(status).strip()
+        if not s.startswith("Status:"):
+            display_text = f"Status: {s}"
+        else:
+            display_text = s
+
+        self.update_status_label.setText(display_text)
+        if "Successful" in s or "Sent" in s or "Updated" in s:
+            self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
+        elif "Syncing" in s or "Sending" in s:
+            self.update_status_label.setStyleSheet("color: #3b82f6; font-weight: 500;")
+        elif "Pending" in s or "Offline" in s:
+            self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: 500;")
+        elif "Error" in s or "Failed" in s:
+            self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+        else:
+            self.update_status_label.setStyleSheet("")
+
     def set_update_status(self, status: str) -> None:
         """Dynamically update the displayed device update verification status."""
-        if status:
-            self.update_status_label.setText(f"Status: {status}")
-            if "Successful" in status or "Updated" in status:
-                self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
-            elif "Pending" in status:
-                self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
-            elif "Failed" in status or "Error" in status:
-                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
-            else:
-                self.update_status_label.setStyleSheet("")
+        if not status:
+            return
+        s = str(status).strip()
+        if not s.startswith("Status:"):
+            display_text = f"Status: {s}"
+        else:
+            display_text = s
+
+        self.update_status_label.setText(display_text)
+        if "Successful" in s or "Updated" in s:
+            self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
+        elif "Pending" in s:
+            self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
+        elif "Failed" in s or "Error" in s:
+            self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+        else:
+            self.update_status_label.setStyleSheet("")
 
     def _handle_global_error(self, error_type: str, error_message: str, context: dict) -> None:
         """Receive notification from ErrorReportService and queue GUI update via Qt signal."""
@@ -684,37 +778,36 @@ class DashboardPage(QWidget):
     def _on_error_reported(self, error_type: str, error_message: str) -> None:
         """Display short user-friendly error message in the existing dashboard status area."""
         try:
-            short_msg = str(error_message).strip()
-            if "\n" in short_msg:
-                short_msg = short_msg.split("\n")[0].strip()
-
-            # Clean redundant prefixes so the actual root reason/HTTP code is visible
-            for prefix in (
-                "Activity upload batch failed: ",
-                "Activity sync batch failed: ",
-                "Activity sync failed: ",
-                "Sync API fetch settings failed: ",
-                "Pre-update flush failed: ",
-            ):
-                if short_msg.startswith(prefix):
-                    short_msg = short_msg[len(prefix):].strip()
-                    break
-
-            if len(short_msg) > 60:
-                short_msg = short_msg[:57] + "..."
-
             err_upper = str(error_type).upper()
+            msg_lower = str(error_message).lower()
+
             if any(k in err_upper for k in ("SYNC", "UPLOAD", "API", "NETWORK", "HTTP")):
-                self.update_status_label.setText(f"Status: Sync Error ({short_msg})")
-                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+                if any(net in msg_lower for net in (
+                    "httpsconnectionpool", "httpconnectionpool", "connectionerror", "max retries",
+                    "failed to establish a new connection", "name resolution", "getaddrinfo",
+                    "timeout", "timed out", "temporary failure", "unreachable", "offline",
+                    "network is unreachable", "connection refused", "connection reset", "socket",
+                    "502", "503", "504"
+                )):
+                    self.set_sync_status("Sync Pending")
+                elif any(auth in msg_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403")):
+                    self.set_sync_status("Sync Error (Auth Failed)")
+                else:
+                    clean_msg = self._clean_status_text(error_message)
+                    self.set_sync_status(f"Sync Error ({clean_msg})" if clean_msg != "Sync Pending" else "Sync Pending")
             elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
-                self.update_status_label.setText(f"Status: Update Error ({short_msg})")
-                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+                if any(net in msg_lower for net in ("connect", "timeout", "offline", "unreachable", "name resolution", "httpsconnectionpool")):
+                    self.set_update_status("Update Pending (Offline)")
+                else:
+                    clean_msg = self._clean_status_text(error_message)
+                    self.set_update_status(f"Update Error ({clean_msg})" if clean_msg else "Update Error")
             elif any(k in err_upper for k in ("TRACK", "IDLE", "PROVIDER", "PROCESS", "WINDOW")):
-                self.tracking_status_label.setText(f"Tracking: Error ({short_msg})")
+                clean_msg = self._clean_status_text(error_message)
+                self.tracking_status_label.setText(f"Tracking: Error ({clean_msg})")
                 self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
             else:
-                self.update_status_label.setText(f"Status: Issue ({short_msg})")
+                clean_msg = self._clean_status_text(error_message)
+                self.update_status_label.setText(f"Status: {clean_msg}")
                 self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
         except Exception:
             pass

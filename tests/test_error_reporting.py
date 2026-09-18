@@ -161,13 +161,19 @@ class TestErrorReportService(unittest.TestCase):
         service = ActivityService(get_session)
         page = DashboardPage(activity_service=service)
 
-        # Trigger a sync error
+        # Trigger a sync network issue -> displays user-friendly Sync Pending
         ErrorReportService().report_error(
             error_type="API_SYNC_ERROR",
             error_message="Connection timed out while uploading batch",
         )
-        self.assertIn("Error", page.sync_status_label.text())
-        self.assertIn("Connection timed out", page.sync_status_label.text())
+        self.assertIn("Sync Pending", page.sync_status_label.text())
+
+        # Trigger a sync auth failure -> displays Sync Error (Auth Failed)
+        ErrorReportService().report_error(
+            error_type="API_SYNC_ERROR",
+            error_message="HTTP 401: Unauthorized",
+        )
+        self.assertIn("Sync Error", page.sync_status_label.text())
 
         # Trigger an update error
         ErrorReportService().report_error(

@@ -6,6 +6,7 @@
 AppId={{8A8898F6-DFEE-4752-9A92-6F83BE800E5C}
 AppName=iHRMS Monitor
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 DefaultDirName={autopf}\iHRMS Monitor
 DefaultGroupName=iHRMS Monitor
 UsePreviousAppDir=no
