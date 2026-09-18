@@ -41,6 +41,7 @@ class ActivitySession(Base):
     server_session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     screenshot_uploaded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    system_health: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -108,6 +109,7 @@ class EnrolledDevice(Base):
     latest_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     update_status: Mapped[str] = mapped_column(String(50), nullable=False, default="Update Pending")
     failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    system_health: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

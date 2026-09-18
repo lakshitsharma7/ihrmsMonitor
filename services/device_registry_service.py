@@ -97,6 +97,7 @@ class DeviceRegistryService:
         username: Optional[str] = None,
         device_token: Optional[str] = None,
         latest_version: Optional[str] = None,
+        system_health: Optional[dict | str] = None,
     ) -> EnrolledDevice:
         """Record or update current machine heartbeat and real installed version."""
         dev_id = device_identifier or get_device_identifier()
@@ -104,6 +105,19 @@ class DeviceRegistryService:
         version = installed_version or get_running_app_version()
         os_user = getpass.getuser()
         now = datetime.now(timezone.utc)
+
+        # Serialize system health data
+        health_data = None
+        if system_health is not None:
+            import json
+            health_data = json.dumps(system_health) if isinstance(system_health, dict) else str(system_health)
+        else:
+            try:
+                from utils.system_health import get_system_health
+                import json
+                health_data = json.dumps(get_system_health())
+            except Exception:
+                health_data = None
 
         # Reset offline alert flag when device reports heartbeat again
         with self._lock:
@@ -131,6 +145,7 @@ class DeviceRegistryService:
                     installed_version=version,
                     latest_version=latest_version,
                     update_status="Update Pending" if (latest_version and is_newer_version(latest_version, version)) else "Update Successful",
+                    system_health=health_data,
                     last_seen=now,
                 )
                 db.add(device)
@@ -138,6 +153,8 @@ class DeviceRegistryService:
                 device.hostname = host
                 device.installed_version = version
                 device.last_seen = now
+                if health_data:
+                    device.system_health = health_data
                 if employee_id is not None:
                     device.employee_id = str(employee_id)
                 if username is not None:
@@ -166,10 +183,27 @@ class DeviceRegistryService:
         finally:
             db.close()
 
-    def record_sync_success(self, device_identifier: Optional[str] = None) -> None:
+    def record_sync_success(
+        self,
+        device_identifier: Optional[str] = None,
+        system_health: Optional[dict | str] = None,
+    ) -> None:
         """Update last_sync and last_seen timestamp on successful activity sync."""
         dev_id = device_identifier or get_device_identifier()
         now = datetime.now(timezone.utc)
+
+        # Serialize system health data if available
+        health_data = None
+        if system_health is not None:
+            import json
+            health_data = json.dumps(system_health) if isinstance(system_health, dict) else str(system_health)
+        else:
+            try:
+                from utils.system_health import get_system_health
+                import json
+                health_data = json.dumps(get_system_health())
+            except Exception:
+                health_data = None
 
         with self._lock:
             if dev_id in self._offline_alerted_devices:
@@ -186,6 +220,8 @@ class DeviceRegistryService:
             if device:
                 device.last_sync = now
                 device.last_seen = now
+                if health_data:
+                    device.system_health = health_data
                 device.update_status = self.calculate_device_status(
                     installed_version=device.installed_version,
                     latest_version=device.latest_version,
@@ -194,6 +230,11 @@ class DeviceRegistryService:
                     failure_reason=device.failure_reason,
                 )
                 db.commit()
+                logger.info(
+                    "System health database update successful for device=%s | employee=%s",
+                    dev_id,
+                    device.employee_id,
+                )
         except Exception as e:
             db.rollback()
             logger.debug("Could not record sync timestamp: %s", e)
@@ -347,6 +388,7 @@ class DeviceRegistryService:
                     "latest_version": d.latest_version or "N/A",
                     "update_status": status,
                     "failure_reason": d.failure_reason,
+                    "system_health": d.system_health,
                     "last_seen": d.last_seen.isoformat() if d.last_seen else None,
                     "last_sync": d.last_sync.isoformat() if d.last_sync else None,
                 })

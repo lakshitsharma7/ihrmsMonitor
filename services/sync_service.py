@@ -725,6 +725,23 @@ class SyncService:
 
                         current_device_token = self._require_device_token() or device_token
                         import json
+                        sys_health = payload.get("system_health")
+                        if not sys_health:
+                            try:
+                                from utils.system_health import get_system_health
+                                sys_health = get_system_health()
+                            except Exception:
+                                sys_health = {}
+
+                        logger.info(
+                            "Health payload prepared with fields: cpu=%.1f%%, ram=%.1f%%, disk=%.1f%%, network=%s, uptime=%ss",
+                            float(sys_health.get("cpu_usage_percent", 0.0) or 0.0),
+                            float(sys_health.get("ram_usage_percent", 0.0) or 0.0),
+                            float(sys_health.get("disk_usage_percent", 0.0) or 0.0),
+                            str(sys_health.get("network_status", "unknown")),
+                            str(sys_health.get("system_uptime_seconds", "N/A")),
+                        )
+
                         new_payload = {
                             "device_token": current_device_token,
                             "system_started_at": payload.get("system_started_at"),
@@ -732,7 +749,27 @@ class SyncService:
                             "punch_in": payload.get("punch_in"),
                             "punch_out": payload.get("punch_out"),
                             "sessions": json.dumps(payload["activities"]),
+                            "system_health": json.dumps(sys_health),
+                            "device_health": json.dumps(sys_health),
+                            "cpu_usage_percent": str(sys_health.get("cpu_usage_percent", 0.0)),
+                            "cpu_percent": str(sys_health.get("cpu_usage_percent", 0.0)),
+                            "cpu_logical_cores": str(sys_health.get("cpu_logical_cores", 1)),
+                            "ram_usage_percent": str(sys_health.get("ram_usage_percent", 0.0)),
+                            "ram_percent": str(sys_health.get("ram_usage_percent", 0.0)),
+                            "ram_total_mb": str(sys_health.get("ram_total_mb", 0.0)),
+                            "ram_used_mb": str(sys_health.get("ram_used_mb", 0.0)),
+                            "ram_available_mb": str(sys_health.get("ram_available_mb", 0.0)),
+                            "disk_usage_percent": str(sys_health.get("disk_usage_percent", 0.0)),
+                            "disk_total_gb": str(sys_health.get("disk_total_gb", 0.0)),
+                            "disk_free_gb": str(sys_health.get("disk_free_gb", 0.0)),
+                            "network_status": str(sys_health.get("network_status", "connected")),
+                            "network_sent_mb": str(sys_health.get("network_sent_mb", 0.0)),
+                            "network_received_mb": str(sys_health.get("network_received_mb", 0.0)),
                         }
+                        if sys_health.get("battery_percent") is not None:
+                            new_payload["battery_percent"] = str(sys_health["battery_percent"])
+                        if sys_health.get("system_uptime_seconds") is not None:
+                            new_payload["system_uptime_seconds"] = str(sys_health["system_uptime_seconds"])
 
                         logger.info(
                             "Syncing activity batch page %d (%d records):\n%s",
@@ -868,7 +905,8 @@ class SyncService:
             )
             try:
                 from services.device_registry_service import DeviceRegistryService
-                DeviceRegistryService().record_sync_success()
+                health_to_record = sys_health if 'sys_health' in locals() else None
+                DeviceRegistryService().record_sync_success(system_health=health_to_record)
             except Exception:
                 pass
             return True
@@ -908,6 +946,11 @@ class SyncService:
 
     def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> dict | None:
         logger.info(
+            "Sending laptop health data to existing endpoint: %s (page %d)",
+            self.save_activity_batch_url,
+            page,
+        )
+        logger.info(
             "[API_PAYLOAD_SENT] endpoint=/tracking/save_activity_batch page=%d sessions_count=%d payload=%s",
             page,
             len(payload.get("sessions", [])),
@@ -920,6 +963,11 @@ class SyncService:
                     self.save_activity_batch_url,
                     data=payload,
                     timeout=15,
+                )
+                logger.info(
+                    "Health sync successful: HTTP %d (attempt %d)",
+                    response.status_code,
+                    attempt,
                 )
                 logger.info(
                     "[API_RESPONSE_RECEIVED] endpoint=/tracking/save_activity_batch page=%d HTTP %d Response body: %s (attempt %d)",
@@ -958,6 +1006,12 @@ class SyncService:
             except requests.RequestException as exc:
                 http_code = getattr(getattr(exc, "response", None), "status_code", None)
                 resp_text = getattr(getattr(exc, "response", None), "text", None)
+                logger.error(
+                    "Health sync failed: HTTP %s / error: %s (attempt %d)",
+                    http_code or "N/A",
+                    exc,
+                    attempt,
+                )
 
                 if (http_code == 401 or (resp_text and ("Device not recognized" in resp_text or "revoked" in resp_text))) and not re_enrolled:
                     logger.warning("Device token rejected on save_activity_batch exception (HTTP 401). Triggering automatic re-enrollment...")
@@ -1110,8 +1164,9 @@ class SyncService:
                 _window_title_value = session.window_title or ""
 
             try:
-                from utils.system_health import get_system_health
+                from utils.system_health import get_system_health, get_structured_system_health
                 sys_health = get_system_health()
+                sys_health_struct = get_structured_system_health()
             except Exception:
                 sys_health = {
                     "cpu_usage_percent": 0.0,
@@ -1126,6 +1181,15 @@ class SyncService:
                     "network_status": "disconnected",
                     "network_sent_mb": 0.0,
                     "network_received_mb": 0.0,
+                }
+                sys_health_struct = {
+                    "cpu": {"usage_percent": 0.0, "cores": 1, "logical_processors": 1},
+                    "ram": {"total": "0 MB", "used": "0 MB", "available": "0 MB", "usage_percent": 0.0},
+                    "disk": {"total": "0 GB", "used": "0 GB", "free": "0 GB", "usage_percent": 0.0},
+                    "os": "Windows",
+                    "hostname": "localhost",
+                    "battery": {"percent": 100.0, "plugged": True},
+                    "uptime": "0 seconds",
                 }
 
             try:
@@ -1165,7 +1229,11 @@ class SyncService:
                 "idle_start_time": idle_start_str,
                 "idle_end": idle_end_str,
                 "idle_end_time": idle_end_str,
-                "system_health": sys_health,
+                "system_health": sys_health_struct,
+                "cpu_usage_percent": sys_health.get("cpu_usage_percent", 0.0),
+                "ram_usage_percent": sys_health.get("ram_usage_percent", 0.0),
+                "disk_usage_percent": sys_health.get("disk_usage_percent", 0.0),
+                "network_status": sys_health.get("network_status", "connected"),
                 "system_started_at": att_ctx.get("system_started_at"),
                 "tracking_started_at": att_ctx.get("tracking_started_at"),
                 "punch_in": att_ctx.get("punch_in"),
@@ -1204,6 +1272,7 @@ class SyncService:
                 "from_": sync_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "to": sync_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
+            "system_health": sys_health,
             "system_started_at": today_att.get("system_started_at"),
             "tracking_started_at": today_att.get("tracking_started_at"),
             "punch_in": today_att.get("punch_in"),
@@ -1410,6 +1479,12 @@ class SyncService:
 
             activities = []
 
+            try:
+                from utils.system_health import get_system_health
+                sys_health = get_system_health()
+            except Exception:
+                sys_health = {}
+
             for session in sessions:
 
                 started_at = self._to_utc(
@@ -1473,6 +1548,10 @@ class SyncService:
                         "duration_seconds": (
                             duration_seconds
                         ),
+                        "system_health": sys_health,
+                        "cpu_usage_percent": sys_health.get("cpu_usage_percent", 0.0),
+                        "ram_usage_percent": sys_health.get("ram_usage_percent", 0.0),
+                        "disk_usage_percent": sys_health.get("disk_usage_percent", 0.0),
                     }
                 )
 
@@ -1537,6 +1616,8 @@ class SyncService:
                     "from": sync_from.isoformat(),
                     "to": sync_to.isoformat(),
                 },
+
+                "system_health": sys_health,
 
                 "activities": activities,
 

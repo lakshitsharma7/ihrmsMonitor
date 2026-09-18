@@ -106,6 +106,7 @@ class ActivityRepository:
         started_at: datetime,
         idle_seconds: int = 0,
         employee_id: str | None = None,
+        system_health: str | dict | None = None,
     ) -> ActivitySession:
         """Create a new open activity session."""
 
@@ -120,6 +121,19 @@ class ActivityRepository:
                 except Exception:
                     pass
 
+            health_str = None
+            if system_health is not None:
+                import json
+                health_str = json.dumps(system_health) if isinstance(system_health, dict) else str(system_health)
+            else:
+                try:
+                    from utils.system_health import get_system_health
+                    import json
+                    h = get_system_health()
+                    health_str = json.dumps(h)
+                except Exception:
+                    health_str = None
+
             record = ActivitySession(
                 application_name=application_name,
                 process_id=process_id,
@@ -129,6 +143,7 @@ class ActivityRepository:
                 duration_seconds=0,
                 idle_seconds=max(0, int(idle_seconds)),
                 employee_id=employee_id,
+                system_health=health_str,
             )
 
             self._session.add(record)
@@ -137,11 +152,12 @@ class ActivityRepository:
 
             logger.info(
                 "Created activity session: "
-                "id=%s app=%s pid=%s started_at=%s",
+                "id=%s app=%s pid=%s started_at=%s health_saved=%s",
                 record.id,
                 record.application_name,
                 record.process_id,
                 record.started_at,
+                bool(record.system_health),
             )
 
             return record
@@ -155,6 +171,26 @@ class ActivityRepository:
             )
 
             raise
+
+    def update_session_health(
+        self,
+        session_id: int,
+        system_health: str | dict,
+    ) -> bool:
+        """Attach or update the system health snapshot for an activity session."""
+        try:
+            import json
+            health_str = json.dumps(system_health) if isinstance(system_health, dict) else str(system_health)
+            record = self._session.get(ActivitySession, session_id)
+            if record:
+                record.system_health = health_str
+                self._session.commit()
+                return True
+            return False
+        except Exception:
+            self._session.rollback()
+            logger.exception("Failed to update system_health on session %d", session_id)
+            return False
 
     # ==========================================================
     # UPDATE WINDOW TITLE

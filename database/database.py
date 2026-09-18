@@ -73,7 +73,15 @@ def init_database(db_path: Path | str | None = None) -> None:
                 conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN idle_seconds INTEGER NOT NULL DEFAULT 0"))
             if "employee_id" not in column_names:
                 conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN employee_id VARCHAR(100)"))
+            if "system_health" not in column_names:
+                conn.execute(text("ALTER TABLE activity_sessions ADD COLUMN system_health VARCHAR(4096)"))
             
+            # Migrate enrolled_devices table
+            dev_cols = conn.execute(text("PRAGMA table_info(enrolled_devices)")).fetchall()
+            dev_col_names = [col[1] for col in dev_cols]
+            if "system_health" not in dev_col_names:
+                conn.execute(text("ALTER TABLE enrolled_devices ADD COLUMN system_health VARCHAR(4096)"))
+
             # Migrate settings table
             settings_cols = conn.execute(text("PRAGMA table_info(settings)")).fetchall()
             settings_col_names = [col[1] for col in settings_cols]
