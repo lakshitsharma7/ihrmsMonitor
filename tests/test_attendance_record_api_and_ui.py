@@ -354,6 +354,314 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             self.assertEqual(day_3["status_label"], "Week Off")
             self.assertEqual(day_3["color"], "#2563eb") # Blue
 
+    def test_09_punch_time_overrides_absent_status(self):
+        """Verify date with valid punch is marked Present even if API status says Absent."""
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "date": "2026-09-02",
+                        "status": "Absent",
+                        "punch_in": "11:35:11",
+                        "punch_out": "11:38:19",
+                    }
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="September",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            day_2 = res["days"][1]
+            self.assertEqual(day_2["date"], "2026-09-02")
+            self.assertEqual(day_2["status_label"], "Present")
+            self.assertEqual(day_2["status_code"], "P")
+            self.assertEqual(day_2["color"], "#16a34a") # Green
+            self.assertIn("11:35:11 - 11:38:19", day_2["details"])
+
+    def test_10_multiple_punch_formats_and_identical_punches(self):
+        """Verify punch string with identical punch times formats as comma-separated list."""
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "lastUpdate": "01-09-2026",
+                        "punchTime": "11:37:19,11:37:19"
+                    }
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="September",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            day_1 = res["days"][0]
+            self.assertEqual(day_1["date"], "2026-09-01")
+            self.assertEqual(day_1["status_label"], "Present")
+            self.assertEqual(day_1["details"], "Punch: 11:37:19, 11:37:19")
+
+    def test_11_saturday_working_rules_1st_and_3rd_saturday(self):
+        """Verify 1st and 3rd Saturdays are working days and non-working Saturdays are Week Offs."""
+        # September 2026:
+        # Day 5 (Sat) -> 1st Saturday -> Working Day (Absent if past & no punch)
+        # Day 12 (Sat) -> 2nd Saturday -> Week Off
+        # Day 19 (Sat) -> 3rd Saturday -> Working Day (Present if punch exists)
+        # Day 26 (Sat) -> 4th Saturday -> Week Off
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "date": "2026-09-19",
+                        "punch_in": "09:30:00",
+                        "punch_out": "18:00:00"
+                    }
+                ],
+                "weekoff": []
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="September",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            # Day 5 (1st Saturday, no punch, past date) -> Absent
+            day_5 = res["days"][4]
+            self.assertEqual(day_5["date"], "2026-09-05")
+            self.assertEqual(day_5["status_label"], "Absent")
+
+            # Day 12 (2nd Saturday, no punch) -> Week Off
+            day_12 = res["days"][11]
+            self.assertEqual(day_12["date"], "2026-09-12")
+            self.assertEqual(day_12["status_label"], "Week Off")
+
+            # Day 19 (3rd Saturday, with punch) -> Present
+            day_19 = res["days"][18]
+            self.assertEqual(day_19["date"], "2026-09-19")
+            self.assertEqual(day_19["status_label"], "Present")
+            self.assertIn("09:30:00 - 18:00:00", day_19["details"])
+
+            # Day 26 (4th Saturday, no punch) -> Week Off
+            day_26 = res["days"][25]
+            self.assertEqual(day_26["date"], "2026-09-26")
+            self.assertEqual(day_26["status_label"], "Week Off")
+
+    def test_12_real_world_last_update_date_keyed_response(self):
+        """Verify real API payload with lastUpdate keys (e.g. 09-09-2026 and 18-09-2026) maps correctly."""
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "punchTime": "11:37:19,11:37:19",
+                        "lastUpdate": "09-09-2026"
+                    },
+                    {
+                        "punchTime": "11:35:11,11:38:19",
+                        "lastUpdate": "18-09-2026"
+                    }
+                ],
+                "mispunch_days": [
+                    "09-09-2026",
+                    "18-09-2026"
+                ],
+                "weekoff": [
+                    {"date": "2026-09-05"},
+                    {"date": "2026-09-06"},
+                    {"date": "2026-09-12"},
+                    {"date": "2026-09-13"},
+                    {"date": "2026-09-19"},
+                    {"date": "2026-09-20"},
+                    {"date": "2026-09-26"},
+                    {"date": "2026-09-27"}
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="September",
+                year=2026,
+                indo_code="EC-098",
+                key="testapikey111",
+                force=True,
+            )
+
+            # Day 1 (01-09-2026) should NOT get Day 9's punch
+            day_1 = res["days"][0]
+            self.assertEqual(day_1["date"], "2026-09-01")
+            self.assertEqual(day_1["status_label"], "Absent")
+            self.assertIsNone(day_1["details"])
+
+            # Day 9 (09-09-2026) should be Present with 11:37:19, 11:37:19
+            day_9 = res["days"][8]
+            self.assertEqual(day_9["date"], "2026-09-09")
+            self.assertEqual(day_9["status_label"], "Present")
+            self.assertEqual(day_9["details"], "Punch: 11:37:19, 11:37:19")
+
+            # Day 18 (18-09-2026) should be Present with 11:35:11 - 11:38:19
+            day_18 = res["days"][17]
+            self.assertEqual(day_18["date"], "2026-09-18")
+            self.assertEqual(day_18["status_label"], "Present")
+            self.assertEqual(day_18["details"], "Punch: 11:35:11 - 11:38:19")
+
+    def test_13_invalid_punch_sentinels_ignored(self):
+        """Verify invalid punch sentinels like '00:00:00', 'null', '-' are not counted as punches."""
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "date": "2026-09-01",
+                        "punch_in": "00:00:00",
+                        "punch_out": "00:00:00",
+                        "status": "Absent"
+                    }
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="September",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            day_1 = res["days"][0]
+            self.assertEqual(day_1["status_label"], "Absent")
+            self.assertIsNone(day_1["details"])
+
+    def test_15_calendar_day_card_full_status_styling(self):
+        """Verify CalendarDayCard applies full-card status backgrounds for Present, Absent, Week Off, and Today."""
+        from ui.attendance_page import CalendarDayCard
+
+        # 1. Present Card -> Full Light Green background (#F0FDF4)
+        present_card = CalendarDayCard(day_data={
+            "day_num": 18,
+            "day_name": "Fri",
+            "date": "2026-09-18",
+            "status_label": "Present",
+            "status_code": "P",
+            "details": "Punch: 11:35:11 - 11:38:19",
+            "is_today": False,
+        })
+        self.assertIn("background-color: #F0FDF4", present_card.styleSheet())
+        self.assertIn("border: 1px solid #86EFAC", present_card.styleSheet())
+
+        # 2. Absent Card -> Full Light Red background (#FEF2F2)
+        absent_card = CalendarDayCard(day_data={
+            "day_num": 1,
+            "day_name": "Tue",
+            "date": "2026-09-01",
+            "status_label": "Absent",
+            "status_code": "A",
+            "details": None,
+            "is_today": False,
+        })
+        self.assertIn("background-color: #FEF2F2", absent_card.styleSheet())
+        self.assertIn("border: 1px solid #FECACA", absent_card.styleSheet())
+
+        # 3. Week Off Card -> Full Light Blue background (#EFF6FF)
+        weekoff_card = CalendarDayCard(day_data={
+            "day_num": 6,
+            "day_name": "Sun",
+            "date": "2026-09-06",
+            "status_label": "Week Off",
+            "status_code": "Week Off",
+            "details": None,
+            "is_today": False,
+        })
+        self.assertIn("background-color: #EFF6FF", weekoff_card.styleSheet())
+        self.assertIn("border: 1px solid #BFDBFE", weekoff_card.styleSheet())
+
+        # 4. Today + Present -> Green Card with Today 2px border and Today badge
+        today_present_card = CalendarDayCard(day_data={
+            "day_num": 19,
+            "day_name": "Sat",
+            "date": "2026-09-19",
+            "status_label": "Present",
+            "status_code": "P",
+            "details": "Punch: 09:30:00",
+            "is_today": True,
+        })
+        self.assertIn("background-color: #F0FDF4", today_present_card.styleSheet())
+        self.assertIn("border: 2px solid #16A34A", today_present_card.styleSheet())
+
+        # 5. Today + Absent -> Red Card with Today 2px border and Today badge
+        today_absent_card = CalendarDayCard(day_data={
+            "day_num": 19,
+            "day_name": "Sat",
+            "date": "2026-09-19",
+            "status_label": "Absent",
+            "status_code": "A",
+            "details": None,
+            "is_today": True,
+        })
+        self.assertIn("background-color: #FEF2F2", today_absent_card.styleSheet())
+        self.assertIn("border: 2px solid #DC2626", today_absent_card.styleSheet())
+
 
 if __name__ == "__main__":
     unittest.main()

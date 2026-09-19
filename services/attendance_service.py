@@ -709,46 +709,293 @@ class AttendanceService:
         if not isinstance(result, dict):
             result = {}
 
-        present_days_list = result.get("present_days") or []
-        if not isinstance(present_days_list, list):
-            present_days_list = []
+        # 5. Parse Days and Build Lookup Tables
+        result = res_json.get("result", {})
+        if not isinstance(result, dict):
+            result = {}
 
+        def _is_valid_punch_time(val: Any) -> bool:
+            """Check if a value contains a valid, non-empty punch timestamp."""
+            if val is None:
+                return False
+            if isinstance(val, (dict, list)) and not val:
+                return False
+            s = str(val).strip()
+            if not s or s.lower() in ("none", "null", "undefined", "-", "--", "--:--", "00:00:00", "00:00", "0:00:00", "0:00", "0", "false", "{}", "[]", "n/a", "na"):
+                return False
+            return any(c.isdigit() for c in s)
+
+        def _clean_time_str(val: Any) -> str | None:
+            """Clean and format timestamp string into concise time component."""
+            if not _is_valid_punch_time(val):
+                return None
+            s = str(val).strip()
+            if " " in s:
+                parts = s.split(" ", 1)
+                if len(parts) == 2 and any(c.isdigit() for c in parts[1]):
+                    s = parts[1].strip()
+            if "T" in s:
+                parts = s.split("T", 1)
+                if len(parts) == 2 and any(c.isdigit() for c in parts[1]):
+                    s = parts[1].strip()
+            return s if _is_valid_punch_time(s) else None
+
+        def _normalize_date_key(raw_val: Any, target_year: int, target_month: int) -> str | None:
+            """Normalize various date formats (DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY, day num) into 'YYYY-MM-DD'."""
+            if not raw_val:
+                return None
+            s = str(raw_val).strip()
+            if not s or s.lower() in ("none", "null", "undefined", "-"):
+                return None
+            if " " in s:
+                s = s.split(" ")[0].strip()
+            if "T" in s:
+                s = s.split("T")[0].strip()
+
+            # YYYY-MM-DD or YYYY/MM/DD
+            if len(s) == 10 and (s[4] in ("-", "/") and s[7] in ("-", "/")):
+                sep = s[4]
+                try:
+                    dt = datetime.strptime(s, f"%Y{sep}%m{sep}%d")
+                    return dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+            # DD-MM-YYYY or DD/MM/YYYY
+            if len(s) == 10 and (s[2] in ("-", "/") and s[5] in ("-", "/")):
+                sep = s[2]
+                try:
+                    dt = datetime.strptime(s, f"%d{sep}%m{sep}%Y")
+                    return dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+            try:
+                day_num = int(s)
+                if 1 <= day_num <= 31:
+                    return f"{target_year:04d}-{target_month:02d}-{day_num:02d}"
+            except ValueError:
+                pass
+
+            return None
+
+        def _extract_punch_and_details(
+            val: Any,
+            date_str: str,
+            local_punch: dict | None = None,
+        ) -> tuple[str | None, str | None, list[str]]:
+            """Extract clean punch display string, details line, and raw punch times list."""
+            punches: list[str] = []
+            working_hrs: str | None = None
+
+            if isinstance(val, dict):
+                # 1. Direct punch in / out fields
+                p_in = (
+                    val.get("punch_in")
+                    or val.get("punchIn")
+                    or val.get("punch_in_time")
+                    or val.get("in_time")
+                    or val.get("first_punch")
+                    or val.get("first_in")
+                    or val.get("check_in")
+                )
+                p_out = (
+                    val.get("punch_out")
+                    or val.get("punchOut")
+                    or val.get("punch_out_time")
+                    or val.get("out_time")
+                    or val.get("last_punch")
+                    or val.get("last_out")
+                    or val.get("check_out")
+                )
+
+                c_in = _clean_time_str(p_in)
+                c_out = _clean_time_str(p_out)
+                if c_in:
+                    punches.append(c_in)
+                if c_out and c_out != c_in:
+                    punches.append(c_out)
+
+                # 2. punch_time / punchTime / punch / punches / attendance_time
+                p_time = (
+                    val.get("punchTime")
+                    or val.get("punch_time")
+                    or val.get("punch_times")
+                    or val.get("punch")
+                    or val.get("punches")
+                    or val.get("attendance_time")
+                    or val.get("time")
+                )
+                if isinstance(p_time, list):
+                    for item in p_time:
+                        c = _clean_time_str(item)
+                        if c and c not in punches:
+                            punches.append(c)
+                elif isinstance(p_time, str) and _is_valid_punch_time(p_time):
+                    if "," in p_time:
+                        parts = [_clean_time_str(p) for p in p_time.split(",") if _is_valid_punch_time(p)]
+                        punches = [p for p in parts if p]
+                    elif " - " in p_time:
+                        parts = [_clean_time_str(p) for p in p_time.split(" - ") if _is_valid_punch_time(p)]
+                        punches = [p for p in parts if p]
+                    elif not punches:
+                        c = _clean_time_str(p_time)
+                        if c:
+                            punches.append(c)
+
+                # 3. working hours
+                w_hrs = val.get("working_hours") or val.get("work_duration") or val.get("hours") or val.get("total_hours")
+                if _is_valid_punch_time(w_hrs):
+                    working_hrs = str(w_hrs).strip()
+
+            elif isinstance(val, str):
+                if _is_valid_punch_time(val):
+                    if "," in val:
+                        parts = [_clean_time_str(p) for p in val.split(",") if _is_valid_punch_time(p)]
+                        punches = [p for p in parts if p]
+                    elif " - " in val:
+                        parts = [_clean_time_str(p) for p in val.split(" - ") if _is_valid_punch_time(p)]
+                        punches = [p for p in parts if p]
+                    elif ":" in val:
+                        c = _clean_time_str(val)
+                        if c:
+                            punches.append(c)
+
+            # 4. Merge local store punch if available for date
+            if local_punch:
+                l_in = _clean_time_str(local_punch.get("punch_in"))
+                l_out = _clean_time_str(local_punch.get("punch_out"))
+                if l_in and l_in not in punches:
+                    punches.insert(0, l_in)
+                if l_out and l_out not in punches:
+                    punches.append(l_out)
+
+            # Build punch display string
+            punch_display: str | None = None
+            if len(punches) == 2:
+                if punches[0] == punches[1]:
+                    punch_display = f"Punch: {punches[0]}, {punches[1]}"
+                else:
+                    punch_display = f"Punch: {punches[0]} - {punches[1]}"
+            elif len(punches) == 1:
+                punch_display = f"Punch: {punches[0]}"
+            elif len(punches) > 2:
+                punch_display = f"Punch: {', '.join(punches)}"
+
+            # Detail parts
+            detail_parts = []
+            if punch_display:
+                detail_parts.append(punch_display)
+            if working_hrs:
+                detail_parts.append(f"Hrs: {working_hrs}")
+
+            details_str = " | ".join(detail_parts) if detail_parts else None
+            return punch_display, details_str, punches
+
+        # Holidays
         holiday_days = result.get("holiday_days") or []
         holiday_map = {}
         if isinstance(holiday_days, list):
             for h in holiday_days:
                 if isinstance(h, dict) and h.get("date"):
-                    holiday_map[str(h["date"])] = h.get("name") or "Holiday"
+                    k = _normalize_date_key(h.get("date"), resolved_year, resolved_month_num)
+                    if k:
+                        holiday_map[k] = h.get("name") or "Holiday"
 
+        # Weekoffs
         weekoff_days = result.get("weekoff") or []
         weekoff_set = set()
         if isinstance(weekoff_days, list):
             for w in weekoff_days:
                 if isinstance(w, dict) and w.get("date"):
-                    weekoff_set.add(str(w["date"]))
+                    k = _normalize_date_key(w.get("date"), resolved_year, resolved_month_num)
+                    if k:
+                        weekoff_set.add(k)
                 elif isinstance(w, str):
-                    weekoff_set.add(w)
+                    k = _normalize_date_key(w, resolved_year, resolved_month_num)
+                    if k:
+                        weekoff_set.add(k)
 
+        # Leaves
         leave_days = result.get("leave_days") or []
         leave_set = set()
         if isinstance(leave_days, list):
             for l in leave_days:
                 if isinstance(l, dict) and l.get("date"):
-                    leave_set.add(str(l["date"]))
+                    k = _normalize_date_key(l.get("date"), resolved_year, resolved_month_num)
+                    if k:
+                        leave_set.add(k)
                 elif isinstance(l, str):
-                    leave_set.add(l)
+                    k = _normalize_date_key(l, resolved_year, resolved_month_num)
+                    if k:
+                        leave_set.add(k)
 
+        # Comp Offs
         comp_off_days = result.get("comp_off_days") or []
         comp_off_set = set()
         if isinstance(comp_off_days, list):
             for c in comp_off_days:
                 if isinstance(c, dict) and c.get("date"):
-                    comp_off_set.add(str(c["date"]))
+                    k = _normalize_date_key(c.get("date"), resolved_year, resolved_month_num)
+                    if k:
+                        comp_off_set.add(k)
                 elif isinstance(c, str):
-                    comp_off_set.add(c)
+                    k = _normalize_date_key(c, resolved_year, resolved_month_num)
+                    if k:
+                        comp_off_set.add(k)
+
+        # Present / Attendance Records Normalization (By Date vs By Month Array)
+        present_days_list = result.get("present_days") or []
+        if not isinstance(present_days_list, list):
+            present_days_list = []
+
+        present_days_by_date: dict[str, Any] = {}
+        is_full_month_status_array = False
+
+        if isinstance(present_days_list, list) and present_days_list:
+            all_simple = all(
+                isinstance(item, str) and item.strip().upper() in (
+                    "P", "PRESENT", "A", "ABSENT", "EL", "CL", "SL", "PL", "ML",
+                    "WEEK OFF", "WO", "W/O", "HOLIDAY", "H", "HD", "HALF DAY", "LATE", "L", "COMP OFF", "CO", "-"
+                )
+                for item in present_days_list if item is not None and str(item).strip()
+            )
+            if all_simple and len(present_days_list) > 10:
+                is_full_month_status_array = True
+            else:
+                for idx, item in enumerate(present_days_list):
+                    if item is None:
+                        continue
+                    if isinstance(item, dict):
+                        raw_d = (
+                            item.get("lastUpdate")
+                            or item.get("date")
+                            or item.get("punch_date")
+                            or item.get("attendance_date")
+                            or item.get("day")
+                            or item.get("created_at")
+                            or item.get("updated_at")
+                        )
+                        d_key = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
+                        if d_key:
+                            present_days_by_date[d_key] = item
+                        else:
+                            d_key = f"{resolved_year:04d}-{resolved_month_num:02d}-{(idx + 1):02d}"
+                            present_days_by_date[d_key] = item
+                    elif isinstance(item, str):
+                        d_key = _normalize_date_key(item, resolved_year, resolved_month_num)
+                        if d_key:
+                            present_days_by_date[d_key] = {"date": d_key, "status": "P"}
+
+        # Load local state punches for merging (today / tracked days)
+        local_state_map = {}
+        try:
+            with self._state_lock:
+                local_state_map = self._load_state() or {}
+        except Exception:
+            local_state_map = {}
 
         is_freezed = str(res_json.get("freezed", "0")) in ("1", "true", "True")
-
         _, num_days = calendar.monthrange(resolved_year, resolved_month_num)
 
         parsed_days = []
@@ -758,17 +1005,26 @@ class AttendanceService:
         leave_cnt = 0
         holiday_cnt = 0
 
-        def _extract_status_from_val(val: Any) -> tuple[str | None, str | None]:
-            """Extract clean status string and optional punch/time detail from raw value."""
-            if val is None:
-                return None, None
-            if isinstance(val, str):
-                s = val.strip()
-                if not s or s.lower() in ("none", "null", "undefined", "-", "{}"):
-                    return None, None
-                return s, None
+        for day_idx in range(1, num_days + 1):
+            day_date = datetime(resolved_year, resolved_month_num, day_idx)
+            date_str = day_date.strftime("%Y-%m-%d")
+            day_name = day_date.strftime("%a")
+
+            # Extract day payload
+            val = None
+            if is_full_month_status_array and day_idx - 1 < len(present_days_list):
+                val = present_days_list[day_idx - 1]
+            else:
+                val = present_days_by_date.get(date_str)
+
+            # Extract punch times and details
+            local_punch = local_state_map.get(date_str)
+            punch_display, day_detail, punches = _extract_punch_and_details(val, date_str, local_punch)
+            has_valid_punch = bool(punch_display)
+
+            # Extract raw API status
+            raw_status = None
             if isinstance(val, dict):
-                # Extract status from possible keys
                 raw_status = (
                     val.get("status")
                     or val.get("attendance_status")
@@ -777,107 +1033,113 @@ class AttendanceService:
                     or val.get("status_name")
                     or val.get("type")
                     or val.get("mark")
+                    or val.get("code")
                 )
                 if isinstance(raw_status, dict):
                     raw_status = raw_status.get("name") or raw_status.get("status") or raw_status.get("code")
+            elif isinstance(val, str) and not _is_valid_punch_time(val):
+                raw_status = val
 
-                status_str = str(raw_status).strip() if raw_status is not None else None
-                if status_str and status_str.lower() in ("none", "null", "undefined", "-", "{}"):
-                    status_str = None
+            raw_status_str = str(raw_status).strip() if raw_status is not None else None
+            if raw_status_str and raw_status_str.lower() in ("none", "null", "undefined", "-", "{}"):
+                raw_status_str = None
 
-                # Extract punch / time details cleanly
-                punch_in = val.get("punch_in") or val.get("punch_in_time") or val.get("in_time") or val.get("first_punch")
-                punch_out = val.get("punch_out") or val.get("punch_out_time") or val.get("out_time") or val.get("last_punch")
-                punch_time = val.get("punchTime") or val.get("punch_time")
-                working_hrs = val.get("working_hours") or val.get("work_duration")
+            raw_upper = raw_status_str.upper() if raw_status_str else ""
 
-                detail_parts = []
-                if punch_in and punch_out:
-                    detail_parts.append(f"{punch_in} - {punch_out}")
-                elif punch_in:
-                    detail_parts.append(f"In: {punch_in}")
-                elif punch_time:
-                    detail_parts.append(f"Punch: {punch_time}")
+            # Saturday / Sunday business rules:
+            # 1st Saturday and 3rd Saturday are working days.
+            # 2nd, 4th, 5th Saturday and Sundays are Week Offs.
+            is_sunday = (day_date.weekday() == 6)
+            is_saturday = (day_date.weekday() == 5)
+            sat_idx = (day_idx - 1) // 7 + 1 if is_saturday else 0
+            is_working_saturday = (is_saturday and sat_idx in (1, 3))
 
-                if working_hrs:
-                    detail_parts.append(f"Hrs: {working_hrs}")
-
-                details_str = " | ".join(detail_parts) if detail_parts else None
-                return status_str, details_str
-
-            return str(val).strip(), None
-
-        for day_idx in range(1, num_days + 1):
-            day_date = datetime(resolved_year, resolved_month_num, day_idx)
-            date_str = day_date.strftime("%Y-%m-%d")
-            day_name = day_date.strftime("%a")
-
-            status_code = None
-            day_detail = None
-            if day_idx - 1 < len(present_days_list):
-                val = present_days_list[day_idx - 1]
-                status_code, day_detail = _extract_status_from_val(val)
-
-            if not status_code:
-                if date_str in holiday_map:
-                    status_code = f"Holiday: {holiday_map[date_str]}"
-                elif date_str in weekoff_set:
-                    status_code = "Week Off"
-                elif date_str in leave_set:
-                    status_code = "Leave"
-                elif date_str in comp_off_set:
-                    status_code = "Comp Off"
-                elif day_date.date() <= now.date():
-                    # If date is Sunday / Saturday
-                    if day_date.weekday() in (5, 6):
-                        status_code = "Week Off"
-                    else:
-                        status_code = "A"
+            # Status Precedence Resolution:
+            # 1. Holiday from API
+            # 2. Valid punch / attendance detected -> Present (or Half Day / Late)
+            # 3. Explicit Leave / Comp Off from API
+            # 4. Week Off (Sunday, 2nd/4th/5th Sat, or API weekoff)
+            # 5. Past / today working day with no attendance -> Absent
+            # 6. Future working day -> "-"
+            if date_str in holiday_map:
+                status_code = f"Holiday: {holiday_map[date_str]}"
+            elif has_valid_punch:
+                if raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
+                    status_code = "Half Day"
+                elif raw_upper in ("LATE", "L"):
+                    status_code = "Late"
+                else:
+                    status_code = "P"
+            elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
+                status_code = raw_status_str
+            elif date_str in leave_set:
+                status_code = "Leave"
+            elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
+                status_code = "Comp Off"
+            elif raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
+                status_code = "Week Off"
+            elif date_str in weekoff_set and not is_working_saturday:
+                status_code = "Week Off"
+            elif is_sunday:
+                status_code = "Week Off"
+            elif is_saturday and not is_working_saturday:
+                status_code = "Week Off"
+            elif raw_upper in ("P", "PRESENT"):
+                status_code = "P"
+            elif raw_upper in ("A", "ABSENT"):
+                status_code = "A"
+            elif is_working_saturday:
+                if day_date.date() <= now.date():
+                    status_code = "A"
                 else:
                     status_code = "-"
+            elif day_date.date() <= now.date():
+                status_code = "A"
+            else:
+                status_code = "-"
 
-            # Map status code to human readable label & color
+            # Map status code to human readable label & color tokens
             code_upper = status_code.upper() if status_code else "-"
             if code_upper in ("P", "PRESENT"):
                 status_label = "Present"
                 status_badge = "P"
-                color = "#16a34a" # Green
+                color = "#16a34a"  # Green
                 bg_color = "#dcfce7"
                 present_cnt += 1
             elif code_upper in ("A", "ABSENT"):
                 status_label = "Absent"
                 status_badge = "A"
-                color = "#dc2626" # Red
+                color = "#dc2626"  # Red
                 bg_color = "#fee2e2"
                 absent_cnt += 1
             elif "WEEK OFF" in code_upper or code_upper in ("WO", "W/O"):
                 status_label = "Week Off"
                 status_badge = "WO"
-                color = "#2563eb" # Blue
+                color = "#2563eb"  # Blue
                 bg_color = "#dbeafe"
                 week_off_cnt += 1
             elif "HOLIDAY" in code_upper or code_upper == "H":
                 status_label = status_code if "Holiday:" in status_code else "Holiday"
                 status_badge = "H"
-                color = "#9333ea" # Purple
+                color = "#9333ea"  # Purple
                 bg_color = "#f3e8ff"
                 holiday_cnt += 1
             elif code_upper in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or "LEAVE" in code_upper:
                 status_label = f"Leave ({status_code})" if len(status_code) <= 3 else status_code
                 status_badge = status_code if len(status_code) <= 3 else "L"
-                color = "#d97706" # Amber
+                color = "#d97706"  # Amber
                 bg_color = "#fef3c7"
                 leave_cnt += 1
             elif "COMP" in code_upper:
                 status_label = "Comp Off"
                 status_badge = "CO"
-                color = "#0891b2" # Cyan
+                color = "#0891b2"  # Cyan
                 bg_color = "#cffafe"
                 leave_cnt += 1
             elif code_upper in ("HD", "HALF DAY"):
                 status_label = "Half Day"
                 status_badge = "HD"
-                color = "#ca8a04" # Yellow
+                color = "#ca8a04"  # Yellow
                 bg_color = "#fef9c3"
                 present_cnt += 1
             elif "LATE" in code_upper:
@@ -891,6 +1153,18 @@ class AttendanceService:
                 status_badge = "-" if status_code == "-" else status_code[:2]
                 color = "#64748b"
                 bg_color = "#f1f5f9"
+
+            # Production logging of attendance status resolution
+            logger.info(
+                "Attendance Status Resolution: Date: %s (%s) | API Record: %s | API Status: %s | Punch: %s | Detected Attendance: %s | Final Status: %s",
+                date_str,
+                day_name,
+                val is not None,
+                raw_status_str,
+                punch_display,
+                has_valid_punch,
+                status_label,
+            )
 
             parsed_days.append({
                 "day_num": day_idx,
