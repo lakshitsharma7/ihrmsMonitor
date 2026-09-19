@@ -221,7 +221,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
     def test_e2e_pre_flush_with_pending_logs_and_screenshots(self):
         """Pre-flush with pending logs/screenshots uploads them successfully before update."""
         mock_session = MagicMock()
-        with patch("database.repository.ActivityRepository.get_unsynced_closed_sessions", side_effect=[[mock_session], []]), \
+        with patch("database.repository.ActivityRepository.get_unsynced_closed_sessions", side_effect=[[mock_session], [], [], []]), \
              patch("database.repository.ActivityRepository.get_sessions_with_unuploaded_screenshots", return_value=[]), \
              patch("services.sync_service.SyncService.sync_activity_now", return_value=True):
             res = flush_pending_data_before_update(max_retries=2)

@@ -512,3 +512,1038 @@ class AttendanceService:
                 "punch_in": day_data.get("punch_in"),
                 "punch_out": day_data.get("punch_out"),
             }
+
+    def get_monthly_attendance_record(
+        self,
+        month: str | int | None = None,
+        year: int | str | None = None,
+        indo_code: str | None = None,
+        key: str | None = None,
+        force: bool = False,
+    ) -> dict:
+        """
+        Fetch monthly attendance records from the dynamic Attendance API:
+        Endpoint: attendance/get_attendance_record
+        Parameters:
+          - indo_code: employee / indo code (e.g. 'EC-100')
+          - key: API key (e.g. 'testapikey111')
+          - month: full month name (e.g. 'September')
+          - year: 4-digit year (e.g. 2025 or '2025')
+        
+        Returns a structured dictionary with:
+          - response: int
+          - status: int
+          - month: str
+          - year: int
+          - days: list of daily attendance dicts (date, day_num, day_name, status, status_label, color)
+          - summary: {present, absent, week_off, leave, holiday, total_days}
+          - freezed: bool
+          - raw_result: dict
+          - error: str | None
+        """
+        import calendar
+        import requests
+        import time
+
+        now = datetime.now()
+
+        # 1. Resolve Month and Year
+        month_names = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+
+        if isinstance(month, int) and 1 <= month <= 12:
+            resolved_month_name = month_names[month - 1]
+            resolved_month_num = month
+        elif isinstance(month, str) and month.strip():
+            m_str = month.strip().capitalize()
+            if m_str in month_names:
+                resolved_month_name = m_str
+                resolved_month_num = month_names.index(m_str) + 1
+            else:
+                try:
+                    m_int = int(m_str)
+                    if 1 <= m_int <= 12:
+                        resolved_month_name = month_names[m_int - 1]
+                        resolved_month_num = m_int
+                    else:
+                        resolved_month_name = month_names[now.month - 1]
+                        resolved_month_num = now.month
+                except ValueError:
+                    resolved_month_name = month_names[now.month - 1]
+                    resolved_month_num = now.month
+        else:
+            resolved_month_name = month_names[now.month - 1]
+            resolved_month_num = now.month
+
+        if year is not None:
+            try:
+                resolved_year = int(str(year).strip())
+            except ValueError:
+                resolved_year = now.year
+        else:
+            resolved_year = now.year
+
+        # 2. Resolve indo_code and key from active session context
+        resolved_indo = indo_code
+        if not resolved_indo:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    resolved_indo = u.indo_code or u.employee_id or u.username
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s:
+                    resolved_indo = s.get("indo_code") or s.get("employee_id") or s.get("username")
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            try:
+                st = QSettings("Indovision", "iHRMSMonitor")
+                resolved_indo = st.value("last_employee_id") or None
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            resolved_indo = "EC-100"
+
+        resolved_key = key or os.environ.get("IHRMS_ATTENDANCE_API_KEY")
+        if not resolved_key:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and u.api_key:
+                    resolved_key = u.api_key
+            except Exception:
+                pass
+
+        if not resolved_key:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s and s.get("api_key"):
+                    resolved_key = s.get("api_key")
+            except Exception:
+                pass
+
+        if not resolved_key:
+            resolved_key = "testapikey111"
+
+        # 3. Check Cache
+        if not hasattr(self, "_monthly_cache"):
+            self._monthly_cache = {}
+            self._monthly_cache_ts = {}
+
+        cache_key = f"{resolved_indo}_{resolved_month_name}_{resolved_year}"
+        now_ts = time.time()
+        if not force and cache_key in self._monthly_cache:
+            if now_ts - self._monthly_cache_ts.get(cache_key, 0) < 300: # 5 min cache
+                return self._monthly_cache[cache_key]
+
+        # 4. Resolve URL
+        try:
+            from config.api_config import ApiConfig
+            att_url = ApiConfig().get_attendance_record_url
+        except Exception:
+            att_url = os.environ.get("IHRMS_GET_ATTENDANCE_RECORD_API_URL")
+
+        if not att_url:
+            att_url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/attendance/get_attendance_record"
+
+        req_payload = {
+            "indo_code": str(resolved_indo),
+            "key": str(resolved_key),
+            "month": str(resolved_month_name),
+            "year": str(resolved_year),
+        }
+
+        logger.info(
+            "Calling Attendance Record API: url=%s data=%s",
+            att_url,
+            {"indo_code": resolved_indo, "key": "***", "month": resolved_month_name, "year": resolved_year},
+        )
+
+        res_json = None
+        error_msg = None
+        try:
+            resp = requests.post(att_url, data=req_payload, timeout=12)
+            logger.info("Attendance Record API response: HTTP %d (size: %d bytes)", resp.status_code, len(resp.content))
+            resp.raise_for_status()
+            res_json = resp.json()
+        except Exception as api_err:
+            logger.warning("Attendance Record API call failed: %s", api_err)
+            error_msg = str(api_err)
+
+        if not res_json or not isinstance(res_json, dict):
+            # Fallback structure on error
+            fallback_res = {
+                "response": 500 if error_msg else 400,
+                "status": 0,
+                "month": resolved_month_name,
+                "year": resolved_year,
+                "days": [],
+                "summary": {
+                    "present": 0,
+                    "absent": 0,
+                    "week_off": 0,
+                    "leave": 0,
+                    "holiday": 0,
+                    "total_days": 0,
+                },
+                "freezed": False,
+                "raw_result": {},
+                "error": error_msg or "Unable to load attendance data.",
+            }
+            return fallback_res
+
+        # 5. Parse Days
+        result = res_json.get("result", {})
+        if not isinstance(result, dict):
+            result = {}
+
+        present_days_list = result.get("present_days") or []
+        if not isinstance(present_days_list, list):
+            present_days_list = []
+
+        holiday_days = result.get("holiday_days") or []
+        holiday_map = {}
+        if isinstance(holiday_days, list):
+            for h in holiday_days:
+                if isinstance(h, dict) and h.get("date"):
+                    holiday_map[str(h["date"])] = h.get("name") or "Holiday"
+
+        weekoff_days = result.get("weekoff") or []
+        weekoff_set = set()
+        if isinstance(weekoff_days, list):
+            for w in weekoff_days:
+                if isinstance(w, dict) and w.get("date"):
+                    weekoff_set.add(str(w["date"]))
+                elif isinstance(w, str):
+                    weekoff_set.add(w)
+
+        leave_days = result.get("leave_days") or []
+        leave_set = set()
+        if isinstance(leave_days, list):
+            for l in leave_days:
+                if isinstance(l, dict) and l.get("date"):
+                    leave_set.add(str(l["date"]))
+                elif isinstance(l, str):
+                    leave_set.add(l)
+
+        comp_off_days = result.get("comp_off_days") or []
+        comp_off_set = set()
+        if isinstance(comp_off_days, list):
+            for c in comp_off_days:
+                if isinstance(c, dict) and c.get("date"):
+                    comp_off_set.add(str(c["date"]))
+                elif isinstance(c, str):
+                    comp_off_set.add(c)
+
+        is_freezed = str(res_json.get("freezed", "0")) in ("1", "true", "True")
+
+        _, num_days = calendar.monthrange(resolved_year, resolved_month_num)
+
+        parsed_days = []
+        present_cnt = 0
+        absent_cnt = 0
+        week_off_cnt = 0
+        leave_cnt = 0
+        holiday_cnt = 0
+
+        def _extract_status_from_val(val: Any) -> tuple[str | None, str | None]:
+            """Extract clean status string and optional punch/time detail from raw value."""
+            if val is None:
+                return None, None
+            if isinstance(val, str):
+                s = val.strip()
+                if not s or s.lower() in ("none", "null", "undefined", "-", "{}"):
+                    return None, None
+                return s, None
+            if isinstance(val, dict):
+                # Extract status from possible keys
+                raw_status = (
+                    val.get("status")
+                    or val.get("attendance_status")
+                    or val.get("attendance")
+                    or val.get("day_status")
+                    or val.get("status_name")
+                    or val.get("type")
+                    or val.get("mark")
+                )
+                if isinstance(raw_status, dict):
+                    raw_status = raw_status.get("name") or raw_status.get("status") or raw_status.get("code")
+
+                status_str = str(raw_status).strip() if raw_status is not None else None
+                if status_str and status_str.lower() in ("none", "null", "undefined", "-", "{}"):
+                    status_str = None
+
+                # Extract punch / time details cleanly
+                punch_in = val.get("punch_in") or val.get("punch_in_time") or val.get("in_time") or val.get("first_punch")
+                punch_out = val.get("punch_out") or val.get("punch_out_time") or val.get("out_time") or val.get("last_punch")
+                punch_time = val.get("punchTime") or val.get("punch_time")
+                working_hrs = val.get("working_hours") or val.get("work_duration")
+
+                detail_parts = []
+                if punch_in and punch_out:
+                    detail_parts.append(f"{punch_in} - {punch_out}")
+                elif punch_in:
+                    detail_parts.append(f"In: {punch_in}")
+                elif punch_time:
+                    detail_parts.append(f"Punch: {punch_time}")
+
+                if working_hrs:
+                    detail_parts.append(f"Hrs: {working_hrs}")
+
+                details_str = " | ".join(detail_parts) if detail_parts else None
+                return status_str, details_str
+
+            return str(val).strip(), None
+
+        for day_idx in range(1, num_days + 1):
+            day_date = datetime(resolved_year, resolved_month_num, day_idx)
+            date_str = day_date.strftime("%Y-%m-%d")
+            day_name = day_date.strftime("%a")
+
+            status_code = None
+            day_detail = None
+            if day_idx - 1 < len(present_days_list):
+                val = present_days_list[day_idx - 1]
+                status_code, day_detail = _extract_status_from_val(val)
+
+            if not status_code:
+                if date_str in holiday_map:
+                    status_code = f"Holiday: {holiday_map[date_str]}"
+                elif date_str in weekoff_set:
+                    status_code = "Week Off"
+                elif date_str in leave_set:
+                    status_code = "Leave"
+                elif date_str in comp_off_set:
+                    status_code = "Comp Off"
+                elif day_date.date() <= now.date():
+                    # If date is Sunday / Saturday
+                    if day_date.weekday() in (5, 6):
+                        status_code = "Week Off"
+                    else:
+                        status_code = "A"
+                else:
+                    status_code = "-"
+
+            # Map status code to human readable label & color
+            code_upper = status_code.upper() if status_code else "-"
+            if code_upper in ("P", "PRESENT"):
+                status_label = "Present"
+                status_badge = "P"
+                color = "#16a34a" # Green
+                bg_color = "#dcfce7"
+                present_cnt += 1
+            elif code_upper in ("A", "ABSENT"):
+                status_label = "Absent"
+                status_badge = "A"
+                color = "#dc2626" # Red
+                bg_color = "#fee2e2"
+                absent_cnt += 1
+            elif "WEEK OFF" in code_upper or code_upper in ("WO", "W/O"):
+                status_label = "Week Off"
+                status_badge = "WO"
+                color = "#2563eb" # Blue
+                bg_color = "#dbeafe"
+                week_off_cnt += 1
+            elif "HOLIDAY" in code_upper or code_upper == "H":
+                status_label = status_code if "Holiday:" in status_code else "Holiday"
+                status_badge = "H"
+                color = "#9333ea" # Purple
+                bg_color = "#f3e8ff"
+                holiday_cnt += 1
+            elif code_upper in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or "LEAVE" in code_upper:
+                status_label = f"Leave ({status_code})" if len(status_code) <= 3 else status_code
+                status_badge = status_code if len(status_code) <= 3 else "L"
+                color = "#d97706" # Amber
+                bg_color = "#fef3c7"
+                leave_cnt += 1
+            elif "COMP" in code_upper:
+                status_label = "Comp Off"
+                status_badge = "CO"
+                color = "#0891b2" # Cyan
+                bg_color = "#cffafe"
+                leave_cnt += 1
+            elif code_upper in ("HD", "HALF DAY"):
+                status_label = "Half Day"
+                status_badge = "HD"
+                color = "#ca8a04" # Yellow
+                bg_color = "#fef9c3"
+                present_cnt += 1
+            elif "LATE" in code_upper:
+                status_label = "Late"
+                status_badge = "L"
+                color = "#b45309"
+                bg_color = "#fef3c7"
+                present_cnt += 1
+            else:
+                status_label = status_code if status_code != "-" else "—"
+                status_badge = "-" if status_code == "-" else status_code[:2]
+                color = "#64748b"
+                bg_color = "#f1f5f9"
+
+            parsed_days.append({
+                "day_num": day_idx,
+                "date": date_str,
+                "day_name": day_name,
+                "status_code": status_code or "—",
+                "status_label": status_label,
+                "status_badge": status_badge,
+                "color": color,
+                "bg_color": bg_color,
+                "details": day_detail,
+                "is_today": day_date.date() == now.date(),
+            })
+
+        output_data = {
+            "response": res_json.get("response", 200),
+            "status": res_json.get("status", 1),
+            "month": resolved_month_name,
+            "year": resolved_year,
+            "days": parsed_days,
+            "summary": {
+                "present": present_cnt,
+                "absent": absent_cnt,
+                "week_off": week_off_cnt,
+                "leave": leave_cnt,
+                "holiday": holiday_cnt,
+                "total_days": num_days,
+            },
+            "freezed": is_freezed,
+            "raw_result": result,
+            "error": None,
+        }
+
+        self._monthly_cache[cache_key] = output_data
+        self._monthly_cache_ts[cache_key] = now_ts
+        return output_data
+
+    def get_leave_quota(
+        self,
+        indo_code: str | None = None,
+        key: str | None = None,
+        force: bool = False,
+    ) -> dict:
+        """
+        Fetch employee leave balance and quota from dynamic Leave Quota API:
+        Endpoint: leave/leave_quota
+        Parameters:
+          - indo_code: employee code (e.g. 'EC-047' or 'EC-100')
+          - key: API key (e.g. 'testapikey111')
+
+        Returns a structured dictionary with:
+          - response: str | int
+          - status: int
+          - items: list of normalized leave items
+          - summary: {total_quota, total_used, total_available, leave_types_count}
+          - raw_data: any
+          - error: str | None
+        """
+        import requests
+        import time
+
+        # 1. Resolve indo_code and key from active session context
+        resolved_indo = indo_code
+        if not resolved_indo:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u:
+                    resolved_indo = u.indo_code or u.employee_id or u.username
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s and s.get("indo_code"):
+                    resolved_indo = s.get("indo_code")
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            try:
+                from PySide6.QtCore import QSettings
+                st = QSettings("Indovision", "iHRMSMonitor")
+                resolved_indo = st.value("last_employee_id") or None
+            except Exception:
+                pass
+
+        if not resolved_indo:
+            resolved_indo = "EC-047"
+
+        resolved_key = key or os.environ.get("IHRMS_LEAVE_API_KEY") or os.environ.get("IHRMS_ATTENDANCE_API_KEY")
+        if not resolved_key:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and u.api_key:
+                    resolved_key = u.api_key
+            except Exception:
+                pass
+
+        if not resolved_key:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s and s.get("api_key"):
+                    resolved_key = s.get("api_key")
+            except Exception:
+                pass
+
+        if not resolved_key:
+            resolved_key = "testapikey111"
+
+        # 2. Check Cache
+        if not hasattr(self, "_leave_cache"):
+            self._leave_cache = {}
+            self._leave_cache_ts = {}
+
+        cache_key = f"{resolved_indo}_{resolved_key}"
+        now_ts = time.time()
+        if not force and cache_key in self._leave_cache:
+            if now_ts - self._leave_cache_ts.get(cache_key, 0) < 300:  # 5 min cache
+                return self._leave_cache[cache_key]
+
+        # 3. Resolve URL
+        try:
+            from config.api_config import ApiConfig
+            leave_url = ApiConfig().leave_quota_url
+        except Exception:
+            leave_url = os.environ.get("IHRMS_LEAVE_QUOTA_API_URL")
+
+        if not leave_url:
+            leave_url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/leave/leave_quota"
+
+        req_payload = {
+            "indo_code": str(resolved_indo),
+            "key": str(resolved_key),
+        }
+
+        logger.info(
+            "Calling Leave Quota API: url=%s data=%s",
+            leave_url,
+            {"indo_code": resolved_indo, "key": "***"},
+        )
+
+        res_json = None
+        error_msg = None
+        try:
+            resp = requests.post(leave_url, data=req_payload, timeout=12)
+            logger.info("Leave Quota API response: HTTP %d (size: %d bytes)", resp.status_code, len(resp.content))
+            
+            # If backend returns non-200 with JSON error message
+            try:
+                res_json = resp.json()
+            except Exception:
+                res_json = None
+
+            if resp.status_code >= 400:
+                if isinstance(res_json, dict):
+                    msgs = res_json.get("messages") or res_json.get("message")
+                    if isinstance(msgs, dict):
+                        error_msg = msgs.get("message") or msgs.get("response") or str(msgs)
+                    elif msgs:
+                        error_msg = str(msgs)
+                    else:
+                        error_msg = res_json.get("error") or f"HTTP {resp.status_code}"
+                else:
+                    error_msg = f"HTTP {resp.status_code}: {resp.text[:100]}"
+                logger.warning("Leave Quota API returned error: %s", error_msg)
+
+        except Exception as exc:
+            error_msg = f"Network/Connection error: {str(exc)}"
+            logger.error("Failed to fetch leave quota from %s: %s", leave_url, exc)
+
+        if error_msg or not res_json:
+            return {
+                "response": "Failed",
+                "status": 400,
+                "items": [],
+                "summary": {
+                    "total_quota": 0.0,
+                    "total_used": 0.0,
+                    "total_available": 0.0,
+                    "leave_types_count": 0,
+                },
+                "raw_data": res_json,
+                "error": error_msg or "Empty or invalid response from server.",
+            }
+
+        # 4. Parse & Normalize Leave Items
+        # Data container can be in `data`, `result`, `leave_quota`, `leave_balances`, or root
+        raw_items = None
+        if isinstance(res_json, dict):
+            # Check for API failure inside 200 OK body
+            if res_json.get("response") == "Failed" or res_json.get("status") in (400, 401, 404, 500):
+                msgs = res_json.get("messages") or res_json.get("message")
+                err_text = "Server returned failure response"
+                if isinstance(msgs, dict):
+                    err_text = msgs.get("message") or msgs.get("response") or str(msgs)
+                elif msgs:
+                    err_text = str(msgs)
+                return {
+                    "response": "Failed",
+                    "status": res_json.get("status", 400),
+                    "items": [],
+                    "summary": {
+                        "total_quota": 0.0,
+                        "total_used": 0.0,
+                        "total_available": 0.0,
+                        "leave_types_count": 0,
+                    },
+                    "raw_data": res_json,
+                    "error": err_text,
+                }
+
+            for key_candidate in ("data", "result", "leave_quota", "leave_balances", "leave_types", "quota_details"):
+                if key_candidate in res_json and res_json[key_candidate] is not None:
+                    raw_items = res_json[key_candidate]
+                    break
+            if raw_items is None:
+                # If no container found, check if dictionary itself has leave entries
+                raw_items = res_json
+        elif isinstance(res_json, list):
+            raw_items = res_json
+
+        parsed_items = []
+
+        MONTH_KEYS = (
+            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+            "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"
+        )
+
+        def _derive_code(name_str: str) -> str:
+            """Dynamically derive short code from multi-word or single-word leave name."""
+            clean = name_str.replace("/", " ").replace("-", " ").replace("(", " ").replace(")", " ").replace(":", " ")
+            words = [w for w in clean.split() if w]
+            if len(words) > 1:
+                if len(words) >= 3 and words[0].lower() == "leave" and words[1].lower() == "type":
+                    id_part = words[-1]
+                    return f"LT{id_part}" if id_part.isdigit() else "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
+                return "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
+            return name_str[:3].upper() if name_str else "—"
+
+        def _resolve_type_name(raw_val, raw_entry=None) -> tuple[str, str]:
+            """Dynamically resolve leave type name and short code from API record without hardcoded constants."""
+            if raw_entry and isinstance(raw_entry, dict):
+                for name_field in (
+                    "leave_type_name", "leave_name", "type_name", "leave_title",
+                    "title", "name", "type", "category", "description"
+                ):
+                    val = raw_entry.get(name_field)
+                    if val is not None and not (isinstance(val, (int, float)) or (isinstance(val, str) and val.strip().isdigit())):
+                        name_str = str(val).strip()
+                        raw_code = (
+                            raw_entry.get("short_name")
+                            or raw_entry.get("leave_short_code")
+                            or raw_entry.get("leave_code")
+                            or raw_entry.get("short_code")
+                            or raw_entry.get("code")
+                        )
+                        code_str = str(raw_code).strip() if raw_code else _derive_code(name_str)
+                        return (name_str, code_str)
+
+            is_numeric = False
+            numeric_id = None
+            if isinstance(raw_val, int):
+                is_numeric = True
+                numeric_id = raw_val
+            elif isinstance(raw_val, float) and raw_val.is_integer():
+                is_numeric = True
+                numeric_id = int(raw_val)
+            elif isinstance(raw_val, str) and raw_val.strip().isdigit():
+                is_numeric = True
+                numeric_id = int(raw_val.strip())
+
+            if is_numeric and numeric_id is not None:
+                logger.debug("Unmapped leave_type ID received from API without name: %s", raw_val)
+                return (f"Leave Type (ID: {numeric_id})", f"LT{numeric_id}")
+
+            if raw_val is not None and str(raw_val).strip():
+                name_str = str(raw_val).strip()
+                raw_code = raw_entry.get("short_name") or raw_entry.get("code") if raw_entry else None
+                code_str = str(raw_code).strip() if raw_code else _derive_code(name_str)
+                return (name_str, code_str)
+
+            return ("Unknown Leave Type", "—")
+
+        def _to_num(val) -> float:
+            if val is None or val == "":
+                return 0.0
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return 0.0
+
+        def _fmt_num(val: float) -> str:
+            if val.is_integer():
+                return f"{int(val)}"
+            s = f"{val:.2f}"
+            if s.endswith(".00"):
+                return s[:-3]
+            if s.endswith("0") and "." in s:
+                return s[:-1]
+            return s
+
+        def _extract_csv_list(container_dict: dict, candidate_keys: tuple[str, ...]) -> list[str]:
+            for cand in candidate_keys:
+                for k, v in container_dict.items():
+                    if k.lower() == cand.lower() and v is not None:
+                        if isinstance(v, (list, tuple)):
+                            return [str(x).strip() for x in v]
+                        if isinstance(v, (int, float)):
+                            return [str(v).strip()]
+                        if isinstance(v, str):
+                            if "," in v:
+                                return [x.strip() for x in v.split(",")]
+                            v_str = v.strip()
+                            return [v_str] if v_str else []
+            return []
+
+        EXCLUDE_COL_KEYS = {
+            "leave_type", "leave_type_id", "leave_type_name", "leave_name", "name",
+            "type", "type_name", "short_name", "code", "status", "response", "error",
+            "message", "messages", "raw", "id", "token", "lt_id", "leaves", "leavestaked", "remaining"
+        }
+
+        detected_col_keys: list[str] = []
+
+        # ------------------------------------------------------------------
+        # Format A: Comma-separated strings / lists inside container dict
+        # ------------------------------------------------------------------
+        CSV_LT_ID_KEYS = ("lt_id", "lt_ids", "leave_type_id", "leave_type_ids", "leave_types", "leave_type", "ltid")
+        CSV_LEAVES_KEYS = ("leaves", "total_leaves", "total_quota", "allotted", "quota", "total", "allocated")
+        CSV_TAKED_KEYS = ("leavestaked", "leaves_taked", "leaves_taken", "leavestaken", "taken", "used", "availed", "consumed")
+        CSV_REMAINING_KEYS = ("remaining", "remains", "leave_balance", "available", "balance", "available_leave", "balance_quota")
+        CSV_NAMES_KEYS = ("leave_type_name", "leave_type_names", "leave_name", "leave_names", "type_name", "type_names", "names")
+        CSV_CODES_KEYS = ("short_name", "short_names", "short_code", "short_codes", "leave_code", "leave_codes", "codes")
+        CSV_CARRY_KEYS = ("carry_over", "carry_overs", "carryover", "carryovers")
+
+        is_csv_dict = False
+        if isinstance(raw_items, dict):
+            for cand in CSV_LT_ID_KEYS + CSV_LEAVES_KEYS:
+                if any(k.lower() == cand.lower() for k in raw_items.keys()):
+                    is_csv_dict = True
+                    break
+
+        if is_csv_dict and isinstance(raw_items, dict):
+            raw_lt_ids = _extract_csv_list(raw_items, CSV_LT_ID_KEYS)
+            raw_leaves = _extract_csv_list(raw_items, CSV_LEAVES_KEYS)
+            raw_taken = _extract_csv_list(raw_items, CSV_TAKED_KEYS)
+            raw_remaining = _extract_csv_list(raw_items, CSV_REMAINING_KEYS)
+            raw_names = _extract_csv_list(raw_items, CSV_NAMES_KEYS)
+            raw_codes = _extract_csv_list(raw_items, CSV_CODES_KEYS)
+            raw_carry = _extract_csv_list(raw_items, CSV_CARRY_KEYS)
+
+            count = max(len(raw_lt_ids), len(raw_leaves), len(raw_taken), len(raw_remaining))
+            if not (len(raw_lt_ids) == len(raw_leaves) == len(raw_taken) == len(raw_remaining)):
+                logger.warning(
+                    "Leave balance CSV field lengths differ: lt_id=%d, leaves=%d, leavesTaked=%d, remaining=%d",
+                    len(raw_lt_ids), len(raw_leaves), len(raw_taken), len(raw_remaining)
+                )
+
+            for i in range(count):
+                raw_id = raw_lt_ids[i] if i < len(raw_lt_ids) else str(i + 1)
+                raw_name = raw_names[i] if i < len(raw_names) and raw_names[i] else None
+                raw_code = raw_codes[i] if i < len(raw_codes) and raw_codes[i] else None
+                q_str = raw_leaves[i] if i < len(raw_leaves) else "0"
+                u_str = raw_taken[i] if i < len(raw_taken) else "0"
+                r_str = raw_remaining[i] if i < len(raw_remaining) else "0"
+                c_str = raw_carry[i] if i < len(raw_carry) else "0"
+
+                q_num = _to_num(q_str)
+                u_num = _to_num(u_str)
+                r_num = _to_num(r_str)
+                c_num = _to_num(c_str)
+
+                if raw_name:
+                    type_name = raw_name
+                    short_code = raw_code or _derive_code(type_name)
+                else:
+                    type_name, short_code = _resolve_type_name(
+                        raw_id,
+                        raw_entry={"leave_type_id": raw_id, "total": q_num, "used": u_num, "remaining": r_num}
+                    )
+                    if raw_code:
+                        short_code = raw_code
+
+                total_quota_str = q_str if q_str else _fmt_num(q_num)
+                used_str = u_str if u_str else _fmt_num(u_num)
+                avail_str = r_str if r_str else _fmt_num(r_num)
+                carry_str = c_str if c_str else _fmt_num(c_num)
+
+                status_label = "Available" if r_num > 0 else ("Exhausted" if q_num > 0 else "N/A")
+                color = "#16A34A" if r_num > 0 else ("#64748B" if q_num > 0 else "#94A3B8")
+                bg_color = "#DCFCE7" if r_num > 0 else ("#F1F5F9" if q_num > 0 else "#F8FAFC")
+
+                parsed_items.append({
+                    "leave_type_id": raw_id,
+                    "leave_type": str(type_name).strip(),
+                    "short_name": str(short_code).strip(),
+                    "carry_over": c_num,
+                    "carry_over_str": carry_str,
+                    "total_quota": q_num,
+                    "total_quota_str": total_quota_str,
+                    "used": u_num,
+                    "used_str": used_str,
+                    "available": r_num,
+                    "available_str": avail_str,
+                    "dynamic_fields": {
+                        "total": total_quota_str,
+                        "used": used_str,
+                        "remaining": avail_str,
+                    },
+                    "unit": "Days",
+                    "status_label": status_label,
+                    "color": color,
+                    "bg_color": bg_color,
+                    "raw": {
+                        "lt_id": raw_id,
+                        "leaves": q_str,
+                        "leavesTaked": u_str,
+                        "remaining": r_str,
+                    },
+                })
+
+        # ------------------------------------------------------------------
+        # Format B: List of dictionaries
+        # ------------------------------------------------------------------
+        elif isinstance(raw_items, list):
+            for entry in raw_items:
+                if not isinstance(entry, dict):
+                    continue
+
+                # Track any dynamic period/quota keys in order of appearance
+                for k in entry.keys():
+                    if k.lower() not in EXCLUDE_COL_KEYS and k not in detected_col_keys:
+                        detected_col_keys.append(k)
+
+                # Extract leave type / name dynamically
+                raw_type_val = (
+                    entry.get("leave_type_name")
+                    or entry.get("leave_name")
+                    or entry.get("leave_type")
+                    if entry.get("leave_type") is not None
+                    else (
+                        entry.get("leave_type_id")
+                        or entry.get("name")
+                        or entry.get("type")
+                    )
+                )
+                type_name, short_code = _resolve_type_name(raw_type_val, raw_entry=entry)
+
+                # Extract carry over & monthly columns if present
+                carry_over_num = _to_num(entry.get("carry_over"))
+                month_sum = sum(_to_num(entry.get(mk)) for mk in MONTH_KEYS if mk in entry and entry.get(mk) is not None)
+
+                # Extract numeric values
+                quota_raw = (
+                    entry.get("total_quota")
+                    or entry.get("allotted")
+                    or entry.get("quota")
+                    or entry.get("total")
+                    or entry.get("allocated")
+                    or entry.get("leaves")
+                )
+                used_raw = (
+                    entry.get("used")
+                    or entry.get("taken")
+                    or entry.get("consumed")
+                    or entry.get("applied")
+                    or entry.get("availed")
+                    or entry.get("leavesTaked")
+                    or entry.get("leaves_taked")
+                )
+                avail_raw = (
+                    entry.get("available")
+                    or entry.get("balance")
+                    or entry.get("remaining")
+                    or entry.get("leave_balance")
+                    or entry.get("available_leave")
+                    or entry.get("balance_quota")
+                )
+
+                quota_num = _to_num(quota_raw)
+                used_num = _to_num(used_raw)
+                
+                if avail_raw is not None:
+                    avail_num = _to_num(avail_raw)
+                elif month_sum > 0 or carry_over_num > 0:
+                    avail_num = max(0.0, (carry_over_num + month_sum) - used_num)
+                else:
+                    avail_num = max(0.0, quota_num - used_num)
+
+                if quota_raw is None:
+                    if month_sum > 0 or carry_over_num > 0:
+                        quota_num = carry_over_num + month_sum
+                    elif avail_raw is not None or used_raw is not None:
+                        quota_num = avail_num + used_num
+
+                status_label = "Available" if avail_num > 0 else ("Exhausted" if quota_num > 0 else "N/A")
+                color = "#16A34A" if avail_num > 0 else ("#64748B" if quota_num > 0 else "#94A3B8")
+                bg_color = "#DCFCE7" if avail_num > 0 else ("#F1F5F9" if quota_num > 0 else "#F8FAFC")
+
+                # Build dynamic fields dictionary for this entry
+                dyn_fields = {}
+                for k, v in entry.items():
+                    if k.lower() not in EXCLUDE_COL_KEYS:
+                        num_v = _to_num(v)
+                        dyn_fields[k] = _fmt_num(num_v)
+
+                parsed_items.append({
+                    "leave_type": str(type_name).strip(),
+                    "short_name": str(short_code).strip(),
+                    "carry_over": carry_over_num,
+                    "carry_over_str": _fmt_num(carry_over_num),
+                    "total_quota": quota_num,
+                    "total_quota_str": _fmt_num(quota_num),
+                    "used": used_num,
+                    "used_str": _fmt_num(used_num),
+                    "available": avail_num,
+                    "available_str": _fmt_num(avail_num),
+                    "dynamic_fields": dyn_fields,
+                    "unit": "Days",
+                    "status_label": status_label,
+                    "color": color,
+                    "bg_color": bg_color,
+                    "raw": entry,
+                })
+
+        # ------------------------------------------------------------------
+        # Format C: Dict of nested dicts or scalar key-values
+        # ------------------------------------------------------------------
+        elif isinstance(raw_items, dict):
+            for k, v in raw_items.items():
+                if k in ("response", "status", "error", "message", "messages", "code", "token"):
+                    continue
+                if isinstance(v, dict):
+                    raw_type = v.get("leave_type_name") or v.get("leave_type") or v.get("leave_type_id") or v.get("name") or str(k)
+                    type_name, short_code = _resolve_type_name(raw_type, raw_entry=v)
+                    for vk in v.keys():
+                        if vk.lower() not in EXCLUDE_COL_KEYS and vk not in detected_col_keys:
+                            detected_col_keys.append(vk)
+
+                    carry_over_num = _to_num(v.get("carry_over"))
+                    month_sum = sum(_to_num(v.get(mk)) for mk in MONTH_KEYS if mk in v and v.get(mk) is not None)
+                    quota_num = _to_num(v.get("total_quota") or v.get("allotted") or v.get("quota") or v.get("total") or v.get("leaves"))
+                    used_num = _to_num(v.get("used") or v.get("taken") or v.get("consumed") or v.get("applied") or v.get("leavesTaked"))
+                    avail_raw = v.get("available") or v.get("balance") or v.get("remaining")
+                    if avail_raw is not None:
+                        avail_num = _to_num(avail_raw)
+                    elif month_sum > 0 or carry_over_num > 0:
+                        avail_num = max(0.0, (carry_over_num + month_sum) - used_num)
+                    else:
+                        avail_num = max(0.0, quota_num - used_num)
+                    if quota_num == 0.0:
+                        if month_sum > 0 or carry_over_num > 0:
+                            quota_num = carry_over_num + month_sum
+                        elif avail_num > 0 or used_num > 0:
+                            quota_num = avail_num + used_num
+
+                    status_label = "Available" if avail_num > 0 else "Exhausted"
+                    color = "#16A34A" if avail_num > 0 else "#64748B"
+                    bg_color = "#DCFCE7" if avail_num > 0 else "#F1F5F9"
+
+                    dyn_fields = {}
+                    for vk, vv in v.items():
+                        if vk.lower() not in EXCLUDE_COL_KEYS:
+                            num_v = _to_num(vv)
+                            dyn_fields[vk] = _fmt_num(num_v)
+
+                    parsed_items.append({
+                        "leave_type": str(type_name).strip(),
+                        "short_name": str(short_code).strip(),
+                        "carry_over": carry_over_num,
+                        "carry_over_str": _fmt_num(carry_over_num),
+                        "total_quota": quota_num,
+                        "total_quota_str": _fmt_num(quota_num),
+                        "used": used_num,
+                        "used_str": _fmt_num(used_num),
+                        "available": avail_num,
+                        "available_str": _fmt_num(avail_num),
+                        "dynamic_fields": dyn_fields,
+                        "unit": "Days",
+                        "status_label": status_label,
+                        "color": color,
+                        "bg_color": bg_color,
+                        "raw": v,
+                    })
+                elif isinstance(v, (int, float, str)) and str(v).replace(".", "", 1).isdigit():
+                    type_name, short_code = _resolve_type_name(k)
+                    avail_num = _to_num(v)
+                    status_label = "Available" if avail_num > 0 else "Exhausted"
+                    color = "#16A34A" if avail_num > 0 else "#64748B"
+                    bg_color = "#DCFCE7" if avail_num > 0 else "#F1F5F9"
+
+                    parsed_items.append({
+                        "leave_type": str(type_name).strip(),
+                        "short_name": str(short_code).strip(),
+                        "carry_over": 0.0,
+                        "carry_over_str": "0",
+                        "total_quota": avail_num,
+                        "total_quota_str": _fmt_num(avail_num),
+                        "used": 0.0,
+                        "used_str": "0",
+                        "available": avail_num,
+                        "available_str": _fmt_num(avail_num),
+                        "dynamic_fields": {"available": _fmt_num(avail_num)},
+                        "unit": "Days",
+                        "status_label": status_label,
+                        "color": color,
+                        "bg_color": bg_color,
+                        "raw": {k: v},
+                    })
+
+        # Format column headers dynamically
+        dynamic_columns = []
+        if detected_col_keys:
+            for k in detected_col_keys:
+                label = k.replace("_", " ").title() if len(k) > 3 else k.upper()
+                dynamic_columns.append({"key": k, "label": label})
+        else:
+            dynamic_columns = [
+                {"key": "carry_over", "label": "Carry Over"},
+                {"key": "total_quota", "label": "Total Allotted"},
+                {"key": "used", "label": "Availed / Used"},
+                {"key": "available", "label": "Available Balance"},
+            ]
+
+        # Calculate totals
+        tot_quota = sum(item["total_quota"] for item in parsed_items)
+        tot_used = sum(item["used"] for item in parsed_items)
+        tot_avail = sum(item["available"] for item in parsed_items)
+
+        output_data = {
+            "response": res_json.get("response", "Success") if isinstance(res_json, dict) else "Success",
+            "status": res_json.get("status", 200) if isinstance(res_json, dict) else 200,
+            "items": parsed_items,
+            "columns": dynamic_columns,
+            "summary": {
+                "total_quota": tot_quota,
+                "total_quota_str": _fmt_num(tot_quota),
+                "total_used": tot_used,
+                "total_used_str": _fmt_num(tot_used),
+                "total_available": tot_avail,
+                "total_available_str": _fmt_num(tot_avail),
+                "leave_types_count": len(parsed_items),
+            },
+            "raw_data": res_json,
+            "error": None,
+        }
+
+        self._leave_cache[cache_key] = output_data
+        self._leave_cache_ts[cache_key] = now_ts
+        return output_data
+

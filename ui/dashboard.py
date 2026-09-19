@@ -83,7 +83,8 @@ def format_hh_mm_ss(total_seconds: Any) -> str:
 class DashboardPage(QWidget):
     """Main Activity Tracker dashboard."""
 
-    weekly_timeline_requested = Signal()
+    attendance_requested = Signal()
+    weekly_timeline_requested = attendance_requested
     data_refreshed = Signal(dict)
     error_reported = Signal(str, str)
 
@@ -236,17 +237,18 @@ class DashboardPage(QWidget):
         self.refresh_button.setVisible(False)
         self.refresh_button.clicked.connect(lambda: self.refresh(async_mode=True))
 
-        self.weekly_timeline_button = QPushButton("Weekly Timeline →")
-        self.weekly_timeline_button.setObjectName("WeeklyTimelineButton")
-        self.weekly_timeline_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.weekly_timeline_button.setToolTip("View weekly active usage graph (Monday–Sunday)")
-        self.weekly_timeline_button.clicked.connect(self.weekly_timeline_requested.emit)
+        self.attendance_button = QPushButton("Attendance →")
+        self.attendance_button.setObjectName("AttendanceButton")
+        self.attendance_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attendance_button.setToolTip("View monthly attendance records and status")
+        self.attendance_button.clicked.connect(self.attendance_requested.emit)
+        self.weekly_timeline_button = self.attendance_button
 
         today_layout.addStretch(1)
         today_layout.addWidget(active_title)
         today_layout.addWidget(self.active_time_val_label)
         today_layout.addSpacing(6)
-        today_layout.addWidget(self.weekly_timeline_button)
+        today_layout.addWidget(self.attendance_button)
         today_layout.addStretch(1)
 
         today_group.setMinimumHeight(135)

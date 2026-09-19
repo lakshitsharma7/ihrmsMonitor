@@ -51,6 +51,7 @@ from tracker.tracker_worker import build_tracker_thread
 from services.sync_service import SyncService
 from ui.dashboard import DashboardPage
 from ui.settings import SettingsPage
+from ui.attendance_page import AttendancePage
 from ui.weekly_timeline import WeeklyTimelinePage
 from utils.logger import get_logger
 
@@ -732,11 +733,12 @@ class MainWindow(QMainWindow):
         )
         self.dashboard_page.set_version(get_running_app_version())
 
-        self.weekly_page = (
-            WeeklyTimelinePage(
-                self._activity_service
+        self.attendance_page = (
+            AttendancePage(
+                self._attendance_service if hasattr(self, "_attendance_service") else None
             )
         )
+        self.weekly_page = self.attendance_page
 
         self.settings_page = (
             SettingsPage(
@@ -748,10 +750,13 @@ class MainWindow(QMainWindow):
             self._on_settings_changed
         )
 
-        self.dashboard_page.weekly_timeline_requested.connect(
-            lambda: self.tabs.setCurrentWidget(self.weekly_page)
+        self.dashboard_page.attendance_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.attendance_page)
         )
-        self.weekly_page.back_requested.connect(
+        self.dashboard_page.weekly_timeline_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.attendance_page)
+        )
+        self.attendance_page.back_requested.connect(
             lambda: self.tabs.setCurrentWidget(self.dashboard_page)
         )
 
@@ -761,8 +766,8 @@ class MainWindow(QMainWindow):
         )
 
         self.tabs.addTab(
-            self.weekly_page,
-            "Weekly Timeline",
+            self.attendance_page,
+            "Attendance",
         )
 
         # self.tabs.addTab(
@@ -783,11 +788,13 @@ class MainWindow(QMainWindow):
         self.dashboard_page.refresh()
 
     def _on_header_refresh_clicked(self) -> None:
-        """Trigger asynchronous dashboard and timeline refresh from top header button."""
+        """Trigger asynchronous dashboard and attendance refresh from top header button."""
         if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
             self.dashboard_page.refresh(async_mode=True)
-        if hasattr(self, "weekly_page") and self.weekly_page is not None and hasattr(self, "tabs") and self.tabs.currentWidget() == self.weekly_page:
-            self.weekly_page.refresh()
+        if hasattr(self, "attendance_page") and self.attendance_page is not None and hasattr(self, "tabs") and self.tabs.currentWidget() == self.attendance_page:
+            self.attendance_page.refresh(async_mode=True)
+        elif hasattr(self, "weekly_page") and self.weekly_page is not None and hasattr(self, "tabs") and self.tabs.currentWidget() == self.weekly_page:
+            self.weekly_page.refresh(async_mode=True)
 
     # ==========================================================
     # USER / DEVICE

@@ -550,6 +550,27 @@ class ApiConfig:
         )
         return url
 
+    @property
+    def get_attendance_record_url(self) -> str:
+        """Configurable attendance record endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_GET_ATTENDANCE_RECORD_API_URL")
+            or self._details.get("get_attendance_record_url")
+            or self._details.get("attendance_record_url")
+            or self.endpoint("attendance/get_attendance_record")
+        )
+
+    @property
+    def leave_quota_url(self) -> str:
+        """Configurable leave quota endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_LEAVE_QUOTA_API_URL")
+            or self._details.get("leave_quota_url")
+            or self._details.get("leave_balance_url")
+            or self.endpoint("leave/leave_quota")
+        )
+
+
     def endpoint(
         self,
         path: str,

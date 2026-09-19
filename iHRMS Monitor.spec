@@ -64,6 +64,8 @@ a = Analysis(
         'ui.settings',
         'ui.styles',
         'ui.update_dialog',
+        'ui.attendance_page',
+        'ui.leave_balance_dialog',
         'ui.weekly_timeline',
         'utils',
         'utils.device',
