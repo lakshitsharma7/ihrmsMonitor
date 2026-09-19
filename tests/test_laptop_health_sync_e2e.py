@@ -162,8 +162,8 @@ class TestLaptopHealthSyncEndToEnd(unittest.TestCase):
                 self.assertTrue(success)
 
                 payload = mock_post.call_args[1]["data"]
-                self.assertEqual(payload["cpu_usage_percent"], "88.5")
-                self.assertEqual(payload["ram_usage_percent"], "92.0")
+                self.assertEqual(payload["cpu_usage_percent"], "89")
+                self.assertEqual(payload["ram_usage_percent"], "92")
 
     def test_07_offline_preservation_and_recovery(self):
         """TEST 7 & 8: Network failure preserves health and activity records for subsequent retry."""

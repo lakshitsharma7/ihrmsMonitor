@@ -139,53 +139,82 @@ def get_system_health() -> dict:
         net_status,
     )
 
+    from decimal import Decimal, ROUND_HALF_UP
+
+    def _round_num(val: float | int) -> int:
+        try:
+            return int(Decimal(str(val)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        except Exception:
+            return int(round(float(val)))
+
+    cpu_usage_r        = _round_num(cpu_usage)
+    ram_usage_r        = _round_num(ram_usage)
+    ram_total_mb_r     = _round_num(ram_total_mb)
+    ram_used_mb_r      = _round_num(ram_used_mb)
+    ram_available_mb_r = _round_num(ram_available_mb)
+    disk_usage_r       = _round_num(disk_usage)
+    disk_total_gb_r    = _round_num(disk_total_gb)
+    disk_used_gb_r     = _round_num(disk_used_gb)
+    disk_free_gb_r     = _round_num(disk_free_gb)
+    net_sent_mb_r      = _round_num(net_sent_mb)
+    net_recv_mb_r      = _round_num(net_recv_mb)
+    battery_pct_r      = _round_num(battery_pct)
+
+    logger.info(
+        "Health payload (rounded): cpu=%d%% ram=%d%% disk=%d%% "
+        "ram_total=%dMB ram_used=%dMB net_sent=%dMB net_recv=%dMB battery=%d%%",
+        cpu_usage_r, ram_usage_r, disk_usage_r,
+        ram_total_mb_r, ram_used_mb_r,
+        net_sent_mb_r, net_recv_mb_r, battery_pct_r,
+    )
+
     # Clean structured representation matching backend/Postman format
     structured_health = {
         "cpu": {
-            "usage_percent": cpu_usage,
+            "usage_percent": cpu_usage_r,
             "cores": cpu_physical,
             "logical_processors": cpu_logical,
         },
         "ram": {
-            "total": f"{int(ram_total_mb)} MB",
-            "used": f"{int(ram_used_mb)} MB",
-            "available": f"{int(ram_available_mb)} MB",
-            "usage_percent": ram_usage,
+            "total": f"{ram_total_mb_r} MB",
+            "used": f"{ram_used_mb_r} MB",
+            "available": f"{ram_available_mb_r} MB",
+            "usage_percent": ram_usage_r,
         },
         "disk": {
-            "total": f"{int(disk_total_gb)} GB",
-            "used": f"{int(disk_used_gb)} GB",
-            "free": f"{int(disk_free_gb)} GB",
-            "usage_percent": disk_usage,
+            "total": f"{disk_total_gb_r} GB",
+            "used": f"{disk_used_gb_r} GB",
+            "free": f"{disk_free_gb_r} GB",
+            "usage_percent": disk_usage_r,
         },
         "network": {
             "status": net_status,
-            "sent": f"{net_sent_mb} MB",
-            "received": f"{net_recv_mb} MB",
+            "sent": f"{net_sent_mb_r} MB",
+            "received": f"{net_recv_mb_r} MB",
         },
         "os": os_val,
         "hostname": hostname_val,
         "battery": {
-            "percent": battery_pct,
+            "percent": battery_pct_r,
             "plugged": battery_plugged,
         },
         "uptime": f"{uptime_sec} seconds",
         # Flat legacy keys
-        "cpu_usage_percent": cpu_usage,
+        "cpu_usage_percent": cpu_usage_r,
         "cpu_logical_cores": cpu_logical,
         "cpu_physical_cores": cpu_physical,
-        "ram_usage_percent": ram_usage,
-        "ram_total_mb": ram_total_mb,
-        "ram_used_mb": ram_used_mb,
-        "ram_available_mb": ram_available_mb,
-        "disk_usage_percent": disk_usage,
-        "disk_total_gb": disk_total_gb,
-        "disk_used_gb": disk_used_gb,
-        "disk_free_gb": disk_free_gb,
+        "ram_usage_percent": ram_usage_r,
+        "ram_total_mb": ram_total_mb_r,
+        "ram_used_mb": ram_used_mb_r,
+        "ram_available_mb": ram_available_mb_r,
+        "disk_usage_percent": disk_usage_r,
+        "disk_total_gb": disk_total_gb_r,
+        "disk_used_gb": disk_used_gb_r,
+        "disk_free_gb": disk_free_gb_r,
         "network_status": net_status,
-        "network_sent_mb": net_sent_mb,
-        "network_received_mb": net_recv_mb,
-        "battery_percent": battery_pct,
+        "network_sent_mb": net_sent_mb_r,
+        "network_received_mb": net_recv_mb_r,
+        "battery_percent": battery_pct_r,
         "battery_plugged": battery_plugged,
         "system_uptime_seconds": uptime_sec,
     }
