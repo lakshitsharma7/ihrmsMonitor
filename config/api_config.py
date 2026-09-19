@@ -551,6 +551,27 @@ class ApiConfig:
         return url
 
     @property
+    def fill_time_sheet_url(self) -> str | None:
+        """Configurable fill timesheet endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_FILL_TIME_SHEET_API_URL")
+            or self._details.get("fill_time_sheet_url")
+            or self._details.get("fill_timesheet_url")
+            or (self.endpoint("TaskPMS/fill_time_sheet") if self.is_verified else None)
+        )
+        return url
+
+    @property
+    def save_additional_task_url(self) -> str | None:
+        """Configurable save additional task endpoint URL from AppController, environment, or default endpoint."""
+        url = (
+            os.environ.get("IHRMS_SAVE_ADDITIONAL_TASK_API_URL")
+            or self._details.get("save_additional_task_url")
+            or (self.endpoint("TaskPMS/save_additional_task") if self.is_verified else None)
+        )
+        return url
+
+    @property
     def get_attendance_record_url(self) -> str:
         """Configurable attendance record endpoint URL from AppController, environment, or default endpoint."""
         return (
