@@ -19,6 +19,18 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _mask_token(token: Any) -> str:
+    """Safely format a device or auth token for logs without exposing full secret."""
+    if not token:
+        return "<None>"
+    s = str(token).strip()
+    if not s or s.lower() == "none":
+        return "<None>"
+    if len(s) <= 8:
+        return "***"
+    return f"{s[:4]}...{s[-4:]} (len={len(s)})"
+
+
 class SyncService:
     """
     Sends Activity Tracker data to the FastAPI server.
@@ -152,69 +164,62 @@ class SyncService:
 
     @property
     def api_url(self) -> str:
-        """Dynamic API base URL resolved from ApiConfig or persistent session."""
-        try:
-            from config.api_config import ApiConfig
-            cfg = ApiConfig()
-            if cfg.is_verified:
-                return cfg.base_url
-        except Exception:
-            pass
-        if self._api_url:
-            return self._api_url
-        try:
-            from services.secure_session import SessionStore
-            s = SessionStore().load_session()
-            if s and s.get("base_url"):
-                return str(s.get("base_url")).rstrip("/")
-        except Exception:
-            pass
-        return ""
+        if not self._api_url:
+            try:
+                from config.api_config import ApiConfig
+                self._api_url = (ApiConfig().base_url or "").rstrip("/")
+            except Exception:
+                pass
+        if not self._api_url:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s and s.get("base_url"):
+                    self._api_url = s.get("base_url").rstrip("/")
+            except Exception:
+                pass
+        return self._api_url
 
     @property
     def get_settings_url(self) -> str:
-        """Dynamic get_settings endpoint URL."""
         try:
             from config.api_config import ApiConfig
-            cfg = ApiConfig()
-            if cfg.is_verified or os.environ.get("IHRMS_GET_SETTINGS_API_URL"):
-                return cfg.get_settings_url
+            url = ApiConfig().get_settings_url
+            if url:
+                return url
         except Exception:
             pass
         return f"{self.api_url}/tracking/get_settings"
 
     @property
     def save_activity_batch_url(self) -> str:
-        """Dynamic save_activity_batch endpoint URL."""
         try:
             from config.api_config import ApiConfig
-            cfg = ApiConfig()
-            if cfg.is_verified or os.environ.get("IHRMS_SAVE_ACTIVITY_BATCH_API_URL"):
-                return cfg.save_activity_batch_url
+            url = ApiConfig().save_activity_batch_url
+            if url:
+                return url
         except Exception:
             pass
         return f"{self.api_url}/tracking/save_activity_batch"
 
     @property
     def upload_screenshot_url(self) -> str:
-        """Dynamic upload_screenshot endpoint URL."""
         try:
             from config.api_config import ApiConfig
-            cfg = ApiConfig()
-            if cfg.is_verified or os.environ.get("IHRMS_UPLOAD_SCREENSHOT_API_URL"):
-                return cfg.upload_screenshot_url
+            url = ApiConfig().upload_screenshot_url
+            if url:
+                return url
         except Exception:
             pass
         return f"{self.api_url}/tracking/upload_screenshot"
 
     @property
     def enroll_device_url(self) -> str:
-        """Dynamic enroll_device endpoint URL."""
         try:
             from config.api_config import ApiConfig
-            cfg = ApiConfig()
-            if cfg.is_verified or os.environ.get("IHRMS_ENROLL_DEVICE_API_URL"):
-                return cfg.enroll_device_url
+            url = ApiConfig().enroll_device_url
+            if url:
+                return url
         except Exception:
             pass
         return f"{self.api_url}/tracking/enroll_device"
@@ -231,23 +236,66 @@ class SyncService:
         try:
             device_token = self._require_device_token()
             if not device_token:
+                logger.warning("fetch_settings skipped: No device token available.")
                 return {}
-            response = requests.post(
-                self.get_settings_url,
-                data={"device_token": device_token},
-                timeout=5,
-            )
-            if response.status_code == 401 or "Device not recognized" in response.text or "revoked" in response.text:
-                logger.warning("get_settings device token rejected (HTTP 401). Triggering automatic re-enrollment...")
-                new_token = self.re_enroll_device()
-                if new_token:
-                    response = requests.post(
-                        self.get_settings_url,
-                        data={"device_token": new_token},
-                        timeout=5,
-                    )
-            response.raise_for_status()
-            res_data = response.json()
+
+            logger.info("Fetching settings from API: endpoint=%s token=%s", self.get_settings_url, _mask_token(device_token))
+
+            re_enrolled = False
+            response = None
+            try:
+                response = requests.post(
+                    self.get_settings_url,
+                    data={"device_token": device_token},
+                    timeout=5,
+                )
+                logger.info("get_settings HTTP response: %d", response.status_code)
+                if (response.status_code == 401 or "Device not recognized" in response.text or "revoked" in response.text) and not re_enrolled:
+                    logger.warning("get_settings device token rejected (HTTP 401). Triggering automatic re-enrollment...")
+                    new_token = self.re_enroll_device()
+                    if new_token:
+                        re_enrolled = True
+                        device_token = new_token
+                        logger.info("Retrying get_settings with refreshed device_token: %s", _mask_token(new_token))
+                        response = requests.post(
+                            self.get_settings_url,
+                            data={"device_token": new_token},
+                            timeout=5,
+                        )
+                response.raise_for_status()
+            except requests.RequestException as req_exc:
+                http_code = getattr(getattr(req_exc, "response", None), "status_code", None)
+                resp_text = getattr(getattr(req_exc, "response", None), "text", "") or ""
+                if (http_code == 401 or "Device not recognized" in resp_text or "revoked" in resp_text) and not re_enrolled:
+                    logger.warning("get_settings exception indicates 401 / token rejection. Attempting re-enrollment...")
+                    new_token = self.re_enroll_device()
+                    if new_token:
+                        try:
+                            response = requests.post(
+                                self.get_settings_url,
+                                data={"device_token": new_token},
+                                timeout=5,
+                            )
+                            response.raise_for_status()
+                        except Exception as retry_err:
+                            logger.warning("get_settings retry after re-enrollment failed: %s", retry_err)
+                            return {}
+                    else:
+                        logger.warning("Re-enrollment during get_settings returned no token.")
+                        return {}
+                else:
+                    logger.warning("get_settings network/server warning (HTTP %s): %s", http_code or "N/A", req_exc)
+                    return {}
+
+            if not response:
+                return {}
+
+            try:
+                res_data = response.json()
+            except Exception as json_err:
+                logger.warning("Failed to parse get_settings JSON: %s", json_err)
+                return {}
+
             settings_data = {}
             if res_data.get("response") == "Success" and "data" in res_data:
                 settings_data = res_data.get("data", {})
@@ -476,19 +524,23 @@ class SyncService:
             from utils.device import get_device_info
             from config.api_config import ApiConfig
 
+            session_svc = SessionService()
+            curr_u = session_svc.current_user
             store = SessionStore()
-            session_data = store.load_session()
-            if not session_data:
-                logger.warning("Device re-enrollment aborted: No active session found.")
-                return None
+            session_data = store.load_session() or {}
 
-            company_code = session_data.get("company_code")
-            indo_code = session_data.get("indo_code")
-            api_key = session_data.get("api_key")
-            username = session_data.get("username")
+            company_code = (curr_u.company_code if curr_u and curr_u.company_code else None) or session_data.get("company_code")
+            indo_code = (curr_u.indo_code if curr_u and curr_u.indo_code else None) or session_data.get("indo_code")
+            api_key = (curr_u.api_key if curr_u and curr_u.api_key else None) or session_data.get("api_key")
+            username = (curr_u.username if curr_u and curr_u.username else None) or session_data.get("username")
+            employee_id = (curr_u.employee_id if curr_u and curr_u.employee_id else None) or session_data.get("employee_id")
 
             if not indo_code or not api_key:
-                logger.warning("Device re-enrollment aborted: Missing credentials.")
+                logger.warning(
+                    "Device re-enrollment aborted: Missing credentials (indo_code=%s, api_key_present=%s).",
+                    bool(indo_code),
+                    bool(api_key),
+                )
                 return None
 
             cfg = ApiConfig()
@@ -505,9 +557,14 @@ class SyncService:
                 enroll_url = None
 
             if not enroll_url:
-                base = session_data.get("base_url")
+                base = session_data.get("base_url") or getattr(cfg, "base_url", None)
                 if base:
                     enroll_url = f"{base.rstrip('/')}/tracking/enroll_device"
+
+            if not enroll_url:
+                logger.error("Device re-enrollment aborted: Cannot resolve enroll_device URL.")
+                return None
+
             device_info = session_data.get("device_info") or {}
             live_info = get_device_info()
 
@@ -523,8 +580,15 @@ class SyncService:
                 "os_username": os_username,
             }
 
-            logger.info("Re-enrolling device at %s for user=%s", enroll_url, username or indo_code)
+            logger.info(
+                "Re-enrolling device at %s for user=%s (hostname=%s, platform=%s)",
+                enroll_url,
+                username or indo_code,
+                hostname,
+                platform_str,
+            )
             resp = requests.post(enroll_url, data=enroll_data, timeout=15)
+            logger.info("Device re-enrollment HTTP response: %d", resp.status_code)
             if resp.status_code != 200:
                 logger.error("Device re-enrollment request failed: HTTP %d %s", resp.status_code, resp.text)
                 return None
@@ -535,8 +599,8 @@ class SyncService:
                 logger.error("Device re-enrollment response contained no device_token: %s", resp.text)
                 return None
 
-            # Persist in SessionService
-            SessionService().device_token = new_device_token
+            # Persist in SessionService (both service level and user level)
+            session_svc.update_device_token(new_device_token)
 
             # Persist in SessionStore
             store.update_device_token(new_device_token)
@@ -547,14 +611,14 @@ class SyncService:
                 DeviceRegistryService().register_or_update_device(
                     device_identifier=live_info.get("device_identifier"),
                     hostname=hostname,
-                    employee_id=session_data.get("employee_id"),
+                    employee_id=employee_id,
                     username=username,
                     device_token=new_device_token,
                 )
             except Exception as reg_err:
                 logger.debug("Could not record re-enrolled device: %s", reg_err)
 
-            logger.info("Device re-enrollment succeeded. New device_token persisted.")
+            logger.info("Device re-enrollment succeeded. New device_token persisted: %s", _mask_token(new_device_token))
             return new_device_token
 
         except Exception as exc:
@@ -569,30 +633,39 @@ class SyncService:
         Returns None when the device is not enrolled; callers must skip the
         request rather than sending a placeholder token.
         """
-
         from services.session_service import SessionService
+        session_svc = SessionService()
+        curr_u = session_svc.current_user
 
-        device_token = SessionService().device_token
+        device_token = None
+        if curr_u and curr_u.device_token:
+            device_token = curr_u.device_token
+            session_svc.device_token = device_token
+        elif session_svc.device_token:
+            device_token = session_svc.device_token
+            if curr_u:
+                curr_u.device_token = device_token
 
         if not device_token:
             try:
                 from services.secure_session import SessionStore
                 session_data = SessionStore().load_session()
-                current_u = SessionService().current_user
                 if session_data and session_data.get("device_token"):
                     # If a user is active, only accept stored token if it belongs to them
-                    if current_u is not None:
+                    if curr_u is not None:
                         stored_emp = session_data.get("employee_id")
                         stored_user = session_data.get("username")
-                        if (stored_emp and current_u.employee_id and stored_emp == current_u.employee_id) or \
-                           (stored_user and current_u.username and stored_user == current_u.username):
+                        stored_indo = session_data.get("indo_code")
+                        if (stored_emp and curr_u.employee_id and stored_emp == curr_u.employee_id) or \
+                           (stored_user and curr_u.username and stored_user == curr_u.username) or \
+                           (stored_indo and curr_u.indo_code and stored_indo == curr_u.indo_code):
                             device_token = session_data.get("device_token")
-                            SessionService().device_token = device_token
+                            session_svc.update_device_token(device_token)
                     else:
                         device_token = session_data.get("device_token")
-                        SessionService().device_token = device_token
-            except Exception:
-                pass
+                        session_svc.update_device_token(device_token)
+            except Exception as load_err:
+                logger.debug("Error loading session in _require_device_token: %s", load_err)
 
         if not device_token:
             try:
@@ -605,9 +678,9 @@ class SyncService:
                 "No device token available - device is not enrolled. "
                 "Skipping request."
             )
-
             return None
 
+        logger.debug("Active device token resolved: %s", _mask_token(device_token))
         return device_token
 
     # ==============================================================
@@ -642,7 +715,7 @@ class SyncService:
             device_token = self._require_device_token()
 
             if not device_token:
-                SyncService.last_sync_status = "Failed (No Device Token)"
+                SyncService.last_sync_status = "Failed (Auth Failed)"
                 SyncService.last_sync_error = "Device is not enrolled - no device token available."
                 SyncService.records_currently_sending = 0
                 logger.error("Sync FAILURE: No device token available - device is not enrolled.")
@@ -782,7 +855,9 @@ class SyncService:
                                 for a in payload["activities"]
                             ])
                         )
-                        logger.info("Exact JSON payload to backend (page %d):\n%s", page_num, json.dumps(new_payload, indent=2))
+                        masked_payload = dict(new_payload)
+                        masked_payload["device_token"] = _mask_token(new_payload.get("device_token"))
+                        logger.info("Exact JSON payload to backend (page %d):\n%s", page_num, json.dumps(masked_payload, indent=2))
                         
                         res_data = self._send_request_with_retry(new_payload, page=page_num)
                         if not res_data or res_data.get("response") != "Success":
@@ -791,12 +866,18 @@ class SyncService:
                             SyncService.records_currently_sending = 0
                             if not SyncService.last_sync_error:
                                 SyncService.last_sync_error = str(error_msg)
-                            if SyncService.last_sync_status not in ("Failed", "Failed (Network Error)", "Failed (Timeout)") and not SyncService.last_sync_status.startswith("Failed ("):
-                                SyncService.last_sync_status = f"Failed ({error_msg[:25]})" if error_msg else "Failed"
+                            
+                            is_auth = any(k in str(error_msg).lower() or k in str(SyncService.last_sync_status).lower() for k in ("401", "unauthorized", "auth failed", "device not recognized", "revoked", "invalid token"))
+                            if is_auth:
+                                SyncService.last_sync_status = "Failed (Auth Failed)"
+                            elif SyncService.last_sync_status not in ("Failed", "Failed (Network Error)", "Failed (Timeout)", "Failed (Offline)") and not SyncService.last_sync_status.startswith("Failed ("):
+                                SyncService.last_sync_status = f"Failed ({str(error_msg)[:25]})" if error_msg else "Failed"
+
                             try:
                                 from services.error_report_service import ErrorReportService
+                                err_type = "AUTH_ERROR" if is_auth else "ACTIVITY_UPLOAD_ERROR"
                                 ErrorReportService().report_error(
-                                    error_type="ACTIVITY_UPLOAD_ERROR",
+                                    error_type=err_type,
                                     error_message=f"Activity upload batch failed: {error_msg}",
                                     extra_context={
                                         "endpoint": "/tracking/save_activity_batch",
@@ -945,16 +1026,20 @@ class SyncService:
             self._sync_lock.release()
 
     def _send_request_with_retry(self, payload: dict, page: int, retries: int = 3) -> dict | None:
+        current_token = payload.get("device_token")
         logger.info(
-            "Sending laptop health data to existing endpoint: %s (page %d)",
+            "Sending activity batch to backend: endpoint=%s page=%d token=%s",
             self.save_activity_batch_url,
             page,
+            _mask_token(current_token),
         )
+        masked_payload = dict(payload)
+        masked_payload["device_token"] = _mask_token(current_token)
         logger.info(
             "[API_PAYLOAD_SENT] endpoint=/tracking/save_activity_batch page=%d sessions_count=%d payload=%s",
             page,
             len(payload.get("sessions", [])),
-            payload,
+            masked_payload,
         )
         re_enrolled = False
         for attempt in range(1, retries + 1):
@@ -965,9 +1050,10 @@ class SyncService:
                     timeout=15,
                 )
                 logger.info(
-                    "Health sync successful: HTTP %d (attempt %d)",
+                    "Activity sync HTTP response: %d (attempt %d/%d)",
                     response.status_code,
                     attempt,
+                    retries,
                 )
                 logger.info(
                     "[API_RESPONSE_RECEIVED] endpoint=/tracking/save_activity_batch page=%d HTTP %d Response body: %s (attempt %d)",
@@ -977,27 +1063,58 @@ class SyncService:
                     attempt,
                 )
 
-                if (response.status_code == 401 or "Device not recognized" in response.text or "revoked" in response.text) and not re_enrolled:
-                    logger.warning("Device token rejected on save_activity_batch (HTTP 401). Triggering automatic re-enrollment...")
+                is_auth_rejection = (
+                    response.status_code == 401
+                    or "Device not recognized" in response.text
+                    or "revoked" in response.text
+                    or "Invalid token" in response.text
+                )
+
+                if is_auth_rejection and not re_enrolled:
+                    logger.warning("Device token rejected on save_activity_batch (HTTP %d). Triggering automatic re-enrollment...", response.status_code)
                     new_token = self.re_enroll_device()
                     if new_token:
                         re_enrolled = True
                         payload["device_token"] = new_token
-                        logger.info("Retrying save_activity_batch with freshly enrolled device_token...")
+                        logger.info("Retrying save_activity_batch with freshly enrolled device_token (%s)...", _mask_token(new_token))
                         continue
+                    else:
+                        logger.error("Device re-enrollment failed during save_activity_batch.")
+                        SyncService.last_sync_error = "HTTP 401: Device token rejected and re-enrollment failed"
+                        SyncService.last_sync_status = "Failed (Auth Failed)"
+                        return None
 
                 response.raise_for_status()
                 try:
                     data = response.json()
-                    if data.get("response") == "Failed" and ("Device not recognized" in str(data.get("message")) or "revoked" in str(data.get("message"))) and not re_enrolled:
+                    if (
+                        data.get("response") == "Failed"
+                        and any(k in str(data.get("message")) for k in ("Device not recognized", "revoked", "Invalid token"))
+                        and not re_enrolled
+                    ):
                         logger.warning("Device token rejected in response body. Triggering automatic re-enrollment...")
                         new_token = self.re_enroll_device()
                         if new_token:
                             re_enrolled = True
                             payload["device_token"] = new_token
+                            logger.info("Retrying save_activity_batch after re-enrollment (%s)...", _mask_token(new_token))
                             continue
-                    SyncService.last_sync_error = ""
-                    return data
+                        else:
+                            SyncService.last_sync_error = "HTTP 401: Device token rejected in response body"
+                            SyncService.last_sync_status = "Failed (Auth Failed)"
+                            return None
+
+                    if data.get("response") == "Success" or data.get("status") in (1, "1", "Success", "success", True):
+                        SyncService.last_sync_error = ""
+                        return data
+                    else:
+                        msg = data.get("message") or "Unknown server response"
+                        SyncService.last_sync_error = str(msg)
+                        if any(k in str(msg).lower() for k in ("auth", "unauthorized", "token", "forbidden", "401")):
+                            SyncService.last_sync_status = "Failed (Auth Failed)"
+                        else:
+                            SyncService.last_sync_status = "Failed"
+                        return data
                 except Exception:
                     logger.exception("Failed to parse JSON response for page %d", page)
                     SyncService.last_sync_error = f"Invalid JSON response: {response.text[:100]}"
@@ -1005,24 +1122,35 @@ class SyncService:
                     return None
             except requests.RequestException as exc:
                 http_code = getattr(getattr(exc, "response", None), "status_code", None)
-                resp_text = getattr(getattr(exc, "response", None), "text", None)
+                resp_text = getattr(getattr(exc, "response", None), "text", "") or ""
                 logger.error(
-                    "Health sync failed: HTTP %s / error: %s (attempt %d)",
+                    "Activity sync failed: HTTP %s / error: %s (attempt %d/%d)",
                     http_code or "N/A",
                     exc,
                     attempt,
+                    retries,
                 )
 
-                if (http_code == 401 or (resp_text and ("Device not recognized" in resp_text or "revoked" in resp_text))) and not re_enrolled:
-                    logger.warning("Device token rejected on save_activity_batch exception (HTTP 401). Triggering automatic re-enrollment...")
+                is_auth_rejection = (
+                    http_code == 401
+                    or "Device not recognized" in resp_text
+                    or "revoked" in resp_text
+                    or "Invalid token" in resp_text
+                )
+
+                if is_auth_rejection and not re_enrolled:
+                    logger.warning("Device token rejected on save_activity_batch exception (HTTP %s). Triggering automatic re-enrollment...", http_code or "401")
                     new_token = self.re_enroll_device()
                     if new_token:
                         re_enrolled = True
                         payload["device_token"] = new_token
-                        logger.info("Retrying save_activity_batch after re-enrollment...")
+                        logger.info("Retrying save_activity_batch after re-enrollment (%s)...", _mask_token(new_token))
                         continue
 
-                if http_code:
+                if is_auth_rejection:
+                    SyncService.last_sync_error = "HTTP 401: Unauthorized (Device token rejected)"
+                    SyncService.last_sync_status = "Failed (Auth Failed)"
+                elif http_code:
                     SyncService.last_sync_error = f"HTTP {http_code}: {resp_text[:120] if resp_text else exc}"
                     SyncService.last_sync_status = f"Failed (HTTP {http_code})"
                 elif isinstance(exc, requests.exceptions.Timeout):
@@ -1053,9 +1181,10 @@ class SyncService:
                     )
                     try:
                         from services.error_report_service import ErrorReportService
+                        err_type = "AUTH_ERROR" if is_auth_rejection else "ACTIVITY_SYNC_ERROR"
                         ErrorReportService().report_error(
-                            error_type="ACTIVITY_SYNC_ERROR",
-                            error_message=f"Activity sync failed after {retries} retries: {exc}",
+                            error_type=err_type,
+                            error_message=f"Activity sync failed after {retries} retries: {SyncService.last_sync_error}",
                             exc=exc,
                             extra_context={
                                 "page": page,
@@ -1069,6 +1198,7 @@ class SyncService:
                         pass
                     return None
         return None
+
 
     def _build_page_payload(
         self,
@@ -1772,10 +1902,11 @@ class SyncService:
             }
 
             logger.info(
-                "Uploading screenshot to API: %s (bytes=%dB, base64_len=%d) for server session %s",
+                "Uploading screenshot to API: %s (bytes=%dB, base64_len=%d, token=%s) for server session %s",
                 screenshot_path.name,
                 len(raw_bytes),
                 len(base64_encoded_str),
+                _mask_token(device_token),
                 activity_session_id,
             )
 
@@ -1804,7 +1935,7 @@ class SyncService:
                             self._get_content_type(screenshot_path),
                         )
                     }
-                    logger.info("Retrying screenshot upload with freshly enrolled device_token...")
+                    logger.info("Retrying screenshot upload with freshly enrolled device_token (%s)...", _mask_token(new_token))
                     response = requests.post(
                         self.upload_screenshot_url,
                         files=files,

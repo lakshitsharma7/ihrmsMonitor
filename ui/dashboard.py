@@ -657,12 +657,14 @@ class DashboardPage(QWidget):
             sync_st = getattr(SyncService, "last_sync_status", "Sent")
             curr_text = self.update_status_label.text()
             if not any(u in curr_text for u in ("Downloading", "Installing", "Restarting", "Ready to Restart", "Update Pending")):
-                if sync_st == "Sent":
+                if sync_st in ("Sent", "Successful"):
                     self.set_sync_status("Sync Successful")
                 elif sync_st == "Sending":
                     self.set_sync_status("Syncing...")
-                elif sync_st == "Pending" or "Offline" in sync_st or "Timeout" in sync_st:
+                elif sync_st in ("Pending", "Offline", "Timeout") or "Offline" in sync_st or "Timeout" in sync_st:
                     self.set_sync_status("Sync Pending")
+                elif "Auth Failed" in sync_st:
+                    self.set_sync_status("Sync Error (Auth Failed)")
                 elif sync_st.startswith("Failed"):
                     err_msg = getattr(SyncService, "last_sync_error", "")
                     clean_msg = self._clean_status_text(err_msg)
@@ -708,7 +710,7 @@ class DashboardPage(QWidget):
             return "Sync Pending"
 
         # Check for auth/permission patterns
-        if any(auth in t_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403")):
+        if any(auth in t_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403", "auth failed", "device not recognized", "revoked")):
             return "Sync Error (Auth Failed)"
 
         # Strip prefixes
@@ -792,11 +794,12 @@ class DashboardPage(QWidget):
                     "502", "503", "504"
                 )):
                     self.set_sync_status("Sync Pending")
-                elif any(auth in msg_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403")):
+                elif any(auth in msg_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403", "auth failed", "device not recognized", "revoked")):
                     self.set_sync_status("Sync Error (Auth Failed)")
                 else:
                     clean_msg = self._clean_status_text(error_message)
                     self.set_sync_status(f"Sync Error ({clean_msg})" if clean_msg != "Sync Pending" else "Sync Pending")
+
             elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
                 if any(net in msg_lower for net in ("connect", "timeout", "offline", "unreachable", "name resolution", "httpsconnectionpool")):
                     self.set_update_status("Update Pending (Offline)")
