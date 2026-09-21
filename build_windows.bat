@@ -58,7 +58,7 @@ if not defined ISCC (
     goto :done_pyinstaller
 )
 
-set "APP_VER=2.1"
+set "APP_VER=2.0.2"
 if exist "VERSION" set /p APP_VER=<VERSION
 echo Using Inno Setup Compiler: "%ISCC%" for Version %APP_VER%
 set "ISS_FILE=Workpulse.iss"

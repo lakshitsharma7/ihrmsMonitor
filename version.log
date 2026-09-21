@@ -5,6 +5,23 @@ Maintained automatically. Add a new block at the top for each release.
 Do not duplicate version entries. Preserve all previous entries below.
 ================================================================================
 
+Version 2.0.2
+Date: 21-09-2026
+
+New Features:
+- Seamless HRMS Web Portal Navigation:
+    * Dynamic, authenticated browser auto-login bridge connecting desktop sessions to iHRMS Web Portal.
+    * Ephemeral, secure browser launch without exposing secrets in URLs or persistent storage.
+    * Clean restart fallback handling.
+
+Improvements:
+- PyInstaller bundle and spec optimization:
+    * Added full explicit hidden imports for services.hrms_portal_service and utils.system_health.
+    * Fixed typing imports across all background services.
+- Version consistency across all build descriptors, PE binary resource headers, and Inno Setup installer definitions aligned to 2.0.2.
+
+--------------------------------------------------------------------------------
+
 Version 2.0.1
 Date: 09-09-2026
 

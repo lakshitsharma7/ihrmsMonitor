@@ -233,25 +233,42 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         self.assertTrue(page.calendar_grid_container.isHidden())
 
     def test_06b_month_navigation_and_today(self):
-        """Verify Previous Month, Next Month, and Today navigation."""
+        """Verify Previous Month, Next Month, and Today navigation with past/current bounds."""
         page = AttendancePage(service=self.service)
-        page.month_combo.setCurrentText("September")
-        page.year_combo.setCurrentText("2026")
-
-        # Next Month -> October 2026
-        page._on_next_month()
-        self.assertEqual(page.month_combo.currentText(), "October")
-        self.assertEqual(page.year_combo.currentText(), "2026")
-
-        # Prev Month -> September 2026
-        page._on_prev_month()
-        self.assertEqual(page.month_combo.currentText(), "September")
-        self.assertEqual(page.year_combo.currentText(), "2026")
-
-        # Today button
         now = datetime.now()
+
+        # 1. Verify year selector has no future years
+        year_items = [int(page.year_combo.itemText(i)) for i in range(page.year_combo.count())]
+        self.assertTrue(all(yr <= now.year for yr in year_items))
+
+        # 2. Verify current year month selector only has months up to current month
+        page.year_combo.setCurrentText(str(now.year))
+        month_items_cur_year = [page.month_combo.itemText(i) for i in range(page.month_combo.count())]
+        self.assertEqual(len(month_items_cur_year), now.month)
+        self.assertEqual(month_items_cur_year[-1], page.month_combo.itemText(now.month - 1))
+
+        # 3. Verify next month is blocked at current month boundary
+        page.month_combo.setCurrentIndex(now.month - 1)
+        page._on_next_month()
+        self.assertEqual(page.month_combo.currentIndex(), now.month - 1)
+        self.assertFalse(page.next_month_btn.isEnabled())
+
+        # 4. Navigate within past year (all 12 months available)
+        past_year = now.year - 1
+        page.year_combo.setCurrentText(str(past_year))
+        page._on_year_changed()
+        self.assertEqual(page.month_combo.count(), 12)
+
         page.month_combo.setCurrentText("January")
-        page.year_combo.setCurrentText("2020")
+        page._on_next_month()
+        self.assertEqual(page.month_combo.currentText(), "February")
+        self.assertEqual(page.year_combo.currentText(), str(past_year))
+
+        page._on_prev_month()
+        self.assertEqual(page.month_combo.currentText(), "January")
+        self.assertEqual(page.year_combo.currentText(), str(past_year))
+
+        # 5. Today button jumps to current year and current month
         page._on_today()
         self.assertEqual(page.year_combo.currentText(), str(now.year))
         self.assertEqual(page.month_combo.currentIndex(), now.month - 1)

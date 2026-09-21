@@ -1,7 +1,8 @@
-"""Leave Balance Modal Dialog for iHRMS Monitor.
+"""Leave Balance Modal Dialog for Workpulse.
 
 Displays employee leave quota and current balance breakdown with
-summary cards, status badges, dynamic API loading, and error handling.
+fixed 7 leave types, summary cards, progress bars, dynamic API loading,
+and error handling.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QProgressBar,
     QPushButton,
@@ -29,6 +29,45 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Fixed 7 Leave Types Configuration (Code, Display Name, Sequence)
+FIXED_LEAVE_TYPES = [
+    {"code": "CL", "name": "Casual Leave", "aliases": ("cl", "casual", "casual leave")},
+    {"code": "SL", "name": "Sick Leave", "aliases": ("sl", "sick", "sick leave")},
+    {"code": "CO", "name": "Comp Off", "aliases": ("co", "comp", "comp off", "compensatory", "compensatory off")},
+    {"code": "OD", "name": "Business Trip", "aliases": ("od", "business", "business trip", "on duty", "official duty")},
+    {"code": "LWP", "name": "Leave Without Pay", "aliases": ("lwp", "without pay", "leave without pay", "unpaid")},
+    {"code": "EL", "name": "Paid Leave", "aliases": ("el", "pl", "paid", "paid leave", "earned", "earned leave", "privilege", "privilege leave")},
+    {"code": "RH", "name": "Restricted/Floating", "aliases": ("rh", "fl", "restricted", "floating", "restricted holiday", "restricted/floating", "floating holiday")},
+]
+
+
+def _to_num(val) -> float:
+    """Safely parse value into float."""
+    if val is None or val == "":
+        return 0.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _fmt_val(v) -> str:
+    """Format numeric values for UI display, preserving cleaner integers and float representations."""
+    if v is None or v == "" or str(v).strip() in ("None", "null", "—"):
+        return "0"
+    try:
+        fv = float(v)
+        if fv.is_integer():
+            return f"{int(fv)}"
+        s = f"{fv:.2f}"
+        if s.endswith(".00"):
+            return s[:-3]
+        if s.endswith("0") and "." in s:
+            return s[:-1]
+        return s
+    except (ValueError, TypeError):
+        return str(v).strip()
+
 
 class LeaveSummaryCard(QFrame):
     """Modern, card-based summary widget representing a single leave quota type."""
@@ -37,15 +76,15 @@ class LeaveSummaryCard(QFrame):
         super().__init__(parent)
         self._item = item or {}
         self.setObjectName("LeaveSummaryCard")
-        self.setMinimumWidth(150)
-        self.setMinimumHeight(155)
+        self.setMinimumWidth(160)
+        self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 14, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(8)
 
         # Card Base Style
         self.setStyleSheet(
@@ -63,29 +102,18 @@ class LeaveSummaryCard(QFrame):
         )
 
         # --------------------------------------------------------------
-        # 1. Short Code Badge (e.g. "EC", "CL", "SL", "CO", "LT1")
+        # 1. Fixed Short Code Badge
         # --------------------------------------------------------------
-        short_code = self._item.get("short_name")
-        leave_name = self._item.get("leave_type") or "Unknown Leave Type"
-
-        if not short_code or short_code == "—":
-            # Derive dynamically if missing
-            words = [w for w in leave_name.replace("/", " ").replace("-", " ").replace("(", " ").replace(")", " ").split() if w]
-            if len(words) >= 3 and words[0].lower() == "leave" and words[1].lower() == "type":
-                id_part = words[-1]
-                short_code = f"LT{id_part}" if id_part.isdigit() else "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
-            elif len(words) > 1:
-                short_code = "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
-            else:
-                short_code = leave_name[:3].upper()
+        short_code = str(self._item.get("code") or self._item.get("short_name") or "LT").strip()
+        leave_name = str(self._item.get("name") or self._item.get("leave_type") or "Leave Type").strip()
 
         code_container = QHBoxLayout()
         code_container.setContentsMargins(0, 0, 0, 0)
         code_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        code_badge = QLabel(short_code)
-        code_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        code_badge.setStyleSheet(
+        self.code_badge = QLabel(short_code)
+        self.code_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.code_badge.setStyleSheet(
             """
             QLabel {
                 background-color: #EFF6FF;
@@ -94,30 +122,66 @@ class LeaveSummaryCard(QFrame):
                 font-weight: 800;
                 border: 1px solid #BFDBFE;
                 border-radius: 6px;
-                padding: 3px 12px;
+                padding: 3px 14px;
             }
             """
         )
-        code_container.addWidget(code_badge)
+        code_container.addWidget(self.code_badge)
         layout.addLayout(code_container)
 
         # --------------------------------------------------------------
-        # 2. Full Leave Type Name (Handles long names on 2 lines cleanly)
+        # 2. Fixed Full Leave Type Name
         # --------------------------------------------------------------
         self.name_label = QLabel(leave_name)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(True)
-        self.name_label.setMinimumHeight(34)
+        self.name_label.setMinimumHeight(24)
         self.name_label.setStyleSheet(
-            "QLabel { font-size: 12px; font-weight: 700; color: #1E293B; border: none; background: transparent; }"
+            "QLabel { font-size: 13px; font-weight: 700; color: #1E293B; border: none; background: transparent; }"
         )
         layout.addWidget(self.name_label)
 
         # --------------------------------------------------------------
         # 3. Horizontal Usage / Progress Indicator
         # --------------------------------------------------------------
+        tot_raw = (
+            self._item.get("total_quota_str")
+            or self._item.get("total_quota")
+            or self._item.get("total_str")
+            or self._item.get("total")
+            or self._item.get("totalQuota")
+            or self._item.get("total_leaves")
+            or self._item.get("allotted")
+            or self._item.get("quota")
+            or self._item.get("leaves")
+        )
+        used_raw = (
+            self._item.get("used_str")
+            or self._item.get("used")
+            or self._item.get("leavesTaked")
+            or self._item.get("leaves_taked")
+            or self._item.get("leaves_taken")
+            or self._item.get("taken")
+            or self._item.get("consumed")
+            or self._item.get("availed")
+        )
+        left_raw = (
+            self._item.get("available_str")
+            or self._item.get("available")
+            or self._item.get("left_str")
+            or self._item.get("left")
+            or self._item.get("remaining")
+            or self._item.get("remaining_str")
+            or self._item.get("leave_balance")
+            or self._item.get("balance")
+        )
+
+        total_num = _to_num(tot_raw)
+        used_num = _to_num(used_raw)
+        left_num = _to_num(left_raw)
+
         self.usage_bar = QProgressBar()
-        self.usage_bar.setFixedHeight(4)
+        self.usage_bar.setFixedHeight(5)
         self.usage_bar.setTextVisible(False)
         self.usage_bar.setStyleSheet(
             """
@@ -132,15 +196,10 @@ class LeaveSummaryCard(QFrame):
             }
             """
         )
-        try:
-            total_num = float(self._item.get("total_quota") or 0.0)
-            used_num = float(self._item.get("used") or 0.0)
-            if total_num > 0:
-                pct = int(min(100.0, max(0.0, (used_num / total_num) * 100.0)))
-                self.usage_bar.setValue(pct)
-            else:
-                self.usage_bar.setValue(0)
-        except (ValueError, TypeError, ZeroDivisionError):
+        if total_num > 0:
+            pct = int(min(100.0, max(0.0, (used_num / total_num) * 100.0)))
+            self.usage_bar.setValue(pct)
+        else:
             self.usage_bar.setValue(0)
 
         layout.addWidget(self.usage_bar)
@@ -159,17 +218,11 @@ class LeaveSummaryCard(QFrame):
         # --------------------------------------------------------------
         stats_row = QHBoxLayout()
         stats_row.setContentsMargins(0, 4, 0, 2)
-        stats_row.setSpacing(2)
+        stats_row.setSpacing(4)
 
-        tot_val = self._item.get("total_quota_str") or (
-            str(self._item.get("total_quota")) if self._item.get("total_quota") is not None else "—"
-        )
-        used_val = self._item.get("used_str") or (
-            str(self._item.get("used")) if self._item.get("used") is not None else "—"
-        )
-        left_val = self._item.get("available_str") or (
-            str(self._item.get("available")) if self._item.get("available") is not None else "—"
-        )
+        tot_val = _fmt_val(tot_raw)
+        used_val = _fmt_val(used_raw)
+        left_val = _fmt_val(left_raw)
 
         def _make_stat_col(value_str: str, label_str: str, color_hex: str) -> QVBoxLayout:
             col = QVBoxLayout()
@@ -202,7 +255,7 @@ class LeaveSummaryCard(QFrame):
 
 
 class LeaveBalanceDialog(QDialog):
-    """Modal dialog displaying leave quotas and balances in a modern card-based layout."""
+    """Modal dialog displaying leave quotas and balances in a 2-column card layout."""
 
     data_loaded = Signal(dict)
 
@@ -215,8 +268,8 @@ class LeaveBalanceDialog(QDialog):
         self.setObjectName("LeaveBalanceDialog")
         self.setWindowTitle("Leave Balance")
         self.setModal(True)
-        self.resize(880, 580)
-        self.setMinimumSize(640, 440)
+        self.resize(780, 620)
+        self.setMinimumSize(600, 480)
 
         self._service = service or AttendanceService()
         self._is_loading = False
@@ -232,7 +285,7 @@ class LeaveBalanceDialog(QDialog):
         main_layout.setSpacing(14)
 
         # --------------------------------------------------------------
-        # 1. Header with Title, Subtitle, Refresh, and Close (X)
+        # 1. Header with Title, Subtitle, and Close (X)
         # --------------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -252,58 +305,7 @@ class LeaveBalanceDialog(QDialog):
 
         header_layout.addStretch(1)
 
-        # Refresh button in header
-        self.refresh_btn = QPushButton("↻ Refresh")
-        self.refresh_btn.setObjectName("SecondaryButton")
-        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_btn.setFixedHeight(32)
-        self.refresh_btn.clicked.connect(lambda: self.refresh(force=True))
-        header_layout.addWidget(self.refresh_btn)
-
-        # Close 'X' button
-        self.close_x_btn = QPushButton("✕")
-        self.close_x_btn.setObjectName("CloseXButton")
-        self.close_x_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_x_btn.setFixedSize(32, 32)
-        self.close_x_btn.setStyleSheet(
-            """
-            QPushButton#CloseXButton {
-                background-color: #F1F5F9;
-                color: #475569;
-                border: 1px solid #CBD5E1;
-                border-radius: 16px;
-                font-size: 13px;
-                font-weight: 700;
-            }
-            QPushButton#CloseXButton:hover {
-                background-color: #E2E8F0;
-                color: #0F172A;
-            }
-            """
-        )
-        self.close_x_btn.clicked.connect(self.accept)
-        header_layout.addWidget(self.close_x_btn)
-
         main_layout.addLayout(header_layout)
-
-        # Loading Progress Bar & Label
-        self.loading_container = QWidget()
-        loading_layout = QVBoxLayout(self.loading_container)
-        loading_layout.setContentsMargins(0, 0, 0, 0)
-        loading_layout.setSpacing(4)
-
-        self.loading_label = QLabel("Loading leave balance...")
-        self.loading_label.setStyleSheet("color: #2563EB; font-size: 12px; font-weight: 600;")
-        loading_layout.addWidget(self.loading_label)
-
-        self.loading_bar = QProgressBar()
-        self.loading_bar.setRange(0, 0)
-        self.loading_bar.setFixedHeight(3)
-        self.loading_bar.setTextVisible(False)
-        self.loading_bar.setStyleSheet("QProgressBar::chunk { background-color: #2563EB; }")
-        loading_layout.addWidget(self.loading_bar)
-        self.loading_container.setVisible(False)
-        main_layout.addWidget(self.loading_container)
 
         # Error Banner
         self.error_container = QWidget()
@@ -364,7 +366,7 @@ class LeaveBalanceDialog(QDialog):
         main_layout.addLayout(stats_row)
 
         # --------------------------------------------------------------
-        # 3. Card-Based Leave Summary Section (Scrollable Grid)
+        # 3. Card-Based Leave Summary Section (Scrollable 2-Column Grid)
         # --------------------------------------------------------------
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -375,10 +377,10 @@ class LeaveBalanceDialog(QDialog):
         self.cards_container = QWidget()
         self.cards_container.setObjectName("LeaveCardsContainer")
         self.cards_grid = QGridLayout(self.cards_container)
-        self.cards_grid.setContentsMargins(2, 4, 2, 8)
+        self.cards_grid.setContentsMargins(4, 4, 4, 8)
         self.cards_grid.setSpacing(12)
-        for col_i in range(4):
-            self.cards_grid.setColumnStretch(col_i, 1)
+        self.cards_grid.setColumnStretch(0, 1)
+        self.cards_grid.setColumnStretch(1, 1)
 
         self.scroll_area.setWidget(self.cards_container)
         main_layout.addWidget(self.scroll_area, 1)
@@ -431,7 +433,6 @@ class LeaveBalanceDialog(QDialog):
         if self._is_loading:
             return
         self._is_loading = True
-        self.loading_container.setVisible(True)
         self.error_container.setVisible(False)
 
         def _bg_worker():
@@ -447,40 +448,175 @@ class LeaveBalanceDialog(QDialog):
         t = threading.Thread(target=_bg_worker, daemon=True, name="LeaveQuotaFetchThread")
         t.start()
 
-    def _apply_leave_data(self, data: dict) -> None:
-        """Render fetched leave data dynamically into summary cards."""
-        self.loading_container.setVisible(False)
-
-        if not isinstance(data, dict):
+    def _apply_leave_data(self, data: dict | list) -> None:
+        """Transform any API response into exactly 7 records matching FIXED_LEAVE_TYPES and render."""
+        if not data or not isinstance(data, (dict, list)):
             self._show_error("Unable to load leave balance. Please try again.")
             return
 
-        err = data.get("error")
-        if err:
-            self._show_error("Unable to load leave balance. Please try again.")
-            self.scroll_area.setVisible(False)
-            self.empty_state.setVisible(True)
-            return
+        if isinstance(data, dict):
+            err = data.get("error")
+            if err:
+                self._show_error(str(err))
+                self.scroll_area.setVisible(False)
+                self.empty_state.setVisible(True)
+                return
 
         self.error_container.setVisible(False)
 
-        summary = data.get("summary", {})
-        tot_q = summary.get("total_quota_str", str(summary.get("total_quota", 0)))
-        tot_u = summary.get("total_used_str", str(summary.get("total_used", 0)))
-        tot_a = summary.get("total_available_str", str(summary.get("total_available", 0)))
+        # Extract items list or raw container
+        raw_items = []
+        if isinstance(data, dict):
+            raw_items = data.get("items")
+            if raw_items is None:
+                raw_c = (
+                    data.get("data")
+                    or data.get("result")
+                    or data.get("leaves")
+                    or data.get("leave_types")
+                    or data.get("leave_balances")
+                    or data.get("records")
+                )
+                if isinstance(raw_c, list):
+                    raw_items = raw_c
+                elif isinstance(raw_c, dict):
+                    # Check for comma-separated CSV format inside raw_c
+                    for cand in ("lt_id", "leaves", "leavesTaked", "remaining"):
+                        if cand in raw_c:
+                            # Let AttendanceService or local CSV parsing handle it
+                            raw_items = self._service._leave_cache.get(f"{raw_c}") or []
+                            break
+                    if not raw_items:
+                        for ik in ("leaves", "leave_types", "leave_balances", "records", "items", "list", "rows", "details"):
+                            if ik in raw_c and isinstance(raw_c[ik], list):
+                                raw_items = raw_c[ik]
+                                break
+                    if not raw_items:
+                        raw_items = []
+                        for k, v in raw_c.items():
+                            if isinstance(v, dict):
+                                entry = dict(v)
+                                if "leave_type" not in entry and "name" not in entry:
+                                    entry["leave_type"] = k
+                                raw_items.append(entry)
+                            elif isinstance(v, (int, float, str)) and str(v).replace(".", "", 1).isdigit():
+                                raw_items.append({"leave_type": k, "available": v, "total_quota": v, "used": 0})
+        elif isinstance(data, list):
+            raw_items = data
 
-        self.total_quota_val.setText(f"{tot_q} Days")
-        self.total_used_val.setText(f"{tot_u} Days")
-        self.total_avail_val.setText(f"{tot_a} Days")
+        # Pass 1: Try exact code or alias match for all fixed types
+        assigned: dict[int, dict] = {}
+        matched_raw_indices = set()
 
-        items = data.get("items", [])
-        if not items:
-            self.scroll_area.setVisible(False)
-            self.empty_state.setVisible(True)
-            return
+        for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+            code = fixed["code"].lower()
+            aliases = fixed.get("aliases", ())
+            for r_idx, entry in enumerate(raw_items):
+                if not isinstance(entry, dict) or r_idx in matched_raw_indices:
+                    continue
+                entry_code = str(
+                    entry.get("code")
+                    or entry.get("short_name")
+                    or entry.get("short_code")
+                    or entry.get("leave_code")
+                    or entry.get("leaveCode")
+                    or ""
+                ).strip().lower()
+                entry_name = str(
+                    entry.get("name")
+                    or entry.get("leave_type")
+                    or entry.get("leave_type_name")
+                    or entry.get("leave_name")
+                    or entry.get("type")
+                    or ""
+                ).strip().lower()
+
+                if (entry_code and (entry_code == code or entry_code in aliases)) or (entry_name and any(alias in entry_name for alias in aliases)):
+                    assigned[fixed_idx] = entry
+                    matched_raw_indices.add(r_idx)
+                    break
+
+        # Pass 2: For any fixed type that didn't match by code/name, match positional if unmapped raw items exist
+        unmatched_raw = [entry for r_idx, entry in enumerate(raw_items) if isinstance(entry, dict) and r_idx not in matched_raw_indices]
+        unmatched_fixed = [f_idx for f_idx in range(len(FIXED_LEAVE_TYPES)) if f_idx not in assigned]
+        for f_idx, entry in zip(unmatched_fixed, unmatched_raw):
+            assigned[f_idx] = entry
+
+        final_7_items: list[dict] = []
+        for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+            code = fixed["code"]
+            name = fixed["name"]
+            entry = assigned.get(fixed_idx, {})
+
+            # Extract numeric fields
+            q_raw = (
+                entry.get("total_quota_str")
+                or entry.get("total_quota")
+                or entry.get("total_str")
+                or entry.get("total")
+                or entry.get("totalQuota")
+                or entry.get("total_leaves")
+                or entry.get("allotted")
+                or entry.get("quota")
+                or entry.get("leaves")
+                or 0.0
+            )
+            u_raw = (
+                entry.get("used_str")
+                or entry.get("used")
+                or entry.get("leavesTaked")
+                or entry.get("leaves_taked")
+                or entry.get("leaves_taken")
+                or entry.get("taken")
+                or entry.get("consumed")
+                or entry.get("availed")
+                or 0.0
+            )
+            l_raw = (
+                entry.get("available_str")
+                or entry.get("available")
+                or entry.get("left_str")
+                or entry.get("left")
+                or entry.get("remaining")
+                or entry.get("remaining_str")
+                or entry.get("leave_balance")
+                or entry.get("balance")
+                or 0.0
+            )
+
+            q_num = _to_num(q_raw)
+            u_num = _to_num(u_raw)
+            l_num = _to_num(l_raw)
+
+            if l_raw == 0.0 and q_num > 0 and u_num >= 0:
+                l_num = max(0.0, q_num - u_num)
+
+            final_7_items.append({
+                "code": code,
+                "name": name,
+                "short_name": code,
+                "leave_type": name,
+                "total": q_num,
+                "total_quota": q_num,
+                "total_quota_str": str(q_raw) if str(q_raw) != "0.0" else _fmt_val(q_num),
+                "used": u_num,
+                "used_str": str(u_raw) if str(u_raw) != "0.0" else _fmt_val(u_num),
+                "left": l_num,
+                "available": l_num,
+                "available_str": str(l_raw) if str(l_raw) != "0.0" else _fmt_val(l_num),
+            })
 
         self.empty_state.setVisible(False)
         self.scroll_area.setVisible(True)
+
+        # Compute dynamic summary totals from the 7 cards
+        tot_allotted = sum(item["total"] for item in final_7_items)
+        tot_used = sum(item["used"] for item in final_7_items)
+        tot_avail = sum(item["left"] for item in final_7_items)
+
+        self.total_quota_val.setText(f"{_fmt_val(tot_allotted)} Days")
+        self.total_used_val.setText(f"{_fmt_val(tot_used)} Days")
+        self.total_avail_val.setText(f"{_fmt_val(tot_avail)} Days")
 
         # Clear existing cards
         while self.cards_grid.count():
@@ -490,9 +626,9 @@ class LeaveBalanceDialog(QDialog):
                 w.deleteLater()
         self._cards.clear()
 
-        # Responsive column layout (4 columns per row on desktop)
-        cols_per_row = 4
-        for idx, item in enumerate(items):
+        # Render the 7 cards in a 2-column responsive grid
+        cols_per_row = 2
+        for idx, item in enumerate(final_7_items):
             row_idx = idx // cols_per_row
             col_idx = idx % cols_per_row
             card = LeaveSummaryCard(item=item)
@@ -503,6 +639,3 @@ class LeaveBalanceDialog(QDialog):
         """Display error banner with message."""
         self.error_label.setText(message)
         self.error_container.setVisible(True)
-        self.loading_container.setVisible(False)
-
-

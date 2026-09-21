@@ -1398,77 +1398,40 @@ class AttendanceService:
                     "error": err_text,
                 }
 
-            for key_candidate in ("data", "result", "leave_quota", "leave_balances", "leave_types", "quota_details"):
+            for key_candidate in (
+                "data", "result", "leave_quota", "leave_balances", "leave_types",
+                "leaves", "leave_details", "records", "items", "list", "rows", "quota_details"
+            ):
                 if key_candidate in res_json and res_json[key_candidate] is not None:
                     raw_items = res_json[key_candidate]
                     break
             if raw_items is None:
                 # If no container found, check if dictionary itself has leave entries
                 raw_items = res_json
+
+            # If raw_items is a dict, check if it contains a nested list
+            if isinstance(raw_items, dict):
+                for inner_key in (
+                    "leaves", "leave_types", "leave_balances", "leave_list",
+                    "leave_details", "records", "items", "list", "rows", "details",
+                    "data", "result", "quota_details"
+                ):
+                    if inner_key in raw_items and isinstance(raw_items[inner_key], list):
+                        raw_items = raw_items[inner_key]
+                        break
         elif isinstance(res_json, list):
             raw_items = res_json
 
-        parsed_items = []
-
-        MONTH_KEYS = (
-            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-            "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"
-        )
-
-        def _derive_code(name_str: str) -> str:
-            """Dynamically derive short code from multi-word or single-word leave name."""
-            clean = name_str.replace("/", " ").replace("-", " ").replace("(", " ").replace(")", " ").replace(":", " ")
-            words = [w for w in clean.split() if w]
-            if len(words) > 1:
-                if len(words) >= 3 and words[0].lower() == "leave" and words[1].lower() == "type":
-                    id_part = words[-1]
-                    return f"LT{id_part}" if id_part.isdigit() else "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
-                return "".join(w[0].upper() for w in words if w[0].isalnum())[:4]
-            return name_str[:3].upper() if name_str else "—"
-
-        def _resolve_type_name(raw_val, raw_entry=None) -> tuple[str, str]:
-            """Dynamically resolve leave type name and short code from API record without hardcoded constants."""
-            if raw_entry and isinstance(raw_entry, dict):
-                for name_field in (
-                    "leave_type_name", "leave_name", "type_name", "leave_title",
-                    "title", "name", "type", "category", "description"
-                ):
-                    val = raw_entry.get(name_field)
-                    if val is not None and not (isinstance(val, (int, float)) or (isinstance(val, str) and val.strip().isdigit())):
-                        name_str = str(val).strip()
-                        raw_code = (
-                            raw_entry.get("short_name")
-                            or raw_entry.get("leave_short_code")
-                            or raw_entry.get("leave_code")
-                            or raw_entry.get("short_code")
-                            or raw_entry.get("code")
-                        )
-                        code_str = str(raw_code).strip() if raw_code else _derive_code(name_str)
-                        return (name_str, code_str)
-
-            is_numeric = False
-            numeric_id = None
-            if isinstance(raw_val, int):
-                is_numeric = True
-                numeric_id = raw_val
-            elif isinstance(raw_val, float) and raw_val.is_integer():
-                is_numeric = True
-                numeric_id = int(raw_val)
-            elif isinstance(raw_val, str) and raw_val.strip().isdigit():
-                is_numeric = True
-                numeric_id = int(raw_val.strip())
-
-            if is_numeric and numeric_id is not None:
-                logger.debug("Unmapped leave_type ID received from API without name: %s", raw_val)
-                return (f"Leave Type (ID: {numeric_id})", f"LT{numeric_id}")
-
-            if raw_val is not None and str(raw_val).strip():
-                name_str = str(raw_val).strip()
-                raw_code = raw_entry.get("short_name") or raw_entry.get("code") if raw_entry else None
-                code_str = str(raw_code).strip() if raw_code else _derive_code(name_str)
-                return (name_str, code_str)
-
-            return ("Unknown Leave Type", "—")
+        # Fixed 7 Leave Types Configuration
+        FIXED_LEAVE_TYPES = [
+            {"code": "CL", "name": "Casual Leave", "aliases": ("cl", "casual", "casual leave")},
+            {"code": "SL", "name": "Sick Leave", "aliases": ("sl", "sick", "sick leave")},
+            {"code": "CO", "name": "Comp Off", "aliases": ("co", "comp", "comp off", "compensatory", "compensatory off")},
+            {"code": "OD", "name": "Business Trip", "aliases": ("od", "business", "business trip", "on duty", "official duty")},
+            {"code": "LWP", "name": "Leave Without Pay", "aliases": ("lwp", "without pay", "leave without pay", "unpaid")},
+            {"code": "EL", "name": "Paid Leave", "aliases": ("el", "pl", "paid", "paid leave", "earned", "earned leave", "privilege", "privilege leave")},
+            {"code": "RH", "name": "Restricted/Floating", "aliases": ("rh", "fl", "restricted", "floating", "restricted holiday", "restricted/floating", "floating holiday")},
+        ]
 
         def _to_num(val) -> float:
             if val is None or val == "":
@@ -1493,7 +1456,7 @@ class AttendanceService:
                 for k, v in container_dict.items():
                     if k.lower() == cand.lower() and v is not None:
                         if isinstance(v, (list, tuple)):
-                            return [str(x).strip() for x in v]
+                            return [str(x).strip() for x in v if not isinstance(x, dict)]
                         if isinstance(v, (int, float)):
                             return [str(v).strip()]
                         if isinstance(v, str):
@@ -1503,14 +1466,6 @@ class AttendanceService:
                             return [v_str] if v_str else []
             return []
 
-        EXCLUDE_COL_KEYS = {
-            "leave_type", "leave_type_id", "leave_type_name", "leave_name", "name",
-            "type", "type_name", "short_name", "code", "status", "response", "error",
-            "message", "messages", "raw", "id", "token", "lt_id", "leaves", "leavestaked", "remaining"
-        }
-
-        detected_col_keys: list[str] = []
-
         # ------------------------------------------------------------------
         # Format A: Comma-separated strings / lists inside container dict
         # ------------------------------------------------------------------
@@ -1518,37 +1473,28 @@ class AttendanceService:
         CSV_LEAVES_KEYS = ("leaves", "total_leaves", "total_quota", "allotted", "quota", "total", "allocated")
         CSV_TAKED_KEYS = ("leavestaked", "leaves_taked", "leaves_taken", "leavestaken", "taken", "used", "availed", "consumed")
         CSV_REMAINING_KEYS = ("remaining", "remains", "leave_balance", "available", "balance", "available_leave", "balance_quota")
-        CSV_NAMES_KEYS = ("leave_type_name", "leave_type_names", "leave_name", "leave_names", "type_name", "type_names", "names")
-        CSV_CODES_KEYS = ("short_name", "short_names", "short_code", "short_codes", "leave_code", "leave_codes", "codes")
         CSV_CARRY_KEYS = ("carry_over", "carry_overs", "carryover", "carryovers")
 
         is_csv_dict = False
         if isinstance(raw_items, dict):
-            for cand in CSV_LT_ID_KEYS + CSV_LEAVES_KEYS:
-                if any(k.lower() == cand.lower() for k in raw_items.keys()):
-                    is_csv_dict = True
-                    break
+            has_dict_children = any(isinstance(v, list) and v and isinstance(v[0], dict) for v in raw_items.values())
+            if not has_dict_children:
+                for cand in CSV_LT_ID_KEYS + CSV_LEAVES_KEYS:
+                    if any(k.lower() == cand.lower() for k in raw_items.keys()):
+                        is_csv_dict = True
+                        break
+
+        parsed_items = []
 
         if is_csv_dict and isinstance(raw_items, dict):
             raw_lt_ids = _extract_csv_list(raw_items, CSV_LT_ID_KEYS)
             raw_leaves = _extract_csv_list(raw_items, CSV_LEAVES_KEYS)
             raw_taken = _extract_csv_list(raw_items, CSV_TAKED_KEYS)
             raw_remaining = _extract_csv_list(raw_items, CSV_REMAINING_KEYS)
-            raw_names = _extract_csv_list(raw_items, CSV_NAMES_KEYS)
-            raw_codes = _extract_csv_list(raw_items, CSV_CODES_KEYS)
             raw_carry = _extract_csv_list(raw_items, CSV_CARRY_KEYS)
 
-            count = max(len(raw_lt_ids), len(raw_leaves), len(raw_taken), len(raw_remaining))
-            if not (len(raw_lt_ids) == len(raw_leaves) == len(raw_taken) == len(raw_remaining)):
-                logger.warning(
-                    "Leave balance CSV field lengths differ: lt_id=%d, leaves=%d, leavesTaked=%d, remaining=%d",
-                    len(raw_lt_ids), len(raw_leaves), len(raw_taken), len(raw_remaining)
-                )
-
-            for i in range(count):
+            for i, fixed in enumerate(FIXED_LEAVE_TYPES):
                 raw_id = raw_lt_ids[i] if i < len(raw_lt_ids) else str(i + 1)
-                raw_name = raw_names[i] if i < len(raw_names) and raw_names[i] else None
-                raw_code = raw_codes[i] if i < len(raw_codes) and raw_codes[i] else None
                 q_str = raw_leaves[i] if i < len(raw_leaves) else "0"
                 u_str = raw_taken[i] if i < len(raw_taken) else "0"
                 r_str = raw_remaining[i] if i < len(raw_remaining) else "0"
@@ -1559,16 +1505,8 @@ class AttendanceService:
                 r_num = _to_num(r_str)
                 c_num = _to_num(c_str)
 
-                if raw_name:
-                    type_name = raw_name
-                    short_code = raw_code or _derive_code(type_name)
-                else:
-                    type_name, short_code = _resolve_type_name(
-                        raw_id,
-                        raw_entry={"leave_type_id": raw_id, "total": q_num, "used": u_num, "remaining": r_num}
-                    )
-                    if raw_code:
-                        short_code = raw_code
+                type_name = fixed["name"]
+                short_code = fixed["code"]
 
                 total_quota_str = q_str if q_str else _fmt_num(q_num)
                 used_str = u_str if u_str else _fmt_num(u_num)
@@ -1581,16 +1519,24 @@ class AttendanceService:
 
                 parsed_items.append({
                     "leave_type_id": raw_id,
-                    "leave_type": str(type_name).strip(),
-                    "short_name": str(short_code).strip(),
+                    "leave_type": type_name,
+                    "name": type_name,
+                    "short_name": short_code,
+                    "code": short_code,
                     "carry_over": c_num,
                     "carry_over_str": carry_str,
                     "total_quota": q_num,
                     "total_quota_str": total_quota_str,
+                    "total": q_num,
+                    "total_str": total_quota_str,
                     "used": u_num,
                     "used_str": used_str,
                     "available": r_num,
                     "available_str": avail_str,
+                    "left": r_num,
+                    "left_str": avail_str,
+                    "remaining": r_num,
+                    "remaining_str": avail_str,
                     "dynamic_fields": {
                         "total": total_quota_str,
                         "used": used_str,
@@ -1609,102 +1555,140 @@ class AttendanceService:
                 })
 
         # ------------------------------------------------------------------
-        # Format B: List of dictionaries
+        # Format B: List of dictionaries or Format C: Dict of dicts
         # ------------------------------------------------------------------
-        elif isinstance(raw_items, list):
-            for entry in raw_items:
-                if not isinstance(entry, dict):
-                    continue
+        else:
+            raw_list: list[dict] = []
+            if isinstance(raw_items, list):
+                raw_list = [entry for entry in raw_items if isinstance(entry, dict)]
+            elif isinstance(raw_items, dict):
+                for k, v in raw_items.items():
+                    if k in ("response", "status", "error", "message", "messages", "code", "token"):
+                        continue
+                    if isinstance(v, dict):
+                        d = dict(v)
+                        if "leave_type" not in d and "name" not in d:
+                            d["leave_type"] = k
+                        raw_list.append(d)
+                    elif isinstance(v, (int, float, str)) and str(v).replace(".", "", 1).isdigit():
+                        raw_list.append({"leave_type": k, "available": v, "total_quota": v, "used": 0})
 
-                # Track any dynamic period/quota keys in order of appearance
-                for k in entry.keys():
-                    if k.lower() not in EXCLUDE_COL_KEYS and k not in detected_col_keys:
-                        detected_col_keys.append(k)
+            # Pass 1: Try exact code or alias match for all fixed types
+            assigned: dict[int, dict] = {}
+            matched_raw_indices = set()
 
-                # Extract leave type / name dynamically
-                raw_type_val = (
-                    entry.get("leave_type_name")
-                    or entry.get("leave_name")
-                    or entry.get("leave_type")
-                    if entry.get("leave_type") is not None
-                    else (
-                        entry.get("leave_type_id")
+            for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+                code = fixed["code"].lower()
+                aliases = fixed.get("aliases", ())
+                for r_idx, entry in enumerate(raw_list):
+                    if r_idx in matched_raw_indices:
+                        continue
+                    entry_code = str(
+                        entry.get("short_name")
+                        or entry.get("short_code")
+                        or entry.get("code")
+                        or entry.get("leave_code")
+                        or entry.get("leaveCode")
+                        or ""
+                    ).strip().lower()
+                    entry_name = str(
+                        entry.get("leave_type_name")
+                        or entry.get("leave_name")
+                        or entry.get("leave_type")
                         or entry.get("name")
                         or entry.get("type")
-                    )
-                )
-                type_name, short_code = _resolve_type_name(raw_type_val, raw_entry=entry)
+                        or ""
+                    ).strip().lower()
 
-                # Extract carry over & monthly columns if present
+                    if (entry_code and (entry_code == code or entry_code in aliases)) or (entry_name and any(alias in entry_name for alias in aliases)):
+                        assigned[fixed_idx] = entry
+                        matched_raw_indices.add(r_idx)
+                        break
+
+            # Pass 2: For any fixed type that didn't match by code/name, match positional if unmapped raw items exist
+            unmatched_raw = [entry for r_idx, entry in enumerate(raw_list) if r_idx not in matched_raw_indices]
+            unmatched_fixed = [f_idx for f_idx in range(len(FIXED_LEAVE_TYPES)) if f_idx not in assigned]
+            for f_idx, entry in zip(unmatched_fixed, unmatched_raw):
+                assigned[f_idx] = entry
+
+            for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+                type_name = fixed["name"]
+                short_code = fixed["code"]
+                entry = assigned.get(fixed_idx, {})
                 carry_over_num = _to_num(entry.get("carry_over"))
-                month_sum = sum(_to_num(entry.get(mk)) for mk in MONTH_KEYS if mk in entry and entry.get(mk) is not None)
-
-                # Extract numeric values
                 quota_raw = (
                     entry.get("total_quota")
+                    or entry.get("totalQuota")
+                    or entry.get("total_leaves")
+                    or entry.get("totalLeaves")
                     or entry.get("allotted")
                     or entry.get("quota")
                     or entry.get("total")
                     or entry.get("allocated")
                     or entry.get("leaves")
+                    or entry.get("credit")
                 )
                 used_raw = (
                     entry.get("used")
                     or entry.get("taken")
+                    or entry.get("leavesTaken")
+                    or entry.get("leaves_taken")
+                    or entry.get("leavesTaked")
+                    or entry.get("leaves_taked")
                     or entry.get("consumed")
                     or entry.get("applied")
                     or entry.get("availed")
-                    or entry.get("leavesTaked")
-                    or entry.get("leaves_taked")
                 )
                 avail_raw = (
                     entry.get("available")
                     or entry.get("balance")
                     or entry.get("remaining")
+                    or entry.get("remains")
                     or entry.get("leave_balance")
                     or entry.get("available_leave")
                     or entry.get("balance_quota")
+                    or entry.get("net_balance")
                 )
 
                 quota_num = _to_num(quota_raw)
                 used_num = _to_num(used_raw)
-                
                 if avail_raw is not None:
                     avail_num = _to_num(avail_raw)
-                elif month_sum > 0 or carry_over_num > 0:
-                    avail_num = max(0.0, (carry_over_num + month_sum) - used_num)
                 else:
                     avail_num = max(0.0, quota_num - used_num)
 
-                if quota_raw is None:
-                    if month_sum > 0 or carry_over_num > 0:
-                        quota_num = carry_over_num + month_sum
-                    elif avail_raw is not None or used_raw is not None:
-                        quota_num = avail_num + used_num
+                if quota_raw is None and (avail_raw is not None or used_raw is not None):
+                    quota_num = avail_num + used_num
 
                 status_label = "Available" if avail_num > 0 else ("Exhausted" if quota_num > 0 else "N/A")
                 color = "#16A34A" if avail_num > 0 else ("#64748B" if quota_num > 0 else "#94A3B8")
                 bg_color = "#DCFCE7" if avail_num > 0 else ("#F1F5F9" if quota_num > 0 else "#F8FAFC")
 
-                # Build dynamic fields dictionary for this entry
-                dyn_fields = {}
-                for k, v in entry.items():
-                    if k.lower() not in EXCLUDE_COL_KEYS:
-                        num_v = _to_num(v)
-                        dyn_fields[k] = _fmt_num(num_v)
-
                 parsed_items.append({
-                    "leave_type": str(type_name).strip(),
-                    "short_name": str(short_code).strip(),
+                    "leave_type_id": str(entry.get("leave_type_id") or entry.get("lt_id") or fixed_idx + 1),
+                    "leave_type": type_name,
+                    "name": type_name,
+                    "short_name": short_code,
+                    "code": short_code,
                     "carry_over": carry_over_num,
                     "carry_over_str": _fmt_num(carry_over_num),
                     "total_quota": quota_num,
                     "total_quota_str": _fmt_num(quota_num),
+                    "total": quota_num,
+                    "total_str": _fmt_num(quota_num),
                     "used": used_num,
                     "used_str": _fmt_num(used_num),
                     "available": avail_num,
                     "available_str": _fmt_num(avail_num),
-                    "dynamic_fields": dyn_fields,
+                    "left": avail_num,
+                    "left_str": _fmt_num(avail_num),
+                    "remaining": avail_num,
+                    "remaining_str": _fmt_num(avail_num),
+                    "dynamic_fields": {
+                        "total": _fmt_num(quota_num),
+                        "used": _fmt_num(used_num),
+                        "remaining": _fmt_num(avail_num),
+                    },
                     "unit": "Days",
                     "status_label": status_label,
                     "color": color,
@@ -1712,106 +1696,14 @@ class AttendanceService:
                     "raw": entry,
                 })
 
-        # ------------------------------------------------------------------
-        # Format C: Dict of nested dicts or scalar key-values
-        # ------------------------------------------------------------------
-        elif isinstance(raw_items, dict):
-            for k, v in raw_items.items():
-                if k in ("response", "status", "error", "message", "messages", "code", "token"):
-                    continue
-                if isinstance(v, dict):
-                    raw_type = v.get("leave_type_name") or v.get("leave_type") or v.get("leave_type_id") or v.get("name") or str(k)
-                    type_name, short_code = _resolve_type_name(raw_type, raw_entry=v)
-                    for vk in v.keys():
-                        if vk.lower() not in EXCLUDE_COL_KEYS and vk not in detected_col_keys:
-                            detected_col_keys.append(vk)
+        dynamic_columns = [
+            {"key": "carry_over", "label": "Carry Over"},
+            {"key": "total_quota", "label": "Total Allotted"},
+            {"key": "used", "label": "Availed / Used"},
+            {"key": "available", "label": "Available Balance"},
+        ]
 
-                    carry_over_num = _to_num(v.get("carry_over"))
-                    month_sum = sum(_to_num(v.get(mk)) for mk in MONTH_KEYS if mk in v and v.get(mk) is not None)
-                    quota_num = _to_num(v.get("total_quota") or v.get("allotted") or v.get("quota") or v.get("total") or v.get("leaves"))
-                    used_num = _to_num(v.get("used") or v.get("taken") or v.get("consumed") or v.get("applied") or v.get("leavesTaked"))
-                    avail_raw = v.get("available") or v.get("balance") or v.get("remaining")
-                    if avail_raw is not None:
-                        avail_num = _to_num(avail_raw)
-                    elif month_sum > 0 or carry_over_num > 0:
-                        avail_num = max(0.0, (carry_over_num + month_sum) - used_num)
-                    else:
-                        avail_num = max(0.0, quota_num - used_num)
-                    if quota_num == 0.0:
-                        if month_sum > 0 or carry_over_num > 0:
-                            quota_num = carry_over_num + month_sum
-                        elif avail_num > 0 or used_num > 0:
-                            quota_num = avail_num + used_num
-
-                    status_label = "Available" if avail_num > 0 else "Exhausted"
-                    color = "#16A34A" if avail_num > 0 else "#64748B"
-                    bg_color = "#DCFCE7" if avail_num > 0 else "#F1F5F9"
-
-                    dyn_fields = {}
-                    for vk, vv in v.items():
-                        if vk.lower() not in EXCLUDE_COL_KEYS:
-                            num_v = _to_num(vv)
-                            dyn_fields[vk] = _fmt_num(num_v)
-
-                    parsed_items.append({
-                        "leave_type": str(type_name).strip(),
-                        "short_name": str(short_code).strip(),
-                        "carry_over": carry_over_num,
-                        "carry_over_str": _fmt_num(carry_over_num),
-                        "total_quota": quota_num,
-                        "total_quota_str": _fmt_num(quota_num),
-                        "used": used_num,
-                        "used_str": _fmt_num(used_num),
-                        "available": avail_num,
-                        "available_str": _fmt_num(avail_num),
-                        "dynamic_fields": dyn_fields,
-                        "unit": "Days",
-                        "status_label": status_label,
-                        "color": color,
-                        "bg_color": bg_color,
-                        "raw": v,
-                    })
-                elif isinstance(v, (int, float, str)) and str(v).replace(".", "", 1).isdigit():
-                    type_name, short_code = _resolve_type_name(k)
-                    avail_num = _to_num(v)
-                    status_label = "Available" if avail_num > 0 else "Exhausted"
-                    color = "#16A34A" if avail_num > 0 else "#64748B"
-                    bg_color = "#DCFCE7" if avail_num > 0 else "#F1F5F9"
-
-                    parsed_items.append({
-                        "leave_type": str(type_name).strip(),
-                        "short_name": str(short_code).strip(),
-                        "carry_over": 0.0,
-                        "carry_over_str": "0",
-                        "total_quota": avail_num,
-                        "total_quota_str": _fmt_num(avail_num),
-                        "used": 0.0,
-                        "used_str": "0",
-                        "available": avail_num,
-                        "available_str": _fmt_num(avail_num),
-                        "dynamic_fields": {"available": _fmt_num(avail_num)},
-                        "unit": "Days",
-                        "status_label": status_label,
-                        "color": color,
-                        "bg_color": bg_color,
-                        "raw": {k: v},
-                    })
-
-        # Format column headers dynamically
-        dynamic_columns = []
-        if detected_col_keys:
-            for k in detected_col_keys:
-                label = k.replace("_", " ").title() if len(k) > 3 else k.upper()
-                dynamic_columns.append({"key": k, "label": label})
-        else:
-            dynamic_columns = [
-                {"key": "carry_over", "label": "Carry Over"},
-                {"key": "total_quota", "label": "Total Allotted"},
-                {"key": "used", "label": "Availed / Used"},
-                {"key": "available", "label": "Available Balance"},
-            ]
-
-        # Calculate totals
+        # Calculate totals dynamically across all 7 items
         tot_quota = sum(item["total_quota"] for item in parsed_items)
         tot_used = sum(item["used"] for item in parsed_items)
         tot_avail = sum(item["available"] for item in parsed_items)

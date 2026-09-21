@@ -9,10 +9,12 @@ from PySide6.QtCore import QObject, QRegularExpression, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractScrollArea,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
@@ -28,14 +30,14 @@ QTableWidget#AssignedTasksTable {
     alternate-background-color: #f8fafc;
     border: 1.5px solid #cbd5e1;
     border-radius: 6px;
-    gridline-color: #cbd5e1;
+    gridline-color: #94a3b8;
     font-size: 12px;
 }
 
 QTableWidget#AssignedTasksTable::item {
-    padding: 6px 8px;
+    padding: 4px 8px;
     color: #1e293b;
-    border-right: 1px solid #cbd5e1;
+    border-right: 1px solid #94a3b8;
     border-bottom: 1px solid #cbd5e1;
 }
 
@@ -61,18 +63,22 @@ QHeaderView::section {
     padding: 8px 6px;
     border-top: none;
     border-left: none;
-    border-right: 1px solid #cbd5e1;
-    border-bottom: 2px solid #94a3b8;
+    border-right: 1px solid #94a3b8;
+    border-bottom: 2px solid #475569;
+}
+
+QHeaderView::section:last {
+    border-right: none;
 }
 
 QTableCornerButton::section {
     background-color: #f1f5f9;
-    border-right: 1px solid #cbd5e1;
-    border-bottom: 2px solid #94a3b8;
+    border-right: 1px solid #94a3b8;
+    border-bottom: 2px solid #475569;
 }
 
 QScrollBar:horizontal {
-    height: 10px;
+    height: 12px;
     background: #f1f5f9;
     border-radius: 4px;
     margin: 0px;
@@ -85,7 +91,12 @@ QScrollBar::handle:horizontal {
 }
 
 QScrollBar::handle:horizontal:hover {
-    background: #64748b;
+    background: #475569;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
 }
 
 QScrollBar:vertical {
@@ -102,9 +113,43 @@ QScrollBar::handle:vertical {
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #64748b;
+    background: #475569;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
 }
 """
+
+# ── Shared QLineEdit stylesheets (avoids repetition and makes error/clear easy) ─
+_LE_NORMAL = (
+    "QLineEdit {"
+    "  background-color: #ffffff;"
+    "  border: 1.5px solid #94a3b8;"
+    "  border-radius: 4px;"
+    "  padding: 4px 6px;"
+    "  font-size: 12px;"
+    "  font-weight: 500;"
+    "}"
+    "QLineEdit:hover {"
+    "  border: 1.5px solid #64748b;"
+    "}"
+    "QLineEdit:focus {"
+    "  border: 2px solid #1a73e8;"
+    "  background-color: #f8faff;"
+    "}"
+)
+
+_LE_ERROR = (
+    "QLineEdit {"
+    "  background-color: #fff5f5;"
+    "  border: 1.5px solid #d93025;"
+    "  border-radius: 4px;"
+    "  padding: 4px 6px;"
+    "  font-size: 12px;"
+    "}"
+)
 
 
 class TaskTableSignals(QObject):
@@ -131,17 +176,19 @@ class AssignedTasksTable(QTableWidget):
         9. Action (Save button)
     """
 
+    # Column config: (header_label, initial_width_px, header_alignment)
+    # Total default width ~1395px — always needs horizontal scroll on standard screens
     COLUMN_CONFIG = [
-        ("Name", 140, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-        ("Description", 220, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-        ("Category", 110, Qt.AlignmentFlag.AlignCenter),
-        ("Target", 95, Qt.AlignmentFlag.AlignCenter),
-        ("Measurement Criteria", 190, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-        ("Weightage", 95, Qt.AlignmentFlag.AlignCenter),
-        ("Task Done Till Now", 135, Qt.AlignmentFlag.AlignCenter),
-        ("Task Completed", 120, Qt.AlignmentFlag.AlignCenter),
-        ("Comment", 220, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-        ("Action", 100, Qt.AlignmentFlag.AlignCenter),
+        ("Name",                 150, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Description",          200, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Category",             110, Qt.AlignmentFlag.AlignCenter),
+        ("Target",               100, Qt.AlignmentFlag.AlignCenter),
+        ("Measurement Criteria", 175, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Weightage",             90, Qt.AlignmentFlag.AlignCenter),
+        ("Task Done Till Now",   130, Qt.AlignmentFlag.AlignCenter),
+        ("Task Completed",       130, Qt.AlignmentFlag.AlignCenter),
+        ("Comment",              200, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Action",               110, Qt.AlignmentFlag.AlignCenter),
     ]
 
     task_saved = Signal(dict)  # Emitted when a timesheet is saved successfully
@@ -160,16 +207,16 @@ class AssignedTasksTable(QTableWidget):
         self.setColumnCount(len(self.COLUMN_CONFIG))
         self.setShowGrid(True)
 
+        # ── Header ────────────────────────────────────────────────────────────
         header = self.horizontalHeader()
-        header.setFixedHeight(42)
+        header.setFixedHeight(44)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-        header.setMinimumSectionSize(75)
+        header.setMinimumSectionSize(80)
         header.setStretchLastSection(False)
 
-        # Set individual column headers with exact alignments and initial minimum widths
-        for col_idx, (col_name, col_width, col_align) in enumerate(self.COLUMN_CONFIG):
+        for col_idx, (col_name, col_width, _col_align) in enumerate(self.COLUMN_CONFIG):
             header_item = QTableWidgetItem(col_name)
-            header_item.setTextAlignment(col_align)
+            header_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             header_font = QFont()
             header_font.setBold(True)
             header_font.setPointSize(9)
@@ -179,18 +226,28 @@ class AssignedTasksTable(QTableWidget):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.setColumnWidth(col_idx, col_width)
 
+        # ── Row config ────────────────────────────────────────────────────────
         self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(42)
+        # 52px rows so the embedded QLineEdit widgets are fully visible
+        self.verticalHeader().setDefaultSectionSize(52)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setAlternatingRowColors(True)
 
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # ── Scroll behaviour ──────────────────────────────────────────────────
+        # AlwaysOn makes the scrollbar permanently visible so the user knows
+        # there are more columns to the right.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
+        # Prevent the table from shrinking its viewport to fit the parent widget
+        # — this is what causes right-side columns to be merged/clipped.
+        self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+
+        self.setMinimumWidth(700)
         self.setMinimumHeight(200)
 
     @property
@@ -233,6 +290,8 @@ class AssignedTasksTable(QTableWidget):
 
         for row, task in enumerate(self._tasks):
             self.insertRow(row)
+            # Explicitly set row height so cell widgets are fully visible
+            self.setRowHeight(row, 52)
 
             name = str(task.get("name") or task.get("title") or "Task").strip()
             desc = str(task.get("description") or "-").strip()
@@ -291,38 +350,21 @@ class AssignedTasksTable(QTableWidget):
             done_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 6, done_item)
 
-            # 7. Task Completed (Editable numeric QLineEdit, Centered)
-            completed_item = QTableWidgetItem(task_completed)
-            completed_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 7, completed_item)
-
+            # ── Col 7: Task Completed — editable numeric QLineEdit ────────────
             comp_container = QWidget()
             comp_layout = QHBoxLayout(comp_container)
-            comp_layout.setContentsMargins(4, 3, 4, 3)
+            comp_layout.setContentsMargins(6, 4, 6, 4)
+            comp_layout.setSpacing(0)
             comp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             completed_edit = QLineEdit(task_completed)
             completed_edit.setPlaceholderText("0")
             completed_edit.setValidator(QRegularExpressionValidator(num_regex, completed_edit))
             completed_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            completed_edit.setStyleSheet(
-                "QLineEdit {"
-                "  background-color: #ffffff;"
-                "  border: 1.5px solid #94a3b8;"
-                "  border-radius: 4px;"
-                "  padding: 4px 6px;"
-                "  font-size: 12px;"
-                "  font-weight: 500;"
-                "  min-width: 65px;"
-                "  max-width: 85px;"
-                "}"
-                "QLineEdit:hover {"
-                "  border: 1.5px solid #64748b;"
-                "}"
-                "QLineEdit:focus {"
-                "  border: 2px solid #1a73e8;"
-                "  background-color: #f8faff;"
-                "}"
+            completed_edit.setStyleSheet(_LE_NORMAL)
+            # No max-width — let it expand to fill the column
+            completed_edit.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
             completed_edit.textChanged.connect(
                 lambda text, r=row: self._on_task_completed_changed(r, text)
@@ -330,32 +372,17 @@ class AssignedTasksTable(QTableWidget):
             comp_layout.addWidget(completed_edit)
             self.setCellWidget(row, 7, comp_container)
 
-            # 8. Comment / Work Done (Editable text QLineEdit, Left-aligned)
-            comment_item = QTableWidgetItem(comment)
-            comment_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 8, comment_item)
-
+            # ── Col 8: Comment — editable text QLineEdit ──────────────────────
             comment_container = QWidget()
             comment_layout = QHBoxLayout(comment_container)
-            comment_layout.setContentsMargins(4, 3, 4, 3)
+            comment_layout.setContentsMargins(6, 4, 6, 4)
+            comment_layout.setSpacing(0)
 
             comment_edit = QLineEdit(comment)
             comment_edit.setPlaceholderText("Enter comments / work details...")
-            comment_edit.setStyleSheet(
-                "QLineEdit {"
-                "  background-color: #ffffff;"
-                "  border: 1.5px solid #94a3b8;"
-                "  border-radius: 4px;"
-                "  padding: 4px 8px;"
-                "  font-size: 12px;"
-                "}"
-                "QLineEdit:hover {"
-                "  border: 1.5px solid #64748b;"
-                "}"
-                "QLineEdit:focus {"
-                "  border: 2px solid #1a73e8;"
-                "  background-color: #f8faff;"
-                "}"
+            comment_edit.setStyleSheet(_LE_NORMAL)
+            comment_edit.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
             comment_edit.textChanged.connect(
                 lambda text, r=row: self._on_comment_changed(r, text)
@@ -363,37 +390,16 @@ class AssignedTasksTable(QTableWidget):
             comment_layout.addWidget(comment_edit)
             self.setCellWidget(row, 8, comment_container)
 
-            # 9. Action (Save Button, Centered)
+            # ── Col 9: Action — Save button ───────────────────────────────────
             action_container = QWidget()
             action_layout = QHBoxLayout(action_container)
-            action_layout.setContentsMargins(4, 3, 4, 3)
+            action_layout.setContentsMargins(6, 4, 6, 4)
             action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             save_btn = QPushButton("Save")
             save_btn.setToolTip("Save timesheet entry for this KRA task")
             save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            save_btn.setStyleSheet(
-                "QPushButton {"
-                "  background-color: #1a73e8;"
-                "  color: #ffffff;"
-                "  border: none;"
-                "  border-radius: 4px;"
-                "  padding: 5px 14px;"
-                "  font-size: 11px;"
-                "  font-weight: 600;"
-                "  min-width: 65px;"
-                "}"
-                "QPushButton:hover {"
-                "  background-color: #1557b0;"
-                "}"
-                "QPushButton:pressed {"
-                "  background-color: #0d47a1;"
-                "}"
-                "QPushButton:disabled {"
-                "  background-color: #93bbf8;"
-                "  color: #ffffff;"
-                "}"
-            )
+            save_btn.setStyleSheet(self._save_btn_style_default())
             save_btn.clicked.connect(lambda _, r=row: self._on_save_clicked(r))
             action_layout.addWidget(save_btn)
             self.setCellWidget(row, 9, action_container)
@@ -411,22 +417,7 @@ class AssignedTasksTable(QTableWidget):
         # Clear error styling if active
         comp_edit = self._get_line_edit(row, 7)
         if comp_edit and "border: 1.5px solid #d93025" in comp_edit.styleSheet():
-            comp_edit.setStyleSheet(
-                "QLineEdit {"
-                "  background-color: #ffffff;"
-                "  border: 1.5px solid #94a3b8;"
-                "  border-radius: 4px;"
-                "  padding: 4px 6px;"
-                "  font-size: 12px;"
-                "  font-weight: 500;"
-                "  min-width: 65px;"
-                "  max-width: 85px;"
-                "}"
-                "QLineEdit:focus {"
-                "  border: 2px solid #1a73e8;"
-                "  background-color: #f8faff;"
-                "}"
-            )
+            comp_edit.setStyleSheet(_LE_NORMAL)
             comp_edit.setToolTip("")
 
     def _on_comment_changed(self, row: int, text: str) -> None:
@@ -440,19 +431,7 @@ class AssignedTasksTable(QTableWidget):
         # Clear error styling if active
         comment_edit = self._get_line_edit(row, 8)
         if comment_edit and "border: 1.5px solid #d93025" in comment_edit.styleSheet():
-            comment_edit.setStyleSheet(
-                "QLineEdit {"
-                "  background-color: #ffffff;"
-                "  border: 1.5px solid #94a3b8;"
-                "  border-radius: 4px;"
-                "  padding: 4px 8px;"
-                "  font-size: 12px;"
-                "}"
-                "QLineEdit:focus {"
-                "  border: 2px solid #1a73e8;"
-                "  background-color: #f8faff;"
-                "}"
-            )
+            comment_edit.setStyleSheet(_LE_NORMAL)
             comment_edit.setToolTip("")
 
     def _on_save_clicked(self, row: int) -> None:
@@ -474,32 +453,12 @@ class AssignedTasksTable(QTableWidget):
             try:
                 num_val = float(comp_val_str)
                 if num_val < 0:
-                    completed_edit.setStyleSheet(
-                        "QLineEdit {"
-                        "  background-color: #fff5f5;"
-                        "  border: 1.5px solid #d93025;"
-                        "  border-radius: 4px;"
-                        "  padding: 4px 6px;"
-                        "  font-size: 12px;"
-                        "  min-width: 65px;"
-                        "  max-width: 85px;"
-                        "}"
-                    )
+                    completed_edit.setStyleSheet(_LE_ERROR)
                     completed_edit.setToolTip("Task Completed cannot be negative.")
                     completed_edit.setFocus()
                     return
             except ValueError:
-                completed_edit.setStyleSheet(
-                    "QLineEdit {"
-                    "  background-color: #fff5f5;"
-                    "  border: 1.5px solid #d93025;"
-                    "  border-radius: 4px;"
-                    "  padding: 4px 6px;"
-                    "  font-size: 12px;"
-                    "  min-width: 65px;"
-                    "  max-width: 85px;"
-                    "}"
-                )
+                completed_edit.setStyleSheet(_LE_ERROR)
                 completed_edit.setToolTip("Please enter a valid number.")
                 completed_edit.setFocus()
                 return
@@ -509,51 +468,15 @@ class AssignedTasksTable(QTableWidget):
         # 2. Validate Comment
         comment_text = comment_edit.text().strip()
         if not comment_text:
-            comment_edit.setStyleSheet(
-                "QLineEdit {"
-                "  background-color: #fff5f5;"
-                "  border: 1.5px solid #d93025;"
-                "  border-radius: 4px;"
-                "  padding: 4px 8px;"
-                "  font-size: 12px;"
-                "}"
-            )
+            comment_edit.setStyleSheet(_LE_ERROR)
             comment_edit.setToolTip("Please enter comments before saving.")
             comment_edit.setFocus()
             return
 
         # Restore normal styling
-        completed_edit.setStyleSheet(
-            "QLineEdit {"
-            "  background-color: #ffffff;"
-            "  border: 1.5px solid #94a3b8;"
-            "  border-radius: 4px;"
-            "  padding: 4px 6px;"
-            "  font-size: 12px;"
-            "  font-weight: 500;"
-            "  min-width: 65px;"
-            "  max-width: 85px;"
-            "}"
-            "QLineEdit:focus {"
-            "  border: 2px solid #1a73e8;"
-            "  background-color: #f8faff;"
-            "}"
-        )
+        completed_edit.setStyleSheet(_LE_NORMAL)
         completed_edit.setToolTip("")
-
-        comment_edit.setStyleSheet(
-            "QLineEdit {"
-            "  background-color: #ffffff;"
-            "  border: 1.5px solid #94a3b8;"
-            "  border-radius: 4px;"
-            "  padding: 4px 8px;"
-            "  font-size: 12px;"
-            "}"
-            "QLineEdit:focus {"
-            "  border: 2px solid #1a73e8;"
-            "  background-color: #f8faff;"
-            "}"
-        )
+        comment_edit.setStyleSheet(_LE_NORMAL)
         comment_edit.setToolTip("")
 
         save_btn = action_widget.findChild(QPushButton) if action_widget else None
@@ -570,7 +493,7 @@ class AssignedTasksTable(QTableWidget):
                 "  padding: 5px 14px;"
                 "  font-size: 11px;"
                 "  font-weight: 600;"
-                "  min-width: 65px;"
+                "  min-width: 70px;"
                 "}"
             )
 
@@ -686,7 +609,7 @@ class AssignedTasksTable(QTableWidget):
                     "  padding: 5px 14px;"
                     "  font-size: 11px;"
                     "  font-weight: 600;"
-                    "  min-width: 65px;"
+                    "  min-width: 70px;"
                     "}"
                     "QPushButton:hover {"
                     "  background-color: #ceead6;"
@@ -714,7 +637,7 @@ class AssignedTasksTable(QTableWidget):
                     "  padding: 5px 14px;"
                     "  font-size: 11px;"
                     "  font-weight: 600;"
-                    "  min-width: 65px;"
+                    "  min-width: 70px;"
                     "}"
                     "QPushButton:hover {"
                     "  background-color: #fad2cf;"
@@ -722,25 +645,37 @@ class AssignedTasksTable(QTableWidget):
                 )
 
     def _reset_save_button(self, save_btn: QPushButton) -> None:
-        """Reset save button back to default state."""
+        """Reset save button back to default state after success timeout."""
         if save_btn and save_btn.text() == "Saved ✓":
             save_btn.setText("Save")
             save_btn.setToolTip("Save timesheet entry for this KRA task")
-            save_btn.setStyleSheet(
-                "QPushButton {"
-                "  background-color: #1a73e8;"
-                "  color: #ffffff;"
-                "  border: none;"
-                "  border-radius: 4px;"
-                "  padding: 5px 14px;"
-                "  font-size: 11px;"
-                "  font-weight: 600;"
-                "  min-width: 65px;"
-                "}"
-                "QPushButton:hover {"
-                "  background-color: #1557b0;"
-                "}"
-            )
+            save_btn.setStyleSheet(self._save_btn_style_default())
+
+    @staticmethod
+    def _save_btn_style_default() -> str:
+        """Return the default Save button stylesheet."""
+        return (
+            "QPushButton {"
+            "  background-color: #1a73e8;"
+            "  color: #ffffff;"
+            "  border: none;"
+            "  border-radius: 4px;"
+            "  padding: 5px 14px;"
+            "  font-size: 11px;"
+            "  font-weight: 600;"
+            "  min-width: 70px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #1557b0;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #0d47a1;"
+            "}"
+            "QPushButton:disabled {"
+            "  background-color: #93bbf8;"
+            "  color: #ffffff;"
+            "}"
+        )
 
     def show_loading(self) -> None:
         """Display a clean loading state in the table."""

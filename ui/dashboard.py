@@ -360,11 +360,26 @@ class DashboardPage(QWidget):
         # ==============================================================
         tasks_group = QGroupBox("Assigned Tasks")
         tasks_layout = QVBoxLayout(tasks_group)
-        tasks_layout.setContentsMargins(14, 12, 14, 12)
-        tasks_layout.setSpacing(6)
+        tasks_layout.setContentsMargins(10, 10, 10, 10)
+        tasks_layout.setSpacing(4)
 
         self.task_table = AssignedTasksTable()
-        tasks_layout.addWidget(self.task_table)
+
+        # Wrap the table in a scroll area so horizontal overflow is accessible
+        # without clipping. The table itself has AlwaysOn horizontal scrollbar,
+        # and the outer scroll area provides the viewport for the full table width.
+        task_scroll = QScrollArea()
+        task_scroll.setObjectName("TaskTableScrollArea")
+        task_scroll.setWidget(self.task_table)
+        task_scroll.setWidgetResizable(True)
+        task_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        task_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        task_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        task_scroll.setStyleSheet(
+            "QScrollArea#TaskTableScrollArea { background: transparent; border: none; }"
+        )
+        task_scroll.setMinimumHeight(220)
+        tasks_layout.addWidget(task_scroll)
 
         root.addWidget(tasks_group)
         root.addStretch(1)

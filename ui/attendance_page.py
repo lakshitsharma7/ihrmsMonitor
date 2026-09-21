@@ -340,24 +340,7 @@ class AttendancePage(QWidget):
         self.leave_balance_button.clicked.connect(self._open_leave_balance_modal)
         header_bar.addWidget(self.leave_balance_button)
 
-        # Refresh Button
-        self.refresh_button = QPushButton("↻ Refresh")
-        self.refresh_button.setObjectName("SecondaryButton")
-        self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_button.setMinimumHeight(34)
-        self.refresh_button.clicked.connect(lambda: self.refresh(force=True))
-        header_bar.addWidget(self.refresh_button)
-
         self.root_layout.addLayout(header_bar)
-
-        # Loading Bar
-        self.loading_bar = QProgressBar()
-        self.loading_bar.setRange(0, 0)
-        self.loading_bar.setFixedHeight(3)
-        self.loading_bar.setTextVisible(False)
-        self.loading_bar.setVisible(False)
-        self.loading_bar.setStyleSheet("QProgressBar::chunk { background-color: #2563EB; }")
-        self.root_layout.addWidget(self.loading_bar)
 
         # Error Banner
         self.error_banner = QLabel("Unable to load attendance. Please try again.")
@@ -454,8 +437,9 @@ class AttendancePage(QWidget):
 
         nav_toolbar.addStretch(1)
 
+        now = datetime.now()
         # Month & Year Display Title
-        self.month_year_display = QLabel("September 2026")
+        self.month_year_display = QLabel(f"{MONTH_NAMES[now.month - 1]} {now.year}")
         self.month_year_display.setStyleSheet("font-size: 16px; font-weight: 700; color: #0F172A;")
         nav_toolbar.addWidget(self.month_year_display)
 
@@ -465,11 +449,6 @@ class AttendancePage(QWidget):
         self.month_combo.setStyleSheet(
             "QComboBox { padding: 3px 8px; font-size: 13px; font-weight: 600; border: 1px solid #CBD5E1; border-radius: 6px; background: white; min-width: 105px; }"
         )
-        for m in MONTH_NAMES:
-            self.month_combo.addItem(m)
-        now = datetime.now()
-        self.month_combo.setCurrentIndex(now.month - 1)
-        self.month_combo.currentIndexChanged.connect(self._on_month_year_changed)
         nav_toolbar.addWidget(self.month_combo)
 
         # Year Selector Combo
@@ -478,11 +457,6 @@ class AttendancePage(QWidget):
         self.year_combo.setStyleSheet(
             "QComboBox { padding: 3px 8px; font-size: 13px; font-weight: 600; border: 1px solid #CBD5E1; border-radius: 6px; background: white; min-width: 75px; }"
         )
-        current_year = now.year
-        for yr in range(current_year - 2, current_year + 3):
-            self.year_combo.addItem(str(yr))
-        self.year_combo.setCurrentText(str(current_year))
-        self.year_combo.currentIndexChanged.connect(self._on_month_year_changed)
         nav_toolbar.addWidget(self.year_combo)
 
         nav_toolbar.addStretch(1)
@@ -493,6 +467,14 @@ class AttendancePage(QWidget):
         self.next_month_btn.setMinimumHeight(32)
         self.next_month_btn.clicked.connect(self._on_next_month)
         nav_toolbar.addWidget(self.next_month_btn)
+
+        # Populate year and month combos dynamically (only past and current)
+        self._populate_year_combo()
+        self._populate_month_combo()
+
+        self.month_combo.currentIndexChanged.connect(self._on_month_year_changed)
+        self.year_combo.currentIndexChanged.connect(self._on_year_changed)
+        self._update_nav_buttons_state()
 
         calendar_layout.addLayout(nav_toolbar)
 
@@ -537,56 +519,154 @@ class AttendancePage(QWidget):
         # Initial Load
         self.refresh()
 
+    def _populate_year_combo(self) -> None:
+        """Populate year selector with past years and current year only (no future years)."""
+        now = datetime.now()
+        current_year = now.year
+        self.year_combo.blockSignals(True)
+        self.year_combo.clear()
+        for yr in range(current_year - 4, current_year + 1):
+            self.year_combo.addItem(str(yr))
+        self.year_combo.setCurrentText(str(current_year))
+        self.year_combo.blockSignals(False)
+
+    def _populate_month_combo(self, target_year: int | None = None, desired_month: str | None = None) -> None:
+        """Populate month selector based on selected year:
+        - Current year: only months up to current month (no future months).
+        - Past year: all 12 months.
+        - Future year: none.
+        """
+        now = datetime.now()
+        if target_year is None:
+            try:
+                target_year = int(self.year_combo.currentText())
+            except ValueError:
+                target_year = now.year
+
+        current_selection = desired_month or self.month_combo.currentText()
+        if not current_selection and 1 <= now.month <= len(MONTH_NAMES):
+            current_selection = MONTH_NAMES[now.month - 1]
+
+        if target_year > now.year:
+            available_months: list[str] = []
+        elif target_year == now.year:
+            available_months = MONTH_NAMES[:now.month]
+        else:
+            available_months = list(MONTH_NAMES)
+
+        self.month_combo.blockSignals(True)
+        self.month_combo.clear()
+        for m in available_months:
+            self.month_combo.addItem(m)
+
+        if current_selection in available_months:
+            self.month_combo.setCurrentText(current_selection)
+        elif available_months:
+            self.month_combo.setCurrentIndex(len(available_months) - 1)
+        self.month_combo.blockSignals(False)
+        self._update_nav_buttons_state()
+
+    def _update_nav_buttons_state(self) -> None:
+        """Enable or disable navigation buttons based on current date bounds."""
+        if not hasattr(self, "next_month_btn"):
+            return
+        now = datetime.now()
+        try:
+            cur_y = int(self.year_combo.currentText())
+        except ValueError:
+            cur_y = now.year
+
+        sel_month_name = self.month_combo.currentText()
+        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else now.month
+
+        is_at_future_or_current = (cur_y > now.year) or (cur_y == now.year and sel_month_num >= now.month)
+        self.next_month_btn.setEnabled(not is_at_future_or_current)
+
+    def _on_year_changed(self) -> None:
+        """Handle year selection change and update available months."""
+        try:
+            target_year = int(self.year_combo.currentText())
+        except ValueError:
+            target_year = datetime.now().year
+        self._populate_month_combo(target_year=target_year)
+        self._on_month_year_changed()
+
     def _on_month_year_changed(self) -> None:
         """Trigger refresh when user selects different month or year."""
         m_text = self.month_combo.currentText()
         y_text = self.year_combo.currentText()
         self.month_year_display.setText(f"{m_text} {y_text}")
+        self._update_nav_buttons_state()
         self.refresh()
 
     def _on_prev_month(self) -> None:
         """Navigate to previous month."""
-        cur_m_idx = self.month_combo.currentIndex()
-        cur_y_str = self.year_combo.currentText()
+        sel_month_name = self.month_combo.currentText()
+        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else 1
         try:
-            cur_y = int(cur_y_str)
+            cur_y = int(self.year_combo.currentText())
         except ValueError:
             cur_y = datetime.now().year
 
-        if cur_m_idx == 0:
-            new_m_idx = 11
+        if sel_month_num == 1:
+            new_m_name = MONTH_NAMES[11]
             new_y = cur_y - 1
             if self.year_combo.findText(str(new_y)) == -1:
                 self.year_combo.insertItem(0, str(new_y))
+            self.year_combo.blockSignals(True)
             self.year_combo.setCurrentText(str(new_y))
-            self.month_combo.setCurrentIndex(new_m_idx)
+            self.year_combo.blockSignals(False)
+            self._populate_month_combo(target_year=new_y, desired_month=new_m_name)
+            self._on_month_year_changed()
         else:
-            self.month_combo.setCurrentIndex(cur_m_idx - 1)
+            new_m_name = MONTH_NAMES[sel_month_num - 2]
+            self.month_combo.setCurrentText(new_m_name)
 
     def _on_next_month(self) -> None:
-        """Navigate to next month."""
-        cur_m_idx = self.month_combo.currentIndex()
-        cur_y_str = self.year_combo.currentText()
+        """Navigate to next month, preventing navigation into future months/years."""
+        now = datetime.now()
+        sel_month_name = self.month_combo.currentText()
+        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else 1
         try:
-            cur_y = int(cur_y_str)
+            cur_y = int(self.year_combo.currentText())
         except ValueError:
-            cur_y = datetime.now().year
+            cur_y = now.year
 
-        if cur_m_idx == 11:
-            new_m_idx = 0
+        if (cur_y > now.year) or (cur_y == now.year and sel_month_num >= now.month):
+            self._update_nav_buttons_state()
+            return
+
+        if sel_month_num == 12:
             new_y = cur_y + 1
+            if new_y > now.year:
+                self._update_nav_buttons_state()
+                return
+            new_m_name = MONTH_NAMES[0]
             if self.year_combo.findText(str(new_y)) == -1:
                 self.year_combo.addItem(str(new_y))
+            self.year_combo.blockSignals(True)
             self.year_combo.setCurrentText(str(new_y))
-            self.month_combo.setCurrentIndex(new_m_idx)
+            self.year_combo.blockSignals(False)
+            self._populate_month_combo(target_year=new_y, desired_month=new_m_name)
+            self._on_month_year_changed()
         else:
-            self.month_combo.setCurrentIndex(cur_m_idx + 1)
+            new_m_num = sel_month_num + 1
+            if cur_y == now.year and new_m_num > now.month:
+                self._update_nav_buttons_state()
+                return
+            new_m_name = MONTH_NAMES[new_m_num - 1]
+            self.month_combo.setCurrentText(new_m_name)
 
     def _on_today(self) -> None:
         """Jump to current month and year."""
         now = datetime.now()
+        self.year_combo.blockSignals(True)
+        if self.year_combo.findText(str(now.year)) == -1:
+            self.year_combo.addItem(str(now.year))
         self.year_combo.setCurrentText(str(now.year))
-        self.month_combo.setCurrentIndex(now.month - 1)
+        self.year_combo.blockSignals(False)
+        self._populate_month_combo(target_year=now.year, desired_month=MONTH_NAMES[now.month - 1])
+        self._on_month_year_changed()
 
     def refresh(self, async_mode: bool | None = None, force: bool = False) -> None:
         """Reload monthly attendance data dynamically from backend API."""
@@ -614,7 +694,6 @@ class AttendancePage(QWidget):
         if self._is_refreshing:
             return
         self._is_refreshing = True
-        self.loading_bar.setVisible(True)
         self.error_banner.setVisible(False)
 
         def _bg_fetch():
@@ -636,8 +715,6 @@ class AttendancePage(QWidget):
 
     def _apply_attendance_data(self, data: dict) -> None:
         """Update UI with parsed attendance records."""
-        self.loading_bar.setVisible(False)
-
         if not isinstance(data, dict):
             self._show_error("Unable to load attendance. Please try again.")
             return
@@ -799,7 +876,6 @@ class AttendancePage(QWidget):
         """Display a clean error banner."""
         self.error_banner.setText(message)
         self.error_banner.setVisible(True)
-        self.loading_bar.setVisible(False)
 
     def _open_leave_balance_modal(self) -> None:
         """Open modal dialog showing employee leave quota & balances."""

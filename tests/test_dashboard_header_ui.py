@@ -59,32 +59,95 @@ class TestDashboardHeaderUI(unittest.TestCase):
             window.close()
             window.deleteLater()
 
-    @patch("ui.main_window.QDesktopServices.openUrl")
+    def test_header_welcome_label_dynamic_user_name(self):
+        """Verify Welcome label dynamically displays actual logged in user name or username."""
+        SessionService().login(
+            username="lakshit.sharma",
+            role="User",
+            full_name="Lakshit Sharma",
+        )
+        window = MainWindow()
+        try:
+            self.assertEqual(window.user_label.text(), "Welcome, Lakshit Sharma")
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_header_welcome_label_ignores_persisted_user_placeholder(self):
+        """Verify Welcome label does not display 'Persisted User' and falls back to actual username/employee_id."""
+        SessionService().login(
+            username="lakshit.s",
+            role="User",
+            full_name="Persisted User",
+            employee_id="EMP_9988",
+        )
+        window = MainWindow()
+        try:
+            self.assertEqual(window.user_label.text(), "Welcome, lakshit.s")
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_header_welcome_label_updates_on_user_switch(self):
+        """Verify Welcome label updates dynamically when user session changes."""
+        SessionService().login(
+            username="user_first",
+            role="User",
+            full_name="First User",
+        )
+        window = MainWindow()
+        try:
+            self.assertEqual(window.user_label.text(), "Welcome, First User")
+            
+            # Switch to new user
+            SessionService().login(
+                username="user_second",
+                role="User",
+                full_name="Second User",
+            )
+            window._apply_rbac_permissions()
+            self.assertEqual(window.user_label.text(), "Welcome, Second User")
+        finally:
+            window.close()
+            window.deleteLater()
+
+
+
+    @patch("services.hrms_portal_service.QDesktopServices.openUrl")
     def test_open_hrms_portal_desktop_services(self, mock_open_url):
-        """Verify _open_hrms_portal opens https://ihrms.indovisionservices.in via QDesktopServices."""
+        """Verify _open_hrms_portal opens portal auto-login bridge via QDesktopServices for logged-in user."""
         mock_open_url.return_value = True
         window = MainWindow()
         try:
             window._open_hrms_portal()
             mock_open_url.assert_called_once()
             called_url = mock_open_url.call_args[0][0]
-            self.assertEqual(called_url.toString(), "https://ihrms.indovisionservices.in")
+            # Since user is authenticated in setUp, local file bridge is generated
+            self.assertTrue(called_url.isLocalFile())
+            self.assertTrue(called_url.toLocalFile().endswith(".html"))
+            with open(called_url.toLocalFile(), "r", encoding="utf-8") as f:
+                html_body = f.read()
+            self.assertIn("indovisionservices.in", html_body)
+            self.assertIn("testuser", html_body)
         finally:
             window.close()
             window.deleteLater()
 
-    @patch("ui.main_window.webbrowser.open")
-    @patch("ui.main_window.QDesktopServices.openUrl")
+    @patch("services.hrms_portal_service.webbrowser.open")
+    @patch("services.hrms_portal_service.QDesktopServices.openUrl")
     def test_open_hrms_portal_fallback_to_webbrowser(self, mock_open_url, mock_browser_open):
         """Verify fallback to webbrowser if QDesktopServices fails or returns False."""
         mock_open_url.return_value = False
         window = MainWindow()
         try:
             window._open_hrms_portal()
-            mock_browser_open.assert_called_once_with("https://ihrms.indovisionservices.in")
+            mock_browser_open.assert_called_once()
+            called_arg = mock_browser_open.call_args[0][0]
+            self.assertTrue(called_arg.startswith("file:///") and called_arg.endswith(".html"))
         finally:
             window.close()
             window.deleteLater()
+
 
 
 if __name__ == "__main__":

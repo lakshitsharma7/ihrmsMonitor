@@ -36,8 +36,8 @@ HERO_BULLETS = (
 CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
 
 CONSENT_TEXT = (
-    "By logging in to iHRMS Monitor, you acknowledge that you are "
-    "sharing your activity information with iHRMS Monitor."
+    "By logging in to Workpulse, you acknowledge that you are "
+    "sharing your activity information with Workpulse."
 )
 
 # Hero logo tile on the login screen.
@@ -118,7 +118,7 @@ class LoginWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("iHRMS Monitor - Login")
+        self.setWindowTitle("Workpulse - Login")
         self.setMinimumSize(760, 600)
         self.resize(860, 640)
         
@@ -216,7 +216,7 @@ class LoginWindow(QMainWindow):
         )
         hero_layout.addSpacing(18)
 
-        brand_name = QLabel("iHRMS Monitor")
+        brand_name = QLabel("Workpulse")
         brand_name.setObjectName("LoginBrandName")
         brand_name.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(brand_name)
@@ -1094,10 +1094,28 @@ class LoginWindow(QMainWindow):
 
                 SessionService().device_token = device_token
 
-                full_name = res_json.get("fullName") or res_json.get("username") or username
+                login_data = res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {}
+                full_name = (
+                    res_json.get("fullName")
+                    or res_json.get("full_name")
+                    or res_json.get("name")
+                    or res_json.get("employee_name")
+                    or res_json.get("emp_name")
+                    or res_json.get("employeeName")
+                    or login_data.get("fullName")
+                    or login_data.get("full_name")
+                    or login_data.get("name")
+                    or login_data.get("employee_name")
+                    or login_data.get("emp_name")
+                    or login_data.get("employeeName")
+                    or res_json.get("username")
+                    or login_data.get("username")
+                    or username
+                )
                 user_type = res_json.get("user_type") or "User"
                 role_lower = str(user_type).strip().lower()
                 tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
+
 
                 # Save mapping of Employee ID <-> Username and company code to local settings
                 emp_code = (
@@ -1205,6 +1223,7 @@ class LoginWindow(QMainWindow):
                     company_code=company_code,
                     device_token=device_token,
                     raw_login_data=res_json,
+                    session_credential=password,
                 )
 
                 # Persist the authenticated session securely for auto-login on restart
@@ -1259,8 +1278,8 @@ class LoginWindow(QMainWindow):
                 self.main_window.activateWindow()
                 if hasattr(self.main_window, "tray") and self.main_window.tray:
                     self.main_window.tray.show_message(
-                        "iHRMS Monitor",
-                        "iHRMS Monitor is active.",
+                        "Workpulse",
+                        "Workpulse is active.",
                     )
 
                 # Hide login window

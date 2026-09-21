@@ -664,7 +664,7 @@ class MainWindow(QMainWindow):
 
         from services.session_service import SessionService
         session = SessionService().current_user
-        display_name = session.full_name if (session and session.full_name) else "User"
+        display_name = session.display_name if session else "User"
 
         self.user_label = QLabel(f"Welcome, {display_name}")
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
@@ -913,7 +913,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 APP_NAME,
-                "This version of iHRMS Monitor "
+                f"This version of {APP_NAME} "
                 "supports Windows and macOS.",
             )
 
@@ -1045,7 +1045,7 @@ class MainWindow(QMainWindow):
             self.logout_button.setVisible(allow_logout)
             self.logout_button.setEnabled(allow_logout)
 
-        display_name = session.full_name if (session and session.full_name) else "User"
+        display_name = session.display_name if session else "User"
         if hasattr(self, "user_label") and self.user_label:
             self.user_label.setText(f"Welcome, {display_name}")
 
@@ -1720,7 +1720,7 @@ class MainWindow(QMainWindow):
                 self.update_button.setText(f"🚀 Updating v{version}...")
                 if hasattr(self, "tray") and self.tray:
                     self.tray.show_message(
-                        "iHRMS Monitor Update",
+                        f"{APP_NAME} Update",
                         f"New version v{version} is preparing to install.",
                     )
                 self._show_update_dialog(version, force, None, worker=getattr(self, "_pipeline_worker", None))
@@ -1835,13 +1835,7 @@ class MainWindow(QMainWindow):
         )
 
     def _open_hrms_portal(self) -> None:
-        """Open the iHRMS web portal in the user's default external browser."""
-        portal_url = "https://ihrms.indovisionservices.in"
-        logger.info("Opening HRMS portal in default browser: %s", portal_url)
-        try:
-            opened = QDesktopServices.openUrl(QUrl(portal_url))
-            if not opened:
-                webbrowser.open(portal_url)
-        except Exception as exc:
-            logger.warning("QDesktopServices.openUrl failed: %s; falling back to webbrowser", exc)
-            webbrowser.open(portal_url)
+        """Open the iHRMS web portal in the user's default external browser with auto-login."""
+        from services.hrms_portal_service import HrmsPortalService
+        HrmsPortalService().open_portal_with_autologin()
+
