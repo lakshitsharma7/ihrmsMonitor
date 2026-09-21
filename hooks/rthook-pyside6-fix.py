@@ -38,6 +38,30 @@ try:
                 PySide6.__path__.append(str(base_dir))
         except Exception:
             pass
+
+        # Resolve bundled TLS CA certificate bundle dynamically
+        exe_dir = Path(sys.executable).parent
+        ca_candidates = [
+            base_dir / "certifi" / "cacert.pem",
+            base_dir / "cacert.pem",
+            exe_dir / "_internal" / "certifi" / "cacert.pem",
+            exe_dir / "_internal" / "cacert.pem",
+            exe_dir / "certifi" / "cacert.pem",
+            exe_dir / "cacert.pem",
+        ]
+        for ca_cand in ca_candidates:
+            if ca_cand.is_file():
+                ca_str = str(ca_cand)
+                os.environ["REQUESTS_CA_BUNDLE"] = ca_str
+                os.environ["SSL_CERT_FILE"] = ca_str
+                try:
+                    import certifi
+                    certifi.where = lambda: ca_str
+                    if hasattr(certifi, "core"):
+                        certifi.core.where = lambda: ca_str
+                except Exception:
+                    pass
+                break
 except Exception:
     pass
 

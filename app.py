@@ -26,9 +26,13 @@ from config.settings import APP_NAME, ORG_NAME
 from database.database import init_database
 from ui.styles import APP_STYLESHEET
 from utils.logger import get_logger
-from utils.paths import is_supported_platform
+from utils.paths import is_supported_platform, init_ca_bundle
 
 logger = get_logger(__name__)
+
+# Early CA bundle initialization to ensure requests/urllib3 find valid certificates
+_CA_BUNDLE_PATH = init_ca_bundle()
+
 
 
 # Identifies this process to the Windows shell. Any stable, unique string
@@ -144,6 +148,11 @@ def main() -> int:
         return 1
 
     logger.info("Starting %s", APP_NAME)
+    ca_status = init_ca_bundle()
+    if ca_status:
+        logger.info("TLS CA certificate bundle active: %s (exists=%s)", ca_status, os.path.isfile(ca_status))
+    else:
+        logger.warning("TLS CA certificate bundle could not be automatically resolved")
 
     from PySide6.QtCore import QDir, QLockFile
 

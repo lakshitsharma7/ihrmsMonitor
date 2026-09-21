@@ -10,12 +10,19 @@ block_cipher = None
 # Collect full package for shiboken6 (critical binding layer for PySide6)
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all('shiboken6')
 
-all_binaries = shiboken_binaries
+# Collect full package and CA bundle for certifi
+certifi_datas, certifi_binaries, certifi_hiddenimports = collect_all('certifi')
+import certifi
+cacert_path = certifi.where()
+
+all_binaries = shiboken_binaries + certifi_binaries
 all_datas = [
     ('assets', 'assets'),
     ('VERSION', '.'),
     ('version.log', '.'),
-] + shiboken_datas
+    (cacert_path, 'certifi'),
+    (cacert_path, '.'),
+] + shiboken_datas + certifi_datas
 
 a = Analysis(
     ['app.py'],
@@ -106,7 +113,7 @@ a = Analysis(
         'ctypes',
         'ctypes.wintypes',
         'multiprocessing',
-    ] + shiboken_hiddenimports,
+    ] + shiboken_hiddenimports + certifi_hiddenimports,
     hookspath=['hooks'],
     hooksconfig={},
     runtime_hooks=['hooks/rthook-pyside6-fix.py'],

@@ -125,3 +125,56 @@ def get_updates_directory() -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
+
+def get_ca_bundle_path() -> str | None:
+    """Resolve the authoritative TLS CA certificate bundle path across source and packaged runtimes."""
+    if getattr(sys, "frozen", False):
+        base_dir = Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+        exe_dir = Path(sys.executable).parent
+        candidates = [
+            base_dir / "certifi" / "cacert.pem",
+            base_dir / "cacert.pem",
+            exe_dir / "_internal" / "certifi" / "cacert.pem",
+            exe_dir / "_internal" / "cacert.pem",
+            exe_dir / "certifi" / "cacert.pem",
+            exe_dir / "cacert.pem",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return str(c)
+
+    # Source / development or system fallback
+    try:
+        import certifi
+        w = certifi.where()
+        if os.path.isfile(w):
+            return w
+    except Exception:
+        pass
+
+    # Environment variable check if already set
+    for env_var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        p = os.environ.get(env_var)
+        if p and os.path.isfile(p):
+            return p
+
+    return None
+
+
+def init_ca_bundle() -> str | None:
+    """Initialize CA certificate bundle environment variables for requests and urllib3 securely."""
+    ca_path = get_ca_bundle_path()
+    if ca_path and os.path.isfile(ca_path):
+        os.environ["REQUESTS_CA_BUNDLE"] = ca_path
+        os.environ["SSL_CERT_FILE"] = ca_path
+        try:
+            import certifi
+            certifi.where = lambda: ca_path
+            if hasattr(certifi, "core"):
+                certifi.core.where = lambda: ca_path
+        except Exception:
+            pass
+        return ca_path
+    return None
+
+
