@@ -1,0 +1,67 @@
+name: Build macOS Workpulse
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/activity-tracker
+      - main
+      - master
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install -r requirements.txt -r requirements-macos.txt
+
+      - name: Run unit and integration tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python3 -m unittest discover tests
+
+      - name: Build Workpulse.app and Workpulse.dmg
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Validate built application bundle & dmg
+        run: |
+          echo "Verifying Workpulse.app structure..."
+          test -d dist/Workpulse.app
+          test -f dist/Workpulse.app/Contents/MacOS/Workpulse
+          test -f dist/Workpulse.app/Contents/Info.plist
+          
+          echo "Inspecting Info.plist..."
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/Workpulse.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/Workpulse.app/Contents/Info.plist
+
+          echo "Verifying Workpulse.dmg..."
+          test -f dist/Workpulse.dmg
+          ls -lh dist/Workpulse.dmg
+
+      - name: Prepare bundle for artifact upload
+        run: |
+          cd dist
+          zip -ry Workpulse.app.zip Workpulse.app
+
+      - name: Upload macOS Distribution Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: workpulse-macos-dist
+          path: |
+            dist/Workpulse.dmg
+            dist/Workpulse.app.zip
+          retention-days: 7

@@ -137,11 +137,12 @@ class TestAutoUpdateExactScenarios(unittest.TestCase):
         mock_file.write_bytes(b"MZ" + b"\x00" * (1024 * 150))
 
         # Mock win32api returning FileVersion: 2.0.2 when target is 2.1
-        with patch("win32api.GetFileVersionInfo") as mock_info:
-            mock_info.side_effect = [
-                [(1033, 1200)],  # Translation
-                "2.0.2",          # FileVersion
-            ]
+        mock_win32 = MagicMock()
+        mock_win32.GetFileVersionInfo.side_effect = [
+            [(1033, 1200)],  # Translation
+            "2.0.2",          # FileVersion
+        ]
+        with patch.dict("sys.modules", {"win32api": mock_win32}):
             valid, reason = validate_installer_file(mock_file, target_version="2.1")
             self.assertFalse(valid)
             self.assertIn("older than target", reason)

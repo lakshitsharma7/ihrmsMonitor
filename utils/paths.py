@@ -138,6 +138,10 @@ def get_ca_bundle_path() -> str | None:
             exe_dir / "_internal" / "cacert.pem",
             exe_dir / "certifi" / "cacert.pem",
             exe_dir / "cacert.pem",
+            exe_dir.parent / "Resources" / "certifi" / "cacert.pem",
+            exe_dir.parent / "Resources" / "cacert.pem",
+            exe_dir.parent / "Frameworks" / "certifi" / "cacert.pem",
+            exe_dir.parent / "Frameworks" / "cacert.pem",
         ]
         for c in candidates:
             if c.is_file():
