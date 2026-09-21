@@ -40,6 +40,18 @@ def _asset_path(relative: str) -> str:
     return os.path.join(base, relative)
 
 
+def _load_icon(name: str) -> QIcon:
+    """Load an icon from ``assets/icons`` with SVG preference and PNG fallback."""
+    for extension in (".svg", ".png"):
+        path = _asset_path(os.path.join("assets", "icons", name + extension))
+        if os.path.isfile(path):
+            icon = QIcon(path)
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
+
+
 from config.settings import APP_NAME, get_running_app_version
 from database.database import get_session
 from platform_support import create_activity_provider
@@ -672,17 +684,17 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
-        # HRMS Portal Button (with embedded HRMS Logo Icon)
+        # HRMS Portal Button (with Globe Icon)
         # ------------------------------------------------------
         self.hrms_button = QPushButton(" HRMS")
         self.hrms_button.setObjectName("SecondaryButton")
         self.hrms_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hrms_button.setToolTip("Open HRMS Web Portal (https://ihrms.indovisionservices.in)")
 
-        logo_path = _asset_path(os.path.join("assets", "ihrms_icon.png"))
-        if os.path.isfile(logo_path):
-            self.hrms_button.setIcon(QIcon(logo_path))
-            self.hrms_button.setIconSize(QSize(20, 20))
+        globe_icon = _load_icon("globe")
+        if not globe_icon.isNull():
+            self.hrms_button.setIcon(globe_icon)
+            self.hrms_button.setIconSize(QSize(18, 18))
 
         self.hrms_button.clicked.connect(self._open_hrms_portal)
         header_layout.addWidget(self.hrms_button)

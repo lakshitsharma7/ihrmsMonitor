@@ -26,8 +26,8 @@ class TestDashboardHeaderUI(unittest.TestCase):
     def tearDown(self):
         SessionService().clear()
 
-    def test_hrms_button_exists_and_has_logo_icon(self):
-        """Verify HRMS button exists in header and has logo icon loaded from assets/ihrms_icon.png."""
+    def test_hrms_button_exists_and_has_globe_icon(self):
+        """Verify HRMS button exists in header and has globe icon loaded from assets/icons/globe."""
         window = MainWindow()
         try:
             self.assertTrue(hasattr(window, "hrms_button"))
@@ -35,12 +35,16 @@ class TestDashboardHeaderUI(unittest.TestCase):
             self.assertIn("HRMS", window.hrms_button.text())
 
             # Asset exists on disk
-            asset_file = _asset_path(os.path.join("assets", "ihrms_icon.png"))
-            self.assertTrue(os.path.isfile(asset_file), f"Asset file missing: {asset_file}")
+            asset_svg = _asset_path(os.path.join("assets", "icons", "globe.svg"))
+            asset_png = _asset_path(os.path.join("assets", "icons", "globe.png"))
+            self.assertTrue(
+                os.path.isfile(asset_svg) or os.path.isfile(asset_png),
+                "Globe asset file missing from assets/icons/",
+            )
 
             # Icon assigned to HRMS button
             icon = window.hrms_button.icon()
-            self.assertFalse(icon.isNull(), "HRMS button icon should not be null")
+            self.assertFalse(icon.isNull(), "HRMS button globe icon should not be null")
         finally:
             window.close()
             window.deleteLater()
