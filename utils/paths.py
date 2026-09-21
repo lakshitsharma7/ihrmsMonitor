@@ -152,7 +152,7 @@ def get_ca_bundle_path() -> str | None:
     except Exception:
         pass
 
-    # Environment variable check if already set
+    # Environment variable check if already set and valid on disk
     for env_var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
         p = os.environ.get(env_var)
         if p and os.path.isfile(p):
@@ -163,6 +163,12 @@ def get_ca_bundle_path() -> str | None:
 
 def init_ca_bundle() -> str | None:
     """Initialize CA certificate bundle environment variables for requests and urllib3 securely."""
+    # First purge any non-existent or stale CA bundle paths from previous sessions / other machines
+    for env_var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        val = os.environ.get(env_var)
+        if val and not os.path.isfile(val):
+            os.environ.pop(env_var, None)
+
     ca_path = get_ca_bundle_path()
     if ca_path and os.path.isfile(ca_path):
         os.environ["REQUESTS_CA_BUNDLE"] = ca_path

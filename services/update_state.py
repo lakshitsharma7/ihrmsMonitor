@@ -344,6 +344,27 @@ class UpdateStateManager:
                 except Exception:
                     pass
 
+    def cleanup_stale_downloads(self, target_version: str | None = None) -> None:
+        """Purge incomplete or stale temporary download files without deleting valid installers."""
+        try:
+            updates_dir = get_updates_directory()
+            clean_v = str(target_version).lstrip("vV").strip() if target_version else ""
+            patterns = ["*.download", "*.part", "*.tmp"]
+            if clean_v:
+                patterns.append(f"WorkpulseSetup_v{clean_v}.*")
+            for pattern in patterns:
+                for item in updates_dir.glob(pattern):
+                    if item.is_file() and item.name != "update_state.json":
+                        if item.suffix.lower() == ".exe" and clean_v:
+                            continue  # Keep validated exe
+                        try:
+                            item.unlink()
+                            logger.debug("Cleaned up stale update artifact: %s", item)
+                        except Exception:
+                            pass
+        except Exception as err:
+            logger.debug("Error cleaning stale update downloads: %s", err)
+
     def _cleanup_downloaded_packages(self, current_target_version: str) -> None:
         """Purge temporary installer and update packages after success."""
         try:

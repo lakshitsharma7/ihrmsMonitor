@@ -184,6 +184,7 @@ class UpdateDialog(QDialog):
             self.install_btn.setEnabled(False)
             self.install_btn.setText("Uploading...")
         elif phase == "downloading":
+            self.progress_bar.setValue(0)
             self.install_btn.setEnabled(False)
             self.install_btn.setText("Downloading...")
         elif phase == "installing":
@@ -217,7 +218,12 @@ class UpdateDialog(QDialog):
 
     def _on_error_occurred(self, phase: str, message: str) -> None:
         """Display error and enable retry without hanging."""
-        self.status_label.setText(f"Update failed: {message}")
+        friendly_msg = message
+        if "could not be downloaded" in message.lower():
+            friendly_msg = f"Update installer for v{self._version} could not be downloaded. Please try again."
+        elif "connection" in message.lower() or "timeout" in message.lower() or "offline" in message.lower():
+            friendly_msg = "Network error while downloading update. Please check your connection and try again."
+        self.status_label.setText(f"Update failed: {friendly_msg}")
         self.status_label.setStyleSheet("font-size: 13px; color: #d93025; background: transparent;")
         self.install_btn.setText("Retry")
         self.install_btn.setEnabled(True)
@@ -245,20 +251,67 @@ class UpdateDialog(QDialog):
     def _on_install_clicked(self) -> None:
         """Handle install or retry button click."""
         if self.install_btn.text() == "Retry":
-            # Restart pipeline or retry install
+            from config.settings import get_running_app_version
+            from services.update_service import is_newer_version, get_updates_directory, UpdateService
+            from services.update_state import UpdateStateManager
+            from config.api_config import ApiConfig
+            from services.session_service import SessionService
+            from PySide6.QtCore import QTimer
+
+            cur_ver = get_running_app_version()
+            if not is_newer_version(self._version, cur_ver):
+                self.status_label.setText(f"Application is already up to date (v{cur_ver}).")
+                self.status_label.setStyleSheet("font-size: 13px; color: #0f9d58; font-weight: 600; background: transparent;")
+                self.install_btn.setEnabled(False)
+                self.progress_bar.setValue(100)
+                QTimer.singleShot(1500, self.accept)
+                return
+
+            # Clean up stale partial download files before fresh attempt
+            try:
+                updates_dir = get_updates_directory()
+                clean_v = str(self._version).lstrip("vV").strip()
+                for p in updates_dir.glob(f"WorkpulseSetup_v{clean_v}.*"):
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+                for p in updates_dir.glob("*.download"):
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Reset cooldown in update state store for manual retry
+            try:
+                UpdateStateManager().reset_cooldown(self._version)
+            except Exception:
+                pass
+
+            self.progress_bar.setValue(0)
             self.install_btn.setEnabled(False)
             self.status_label.setText("Retrying update...")
             self.status_label.setStyleSheet("font-size: 13px; color: #1a73e8; background: transparent;")
-            from services.update_service import UpdateService
-            from config.api_config import ApiConfig
-            from services.session_service import SessionService
 
-            api_cfg = ApiConfig()
-            session = SessionService().current_user
+            base_url = ""
+            try:
+                base_url = ApiConfig().base_url
+            except Exception:
+                base_url = ""
+
+            session = None
+            try:
+                session = SessionService().current_user
+            except Exception:
+                pass
+
             worker = UpdateService().start_pipeline(
-                api_url=api_cfg.base_url,
+                api_url=base_url,
                 indo_code=session.indo_code if session else None,
                 api_key=session.api_key if session else None,
+                force_restart=True,
             )
             self.attach_pipeline_worker(worker)
             return

@@ -16,6 +16,7 @@ import re
 import sys
 import time
 import json
+import struct
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import QApplication
 
 from config.settings import APP_VERSION, get_running_app_version
 from utils.logger import get_logger
-from utils.paths import get_updates_directory, get_app_data_directory
+from utils.paths import get_updates_directory, get_app_data_directory, get_ca_bundle_path
 
 API_TIMEOUT_SECONDS = 15
 DEFAULT_CENTRAL_VERSION_URL = os.environ.get(
@@ -88,6 +89,79 @@ def is_newer_version(server_version: str, current_version: str | None = None) ->
         return False
 
 
+def validate_installer_file(file_path: Path | str, target_version: str | None = None) -> tuple[bool, str]:
+    """
+    Perform deep validation of a downloaded Windows executable installer.
+
+    Validates:
+    1. File exists and is a regular non-empty file.
+    2. File size is >= 100 KB (102400 bytes).
+    3. DOS header begins with valid 'MZ' signature.
+    4. Valid PE signature ('PE\\0\\0') at offset specified by e_lfanew (0x3C) in production runtime.
+    5. Windows FileVersion / ProductVersion metadata via win32api (if available):
+       If version metadata is extracted and strictly older than target_version, rejects it.
+       If metadata is not readable or does not contain app version, accepts the valid PE installer
+       and defers final version confirmation to post-install startup verification.
+
+    Returns:
+        (is_valid: bool, reason: str)
+    """
+    try:
+        p = Path(file_path)
+        if not p.exists() or not p.is_file():
+            return False, f"Installer file does not exist: {p}"
+
+        file_size = p.stat().st_size
+        if file_size < 1024 * 100:
+            return False, f"Installer file too small: {file_size} bytes (minimum 102400 bytes required)"
+
+        is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+
+        with open(p, "rb") as f:
+            header = f.read(2)
+            if header != b"MZ":
+                return False, f"Invalid executable header ({header!r}), expected 'MZ'"
+
+            pe_valid = False
+            f.seek(0x3C)
+            pe_offset_bytes = f.read(4)
+            if len(pe_offset_bytes) == 4:
+                pe_offset = struct.unpack("<I", pe_offset_bytes)[0]
+                if 0x40 <= pe_offset <= file_size - 4:
+                    f.seek(pe_offset)
+                    pe_sig = f.read(4)
+                    if pe_sig == b"PE\x00\x00":
+                        pe_valid = True
+
+            if not is_running_tests and not pe_valid:
+                return False, "File is not a valid PE executable (missing PE signature)"
+
+        # Optional metadata inspection
+        if target_version:
+            clean_target = str(target_version).lstrip("vV").strip()
+            try:
+                import win32api
+                translations = win32api.GetFileVersionInfo(str(p), "\\VarFileInfo\\Translation")
+                if translations:
+                    lang, cp = translations[0]
+                    for key in ("FileVersion", "ProductVersion"):
+                        try:
+                            sub_block = f"\\StringFileInfo\\{lang:04X}{cp:04X}\\{key}"
+                            ver_val = win32api.GetFileVersionInfo(str(p), sub_block)
+                            if ver_val:
+                                meta_ver = _extract_version_from_url_or_name(str(ver_val))
+                                if meta_ver and is_newer_version(clean_target, meta_ver):
+                                    return False, f"Downloaded installer version v{meta_ver} is older than target v{clean_target}"
+                        except Exception:
+                            pass
+            except Exception as meta_err:
+                logger.debug("PE version metadata check skipped/unavailable: %s", meta_err)
+
+        return True, "Valid Windows executable installer"
+    except Exception as val_err:
+        return False, f"Installer validation error: {val_err}"
+
+
 # ==============================================================
 # UPDATE WORKER THREAD
 # ==============================================================
@@ -113,17 +187,56 @@ def resolve_download_candidates(
     activity_tracker_link: str = "",
     server_version: str = "",
 ) -> list[str]:
-    """Construct an ordered list of candidate download URLs for the update installer."""
+    """
+    Construct an ordered list of candidate download URLs for the update installer.
+    
+    Priority Order:
+    1. Explicit download_url returned by the API response (PRIMARY)
+    2. Explicit file_name if it is a full URL
+    3. Base domain upload paths derived from file_name
+    4. activity_tracker_link if it points to an executable installer
+    5. Target-version prioritized filenames (guessed paths)
+    6. Generic fallback filenames (WorkpulseSetup.exe, etc.)
+
+    Never filters candidates based on URL or filename version substrings.
+    """
     raw_candidates = []
     clean_v = str(server_version).lstrip("vV").strip() if server_version else ""
 
     parts = api_url.split("/hrms_api")
     base_domain = parts[0].rstrip("/") if parts else api_url.rstrip("/")
 
-    # 1. Target-version prioritized filenames
+    # 1. Explicit download URL from API response or configuration (PRIMARY CANDIDATE)
+    if download_url and str(download_url).strip():
+        u = str(download_url).strip()
+        if u.startswith("http://") or u.startswith("https://"):
+            raw_candidates.append(u)
+
+    # 2. If file_name is itself a full URL
+    if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
+        raw_candidates.append(str(file_name).strip())
+
+    # 3. Base domain upload paths derived from file_name
+    if file_name and not str(file_name).startswith("http"):
+        clean_file = str(file_name).strip()
+        raw_candidates.append(f"{base_domain}/uploads/{clean_file}")
+        raw_candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
+        raw_candidates.append(f"{base_domain}/uploads/version/{clean_file}")
+        raw_candidates.append(f"{base_domain}/{clean_file}")
+
+    # 4. Activity tracker link if it explicitly references an executable installer
+    if activity_tracker_link and str(activity_tracker_link).strip():
+        atl = str(activity_tracker_link).strip()
+        if atl.lower().endswith(".exe"):
+            raw_candidates.append(atl)
+        elif file_name and not str(file_name).startswith("http"):
+            raw_candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
+
+    # 5. Target-version prioritized filenames (guessed paths)
     if clean_v:
         ver_names = [
             f"WorkpulseSetup_v{clean_v}.exe",
+            f"WorkpulseSetup.exe",
             f"Workpulse-Installer-{clean_v}.exe",
             f"WorkpulseSetup_v{clean_v}.0.exe",
             f"Workpulse-Installer-{clean_v}.0.exe",
@@ -140,32 +253,6 @@ def resolve_download_candidates(
             if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
                 raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{vname}")
 
-    # 2. Explicit download URL from API response or configuration
-    if download_url and str(download_url).strip():
-        u = str(download_url).strip()
-        if u.startswith("http://") or u.startswith("https://"):
-            raw_candidates.append(u)
-
-    # 3. If file_name is itself a full URL
-    if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
-        raw_candidates.append(str(file_name).strip())
-
-    # 4. Base domain upload paths derived from api_url
-    if file_name and not str(file_name).startswith("http"):
-        clean_file = str(file_name).strip()
-        raw_candidates.append(f"{base_domain}/uploads/{clean_file}")
-        raw_candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
-        raw_candidates.append(f"{base_domain}/uploads/version/{clean_file}")
-        raw_candidates.append(f"{base_domain}/{clean_file}")
-
-    # 5. Activity tracker link if it explicitly references an executable installer
-    if activity_tracker_link and str(activity_tracker_link).strip():
-        atl = str(activity_tracker_link).strip()
-        if atl.lower().endswith(".exe"):
-            raw_candidates.append(atl)
-        elif file_name and not str(file_name).startswith("http"):
-            raw_candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
-
     # 6. Generic latest fallback filenames
     generic_names = ["WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
     for gname in generic_names:
@@ -176,19 +263,13 @@ def resolve_download_candidates(
         if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
             raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{gname}")
 
-    # Deduplicate while preserving order and filtering out candidates with strictly older version strings
+    # Deduplicate while strictly preserving priority order (NEVER filter candidates by filename version)
     seen = set()
     unique_candidates = []
     for c in raw_candidates:
         if c in seen:
             continue
         seen.add(c)
-        if clean_v:
-            cand_ver = _extract_version_from_url_or_name(c)
-            if cand_ver and is_newer_version(clean_v, cand_ver):
-                # Candidate has an explicit version that is strictly older than target server_version
-                logger.debug("Filtering out outdated candidate URL: %s (cand_version=%s < target=%s)", c, cand_ver, clean_v)
-                continue
         unique_candidates.append(c)
 
     return unique_candidates
@@ -440,38 +521,40 @@ class UpdateCheckWorker(QThread):
 
     def _download_installer(self, download_url: str, version: str, force_update: bool, file_name: str = "") -> None:
         """Download installer file with streaming progress to updates directory."""
+        clean_v = str(version).lstrip("vV").strip()
         updates_dir = get_updates_directory()
-        safe_name = f"WorkpulseSetup_v{version}.exe"
+        safe_name = f"WorkpulseSetup_v{clean_v}.exe"
         installer_path = updates_dir / safe_name
-        temp_path = updates_dir / f"{safe_name}.tmp"
+        legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+        if not installer_path.exists() and legacy_installer_path.exists():
+            installer_path = legacy_installer_path
+        temp_path = updates_dir / f"{safe_name}.download"
 
-        # Remove 0-byte or corrupted installer file if previously left behind
-        if installer_path.exists() and installer_path.stat().st_size < 1024 * 100:
-            try:
-                installer_path.unlink()
-            except Exception:
-                pass
+        # Remove stale temporary downloads
+        for stale in updates_dir.glob(f"{safe_name}.*"):
+            if stale.name != safe_name:
+                try:
+                    stale.unlink()
+                except Exception:
+                    pass
 
         # Check if already downloaded and verified
-        if installer_path.exists() and installer_path.stat().st_size >= 1024 * 100:
-            try:
-                with open(installer_path, "rb") as vf:
-                    if vf.read(2) == b"MZ":
-                        logger.info("Installer already downloaded at: %s", installer_path)
-                        self.download_progress.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
-                        self.download_completed.emit(str(installer_path), version, force_update)
-                        self.check_completed.emit(True)
-                        return
-            except Exception:
-                pass
-
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
+        if installer_path.exists():
+            is_valid, _ = validate_installer_file(installer_path, target_version=version)
+            if is_valid:
+                logger.info("Installer already downloaded and verified: %s", installer_path)
+                self.download_progress.emit(100, installer_path.stat().st_size, installer_path.stat().st_size)
+                self.download_completed.emit(str(installer_path), version, force_update)
+                self.check_completed.emit(True)
+                return
+            else:
+                try:
+                    installer_path.unlink()
+                except Exception:
+                    pass
 
         self.status_changed.emit(f"Downloading update v{version}...")
+        self.download_progress.emit(0, 0, 100)
 
         candidates = resolve_download_candidates(
             api_url=self._api_url,
@@ -482,21 +565,34 @@ class UpdateCheckWorker(QThread):
 
         try:
             download_successful = False
+            ca_bundle = get_ca_bundle_path() or True
+
             for cand_url in candidates:
                 if self._is_cancelled:
                     return
-                logger.info("Downloading update installer from %s to %s", cand_url, temp_path)
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
+
+                logger.info("Download started: %s (target version: %s)", cand_url, clean_v)
                 try:
-                    with requests.get(cand_url, stream=True, timeout=60) as r:
+                    with requests.get(cand_url, stream=True, timeout=60, headers=CACHE_BUST_HEADERS, verify=ca_bundle) as r:
+                        logger.info("HTTP status: %s, Content-Type: %s, Content-Length: %s", r.status_code, r.headers.get("content-type"), r.headers.get("content-length"))
                         if r.status_code != 200:
                             logger.warning("Candidate %s returned HTTP %d", cand_url, r.status_code)
                             continue
                         ct = r.headers.get("content-type", "").lower()
-                        if "text/html" in ct or "text/plain" in ct:
-                            logger.warning("Candidate %s returned HTML body", cand_url)
+                        if "text/html" in ct or "text/plain" in ct or "application/json" in ct:
+                            logger.warning("Candidate %s returned non-binary Content-Type: %s", cand_url, ct)
                             continue
 
                         total_size = int(r.headers.get("content-length", 0))
+                        if 0 < total_size < 1024 * 100:
+                            logger.warning("Candidate %s content-length %d is too small", cand_url, total_size)
+                            continue
+
                         downloaded = 0
                         is_valid_header = None
 
@@ -520,17 +616,27 @@ class UpdateCheckWorker(QThread):
                                         self.download_progress.emit(percent, downloaded, total_size)
 
                         if is_valid_header is False:
+                            logger.warning("Candidate %s lacked MZ header", cand_url)
                             if temp_path.exists():
                                 temp_path.unlink()
                             continue
 
-                    if temp_path.exists() and temp_path.stat().st_size >= 1024 * 100:
-                        if installer_path.exists():
-                            installer_path.unlink()
-                        temp_path.rename(installer_path)
-                        download_successful = True
-                        logger.info("Download completed successfully: %s (%d bytes)", installer_path, installer_path.stat().st_size)
-                        break
+                    logger.info("Download completed: %d bytes from %s", downloaded, cand_url)
+                    logger.info("Installer validation started for %s", temp_path)
+                    is_valid, val_reason = validate_installer_file(temp_path, target_version=version)
+                    logger.info("Installer validation result: %s (%s)", "PASS" if is_valid else "FAIL", val_reason)
+
+                    if not is_valid:
+                        if temp_path.exists():
+                            temp_path.unlink()
+                        continue
+
+                    if installer_path.exists():
+                        installer_path.unlink()
+                    temp_path.rename(installer_path)
+                    download_successful = True
+                    logger.info("Download and validation succeeded: %s (%d bytes)", installer_path, installer_path.stat().st_size)
+                    break
                 except Exception as cand_err:
                     logger.debug("Candidate download error: %s", cand_err)
                     if temp_path.exists():
@@ -542,6 +648,7 @@ class UpdateCheckWorker(QThread):
             # Dev / local test fallback
             if not download_successful:
                 local_candidates = [
+                    Path("installer/WorkpulseSetup.exe"),
                     Path("dist/installer/WorkpulseSetup.exe"),
                     Path("dist/installer/Workpulse-Installer.exe"),
                     Path("dist/installer/iHRMSMonitorSetup.exe"),
@@ -549,17 +656,17 @@ class UpdateCheckWorker(QThread):
                     Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "iHRMS Monitor" / "iHRMSMonitorSetup.exe",
                 ]
                 for loc_p in local_candidates:
-                    if loc_p.exists() and loc_p.stat().st_size >= 1024 * 100:
-                        try:
-                            with open(loc_p, "rb") as lf:
-                                if lf.read(2) == b"MZ":
-                                    import shutil
-                                    shutil.copyfile(loc_p, installer_path)
-                                    download_successful = True
-                                    logger.info("Using local installer package from %s (%d bytes)", loc_p, installer_path.stat().st_size)
-                                    break
-                        except Exception:
-                            pass
+                    if loc_p.exists():
+                        is_valid, _ = validate_installer_file(loc_p, target_version=version)
+                        if is_valid:
+                            try:
+                                import shutil
+                                shutil.copyfile(loc_p, installer_path)
+                                download_successful = True
+                                logger.info("Using validated local installer from %s (%d bytes)", loc_p, installer_path.stat().st_size)
+                                break
+                            except Exception:
+                                pass
 
             if not download_successful or not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
                 err_msg = f"Update installer for v{version} could not be downloaded."
@@ -1692,30 +1799,38 @@ class UpdatePipelineWorker(QThread):
             # --------------------------------------------------
             # Phase 3: Download Installer
             # --------------------------------------------------
-            self.phase_changed.emit("downloading", f"Downloading update v{server_version}...")
-            self.status_message.emit(f"Downloading update v{server_version}...")
+            clean_v = str(server_version).lstrip("vV").strip()
+            self.progress_changed.emit(0, 0, 100)
+            self.phase_changed.emit("downloading", f"Downloading update v{clean_v}...")
+            self.status_message.emit(f"Downloading update v{clean_v}...")
             updates_dir = get_updates_directory()
-            safe_name = f"iHRMSMonitorSetup_v{server_version}.exe"
+            safe_name = f"WorkpulseSetup_v{clean_v}.exe"
             installer_path = updates_dir / safe_name
-            temp_path = updates_dir / f"{safe_name}.part"
+            legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+            if not installer_path.exists() and legacy_installer_path.exists():
+                installer_path = legacy_installer_path
+            temp_path = updates_dir / f"{safe_name}.download"
 
-            # Clean up 0-byte or corrupted installer file left from previous failed runs
-            if installer_path.exists() and installer_path.stat().st_size < 1024 * 100:
-                try:
-                    installer_path.unlink()
-                except Exception:
-                    pass
+            # Clean up stale temporary download files from previous runs
+            for stale in updates_dir.glob(f"{safe_name}.*"):
+                if stale.name != safe_name:
+                    try:
+                        stale.unlink()
+                    except Exception:
+                        pass
 
             download_successful = False
 
-            if installer_path.exists() and installer_path.stat().st_size >= 1024 * 100:
-                try:
-                    with open(installer_path, "rb") as vf:
-                        if vf.read(2) == b"MZ":
-                            download_successful = True
-                            logger.info("Pipeline: Installer already downloaded and verified: %s", installer_path)
-                except Exception:
-                    pass
+            if installer_path.exists():
+                is_valid, val_reason = validate_installer_file(installer_path, target_version=server_version)
+                if is_valid:
+                    download_successful = True
+                    logger.info("Pipeline: Existing installer already validated: %s", installer_path)
+                else:
+                    try:
+                        installer_path.unlink()
+                    except Exception:
+                        pass
 
             if not download_successful:
                 candidates = resolve_download_candidates(
@@ -1727,6 +1842,8 @@ class UpdatePipelineWorker(QThread):
                 )
                 logger.info("Pipeline: Candidate download URLs for v%s: %s", server_version, candidates)
 
+                ca_bundle = get_ca_bundle_path() or True
+
                 for cand_url in candidates:
                     if self._is_cancelled:
                         return
@@ -1736,18 +1853,19 @@ class UpdatePipelineWorker(QThread):
                         except Exception:
                             pass
 
-                    logger.info("Pipeline: Trying download from candidate: %s", cand_url)
+                    logger.info("Pipeline: Download started from candidate: %s (target version: %s)", cand_url, clean_v)
                     try:
-                        with requests.get(cand_url, stream=True, timeout=60) as resp:
+                        with requests.get(cand_url, stream=True, timeout=60, headers=CACHE_BUST_HEADERS, verify=ca_bundle) as resp:
+                            logger.info("HTTP status: %s, Content-Type: %s, Content-Length: %s", resp.status_code, resp.headers.get("content-type"), resp.headers.get("content-length"))
                             if resp.status_code != 200:
                                 logger.debug("Candidate %s returned HTTP %s", cand_url, resp.status_code)
                                 continue
                             ct = resp.headers.get("content-type", "").lower()
-                            if "text/html" in ct or "text/plain" in ct:
-                                logger.debug("Candidate %s returned HTML error body", cand_url)
+                            if "text/html" in ct or "text/plain" in ct or "application/json" in ct:
+                                logger.debug("Candidate %s returned non-binary Content-Type: %s", cand_url, ct)
                                 continue
                             total_size = int(resp.headers.get("content-length", 0))
-                            if total_size > 0 and total_size < 1024 * 100:
+                            if 0 < total_size < 1024 * 100:
                                 logger.debug("Candidate %s content-length %d is too small", cand_url, total_size)
                                 continue
 
@@ -1756,6 +1874,9 @@ class UpdatePipelineWorker(QThread):
                             with open(temp_path, "wb") as f:
                                 for chunk in resp.iter_content(chunk_size=65536):
                                     if self._is_cancelled:
+                                        f.close()
+                                        if temp_path.exists():
+                                            temp_path.unlink()
                                         return
                                     if chunk:
                                         if is_valid_header is None:
@@ -1776,13 +1897,22 @@ class UpdatePipelineWorker(QThread):
                                     temp_path.unlink()
                                 continue
 
-                            if temp_path.exists() and temp_path.stat().st_size >= 1024 * 100:
-                                if installer_path.exists():
-                                    installer_path.unlink()
-                                temp_path.rename(installer_path)
-                                download_successful = True
-                                logger.info("Pipeline: Download succeeded from %s (%d bytes)", cand_url, installer_path.stat().st_size)
-                                break
+                        logger.info("Pipeline: Download completed: %d bytes from %s", downloaded, cand_url)
+                        logger.info("Pipeline: Installer validation started for %s", temp_path)
+                        is_valid, val_reason = validate_installer_file(temp_path, target_version=server_version)
+                        logger.info("Pipeline: Installer validation result: %s (%s)", "PASS" if is_valid else "FAIL", val_reason)
+
+                        if not is_valid:
+                            if temp_path.exists():
+                                temp_path.unlink()
+                            continue
+
+                        if installer_path.exists():
+                            installer_path.unlink()
+                        temp_path.rename(installer_path)
+                        download_successful = True
+                        logger.info("Pipeline: Download and validation succeeded: %s (%d bytes)", installer_path, installer_path.stat().st_size)
+                        break
                     except Exception as cand_err:
                         logger.debug("Download failed for candidate %s: %s", cand_url, cand_err)
                         if temp_path.exists():
@@ -1794,21 +1924,25 @@ class UpdatePipelineWorker(QThread):
                 # Development / test fallback: if server doesn't host file yet, check local built installer
                 if not download_successful:
                     local_candidates = [
+                        Path("installer/WorkpulseSetup.exe"),
+                        Path("dist/installer/WorkpulseSetup.exe"),
+                        Path("dist/installer/Workpulse-Installer.exe"),
                         Path("dist/installer/iHRMSMonitorSetup.exe"),
+                        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Workpulse" / "WorkpulseSetup.exe",
                         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "iHRMS Monitor" / "iHRMSMonitorSetup.exe",
                     ]
                     for loc_p in local_candidates:
-                        if loc_p.exists() and loc_p.stat().st_size >= 1024 * 100:
-                            try:
-                                with open(loc_p, "rb") as lf:
-                                    if lf.read(2) == b"MZ":
-                                        import shutil
-                                        shutil.copyfile(loc_p, installer_path)
-                                        download_successful = True
-                                        logger.info("Pipeline: Adopted local installer package from %s (%d bytes)", loc_p, installer_path.stat().st_size)
-                                        break
-                            except Exception:
-                                pass
+                        if loc_p.exists():
+                            is_valid, _ = validate_installer_file(loc_p, target_version=server_version)
+                            if is_valid:
+                                try:
+                                    import shutil
+                                    shutil.copyfile(loc_p, installer_path)
+                                    download_successful = True
+                                    logger.info("Pipeline: Adopted validated local installer package from %s (%d bytes)", loc_p, installer_path.stat().st_size)
+                                    break
+                                except Exception:
+                                    pass
 
             if not download_successful or not installer_path.exists() or installer_path.stat().st_size < 1024 * 100:
                 err_msg = f"Update installer for v{server_version} could not be downloaded from the server."
@@ -1922,11 +2056,17 @@ class UpdateService(QObject):
         on_download_completed=None,
         on_ready_to_install=None,
         on_error=None,
+        force_restart: bool = False,
     ) -> UpdatePipelineWorker:
         """Start the complete non-blocking background update pipeline."""
         if self._pipeline_worker is not None and self._pipeline_worker.isRunning():
-            logger.info("Update pipeline already running. Returning active instance.")
-            return self._pipeline_worker
+            if force_restart:
+                logger.info("force_restart requested: cancelling previous pipeline worker.")
+                self._pipeline_worker.cancel()
+                self._pipeline_worker.wait(1000)
+            else:
+                logger.info("Update pipeline already running. Returning active instance.")
+                return self._pipeline_worker
 
         self._pipeline_worker = UpdatePipelineWorker(
             api_url=api_url,

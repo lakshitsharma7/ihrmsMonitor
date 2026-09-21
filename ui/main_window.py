@@ -1752,7 +1752,13 @@ class MainWindow(QMainWindow):
                         self._offline_update_retry_timer.start(30000)
                 else:
                     self.dashboard_page.set_update_status("Update Error")
-                    self.update_button.setText(f"Retry Update v{self._latest_version or ''}")
+                    from config.settings import get_running_app_version
+                    from services.update_service import is_newer_version
+                    if self._latest_version and is_newer_version(self._latest_version, get_running_app_version()):
+                        self.update_button.setText(f"Retry Update v{self._latest_version}")
+                        self.update_button.setVisible(True)
+                    else:
+                        self.update_button.setVisible(False)
 
                 # Ensure active tracking is running and unaffected by update errors
                 try:

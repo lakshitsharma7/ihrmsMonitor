@@ -39,6 +39,12 @@ try:
         except Exception:
             pass
 
+        # Clean any invalid CA bundle environment variables from previous sessions / other machines
+        for env_var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+            val = os.environ.get(env_var)
+            if val and not os.path.isfile(val):
+                os.environ.pop(env_var, None)
+
         # Resolve bundled TLS CA certificate bundle dynamically
         exe_dir = Path(sys.executable).parent
         ca_candidates = [
