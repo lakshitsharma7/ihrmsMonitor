@@ -1,5 +1,5 @@
 ================================================================================
-iHRMS Monitor - Windows Desktop Agent (v1.0.1)
+Workpulse - Windows Desktop Agent (v1.0.1)
 Master Architectural Points & Feature Highlights
 Indovision Consultancy Services
 ================================================================================
@@ -32,7 +32,7 @@ Indovision Consultancy Services
      * idle_duration_seconds
 
 5. OFFLINE STORAGE & VERIFIED CLEANUP LIFECYCLE
-   - Local storage in current Windows user directory: %LOCALAPPDATA%\iHRMS Monitor\
+   - Local storage in current Windows user directory: %LOCALAPPDATA%\Workpulse\
      * data\        -> SQLite database (ihrms_monitor.db) in WAL mode
      * screenshots\ -> Pending screenshot PNG files
      * logs\        -> Application diagnostic logs

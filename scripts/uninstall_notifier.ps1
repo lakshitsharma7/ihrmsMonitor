@@ -6,11 +6,14 @@ param(
     [switch]$ProcessPendingOnly
 )
 
-$appName = "iHRMS Monitor"
+$appName = "Workpulse"
 $localAppData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
 $appDataDir = Join-Path $localAppData $appName
+if (-not (Test-Path $appDataDir) -and (Test-Path (Join-Path $localAppData "iHRMS Monitor"))) {
+    $appDataDir = Join-Path $localAppData "iHRMS Monitor"
+}
 $pendingFile = Join-Path $appDataDir "pending_uninstall.json"
-$taskName = "iHRMS_Monitor_Uninstall_Notifier"
+$taskName = "Workpulse_Uninstall_Notifier"
 $supportEmail = "support-hrms@indovisionservices.in"
 $defaultBaseUrl = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api"
 
@@ -114,7 +117,7 @@ if ($null -eq $payload) {
 $targetUrl = "$defaultBaseUrl/tracking/report_error"
 $delivered = $false
 
-$errorMsg = "iHRMS Monitor UNINSTALLED by user '$($payload.username)' (Employee ID: $($payload.employee_id), Company: $($payload.company_code)) on device '$($payload.hostname)' ($($payload.device_id)) running $($payload.os)."
+$errorMsg = "$appName UNINSTALLED by user '$($payload.username)' (Employee ID: $($payload.employee_id), Company: $($payload.company_code)) on device '$($payload.hostname)' ($($payload.device_id)) running $($payload.os)."
 
 $bodyData = @{
     support_email = $supportEmail

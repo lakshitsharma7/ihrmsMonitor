@@ -46,7 +46,7 @@ class TestLocalStorageAndCleanupFlow(unittest.TestCase):
             get_logs_directory,
         )
         app_data = get_app_data_directory()
-        self.assertTrue(str(app_data).endswith("iHRMS Monitor"))
+        self.assertTrue(str(app_data).endswith("Workpulse"))
 
         data_dir = get_data_directory()
         self.assertEqual(data_dir, app_data / "data")

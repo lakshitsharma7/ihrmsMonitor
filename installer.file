@@ -1,13 +1,13 @@
-# iHRMS Monitor Build & Packaging Instructions
+# Workpulse Build & Packaging Instructions
 
 1. Install Inno Setup 6 (https://jrsoftware.org/isdl.php)
 2. Build Standalone PyInstaller Bundle (No UPX, Full Dependencies):
-   python -m PyInstaller --noconfirm --clean "iHRMS Monitor.spec"
+   python -m PyInstaller --noconfirm --clean "Workpulse.spec"
 
 3. Compile Inno Setup Installer:
-   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "IHRMS Monitor.iss"
-   (or "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "IHRMS Monitor.iss")
+   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "Workpulse.iss"
+   (or "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "Workpulse.iss")
 
 4. Generated Installer:
-   installer\iHRMS-Monitor-Installer.exe
-   dist\installer\iHRMSMonitorSetup.exe
+   installer\WorkpulseSetup.exe
+   dist\installer\WorkpulseSetup.exe

@@ -123,6 +123,10 @@ def resolve_download_candidates(
     # 1. Target-version prioritized filenames
     if clean_v:
         ver_names = [
+            f"WorkpulseSetup_v{clean_v}.exe",
+            f"Workpulse-Installer-{clean_v}.exe",
+            f"WorkpulseSetup_v{clean_v}.0.exe",
+            f"Workpulse-Installer-{clean_v}.0.exe",
             f"iHRMSMonitorSetup_v{clean_v}.exe",
             f"iHRMS-Monitor-Installer-{clean_v}.exe",
             f"iHRMSMonitorSetup_v{clean_v}.0.exe",
@@ -163,7 +167,7 @@ def resolve_download_candidates(
             raw_candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
 
     # 6. Generic latest fallback filenames
-    generic_names = ["iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
+    generic_names = ["WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
     for gname in generic_names:
         raw_candidates.append(f"{base_domain}/uploads/{gname}")
         raw_candidates.append(f"{base_domain}/hrms_api/uploads/{gname}")
@@ -437,7 +441,7 @@ class UpdateCheckWorker(QThread):
     def _download_installer(self, download_url: str, version: str, force_update: bool, file_name: str = "") -> None:
         """Download installer file with streaming progress to updates directory."""
         updates_dir = get_updates_directory()
-        safe_name = f"iHRMSMonitorSetup_v{version}.exe"
+        safe_name = f"WorkpulseSetup_v{version}.exe"
         installer_path = updates_dir / safe_name
         temp_path = updates_dir / f"{safe_name}.tmp"
 
@@ -538,7 +542,10 @@ class UpdateCheckWorker(QThread):
             # Dev / local test fallback
             if not download_successful:
                 local_candidates = [
+                    Path("dist/installer/WorkpulseSetup.exe"),
+                    Path("dist/installer/Workpulse-Installer.exe"),
                     Path("dist/installer/iHRMSMonitorSetup.exe"),
+                    Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Workpulse" / "WorkpulseSetup.exe",
                     Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "iHRMS Monitor" / "iHRMSMonitorSetup.exe",
                 ]
                 for loc_p in local_candidates:
@@ -802,7 +809,11 @@ def get_installed_executable_path() -> Path:
         return Path(sys.executable).resolve()
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    default_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
+    for folder, exe_name in (("Workpulse", "Workpulse.exe"), ("iHRMS Monitor", "iHRMS Monitor.exe")):
+        p = Path(local_app_data) / "Programs" / folder / exe_name
+        if p.exists():
+            return p.resolve()
+    default_exe = Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe"
     return default_exe.resolve()
 
 
@@ -877,7 +888,7 @@ def install_update_and_restart(
     update_log_path = updates_dir / "updater.log"
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    default_exe = (Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe").resolve()
+    default_exe = (Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe").resolve()
     target_exe = get_installed_executable_path()
 
     app_dir = target_exe.parent
@@ -919,6 +930,7 @@ timeout /t 1 /nobreak > NUL
 
 rem 3. Terminate running instance if still shutting down
 taskkill /F /PID {current_pid} > NUL 2>&1
+taskkill /F /IM "Workpulse.exe" > NUL 2>&1
 taskkill /F /IM "iHRMS Monitor.exe" > NUL 2>&1
 timeout /t 1 /nobreak > NUL
 
@@ -1014,10 +1026,11 @@ Loop
 \' Terminate lingering instances if any to release file handles
 wshShell.Run "taskkill /F /PID " & oldPid & " /T", 0, True
 WScript.Sleep 500
+wshShell.Run "taskkill /F /T /IM ""Workpulse.exe""", 0, True
 wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
 WScript.Sleep 1000
 
-WriteLog "All previous iHRMS Monitor processes terminated."
+WriteLog "All previous Workpulse processes terminated."
 
 \' 2. Clean single-instance lock file
 If fso.FileExists(lockPath) Then
@@ -1059,6 +1072,7 @@ If isInstaller Then
             Exit For
         Else
             WriteLog "Installer attempt " & i & " failed with exit code " & exitCode & ". Retrying with default user directory..."
+            wshShell.Run "taskkill /F /T /IM ""Workpulse.exe""", 0, True
             wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
             WScript.Sleep 1000
             exitCode = wshShell.Run(Chr(34) & updateFile & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /NORESTART /SP- /DIR=" & Chr(34) & fso.GetParentFolderName(defaultExe) & Chr(34), 0, True)

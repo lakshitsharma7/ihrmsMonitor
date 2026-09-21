@@ -144,7 +144,7 @@ class TestApplicationTrackingAndTimeline(unittest.TestCase):
         s = repo.create_session(
             application_name="python.exe",
             process_id=9999,
-            window_title="iHRMS Monitor",
+            window_title="Workpulse",
             started_at=now_utc - timedelta(seconds=30),
             employee_id=self.emp_id,
         )

@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "iHRMS Monitor"
+APP_NAME = "Workpulse"
 
 
 def is_windows() -> bool:
@@ -44,9 +44,9 @@ def get_app_data_directory() -> Path:
     """Return the per-user application data directory, creating it if needed.
 
     Windows:
-        %LOCALAPPDATA%\\iHRMS Monitor
+        %LOCALAPPDATA%\\Workpulse
     macOS:
-        ~/Library/Application Support/iHRMS Monitor
+        ~/Library/Application Support/Workpulse
 
     Raises:
         RuntimeError: if called on an unsupported operating system.
@@ -61,7 +61,7 @@ def get_app_data_directory() -> Path:
         directory = Path.home() / "Library" / "Application Support" / APP_NAME
     else:
         raise RuntimeError(
-            "This version of iHRMS Monitor supports Windows and macOS."
+            "This version of Workpulse supports Windows and macOS."
         )
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -81,9 +81,12 @@ def get_database_path() -> Path:
 
     # Smooth automatic migration from legacy locations if target doesn't exist yet
     if not target.exists():
+        local_base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
         legacy_candidates = [
             get_app_data_directory() / "activity_tracker.db",
-            Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "ActivityTracker" / "activity_tracker.db",
+            local_base / "iHRMS Monitor" / "data" / "activity_tracker.db",
+            local_base / "iHRMS Monitor" / "activity_tracker.db",
+            local_base / "ActivityTracker" / "activity_tracker.db",
         ]
         for leg in legacy_candidates:
             if leg.exists():

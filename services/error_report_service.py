@@ -351,9 +351,10 @@ class ErrorReportService:
         user = context.get("user_details", {})
         device = context.get("device_details", {})
 
+        app_name = context.get("app_name", APP_NAME)
         return (
             f"==========================================================\n"
-            f"iHRMS Monitor - Critical Error Report\n"
+            f"{app_name} - Critical Error Report\n"
             f"==========================================================\n"
             f"Application   : {context.get('app_name')} v{context.get('app_version')}\n"
             f"Time (Local)  : {context.get('timestamp_local')}\n"

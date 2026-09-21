@@ -139,7 +139,7 @@ def main() -> int:
         QMessageBox.critical(
             None,
             APP_NAME,
-            "This version of iHRMS Monitor supports Windows and macOS.",
+            f"This version of {APP_NAME} supports Windows and macOS.",
         )
         return 1
 
@@ -251,8 +251,8 @@ def main() -> int:
             main_window.activateWindow()
             if hasattr(main_window, "tray") and main_window.tray:
                 main_window.tray.show_message(
-                    "iHRMS Monitor",
-                    "iHRMS Monitor has started."
+                    APP_NAME,
+                    f"{APP_NAME} has started."
                 )
             
             return app.exec()

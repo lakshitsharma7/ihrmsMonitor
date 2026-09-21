@@ -157,7 +157,7 @@ def dispatch_uninstall_report(context: Optional[Dict[str, Any]] = None) -> bool:
     """
     ctx = context or collect_uninstall_context()
     error_msg = (
-        f"iHRMS Monitor UNINSTALLED by user '{ctx.get('username')}' "
+        f"{APP_NAME} UNINSTALLED by user '{ctx.get('username')}' "
         f"(Employee ID: {ctx.get('employee_id')}, Company: {ctx.get('company_code')}) "
         f"on device '{ctx.get('hostname')}' ({ctx.get('device_id')}) running {ctx.get('os')}."
     )

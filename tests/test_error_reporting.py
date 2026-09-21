@@ -76,7 +76,7 @@ class TestErrorReportService(unittest.TestCase):
     def test_build_email_body_formatting(self):
         service = self.service
         context = {
-            "app_name": "iHRMS Monitor",
+            "app_name": "Workpulse",
             "app_version": "2.0.1",
             "timestamp_local": "2026-09-08 11:30:00",
             "timestamp_utc": "2026-09-08T06:00:00+00:00",
@@ -105,8 +105,8 @@ class TestErrorReportService(unittest.TestCase):
             "recent_logs": "2026-09-08 11:29:59 INFO Log test line",
         }
 
-        body = service._build_email_body(context)
-        self.assertIn("iHRMS Monitor - Critical Error Report", body)
+        body = service._build_report_text(context)
+        self.assertIn("Workpulse - Critical Error Report", body)
         self.assertIn("v2.0.1", body)
         self.assertIn("ACTIVITY_UPLOAD_ERROR", body)
         self.assertIn("/tracking/save_activity_batch", body)

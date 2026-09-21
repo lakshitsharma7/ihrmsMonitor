@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config.settings import get_running_app_version
+from config.settings import APP_NAME, get_running_app_version
 from services.update_service import UpdateService, install_update_and_restart
 
 
@@ -38,7 +38,7 @@ class UpdateDialog(QDialog):
         self._installer_path = installer_path
         self._pipeline_worker = pipeline_worker
 
-        self.setWindowTitle("iHRMS Monitor Update")
+        self.setWindowTitle(f"{APP_NAME} Update")
         self.setFixedSize(450, 260)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 

@@ -1,4 +1,4 @@
-# Activity Tracker
+# Workpulse
 
 A cross-platform desktop activity tracker for **Windows** and **macOS**, built with **Python + PySide6**. One codebase, one GUI, one database schema, one set of business logic — only the thin OS-integration layer differs between platforms.
 
@@ -6,7 +6,7 @@ A cross-platform desktop activity tracker for **Windows** and **macOS**, built w
 
 ## 1. Project Overview
 
-Activity Tracker runs quietly in the background, detects which application (and, where the OS permits, which window) currently has focus, and records how long you spend in each one. It shows a live dashboard with today's total active time, a per-application breakdown, and a chronological timeline, and it can start with your system and live in the tray/menu bar.
+Workpulse runs quietly in the background, detects which application (and, where the OS permits, which window) currently has focus, and records how long you spend in each one. It shows a live dashboard with today's total active time, a per-application breakdown, and a chronological timeline, and it can start with your system and live in the tray/menu bar.
 
 It deliberately does **not** do anything invasive — see [Privacy Considerations](#18-privacy-considerations).
 
@@ -15,7 +15,7 @@ It deliberately does **not** do anything invasive — see [Privacy Consideration
 - Windows 10 and later
 - macOS 12 (Monterey) and later
 
-Running on any other OS shows a clear message ("This version of Activity Tracker supports Windows and macOS.") instead of crashing.
+Running on any other OS shows a clear message ("This version of Workpulse supports Windows and macOS.") instead of crashing.
 
 ## 3. Features
 
@@ -134,8 +134,8 @@ SQLite via SQLAlchemy, same schema on both platforms.
 
 Database file location:
 
-- Windows: `%LOCALAPPDATA%\ActivityTracker\activity_tracker.db`
-- macOS: `~/Library/Application Support/ActivityTracker/activity_tracker.db`
+- Windows: `%LOCALAPPDATA%\Workpulse\data\activity_tracker.db`
+- macOS: `~/Library/Application Support/Workpulse/data/activity_tracker.db`
 
 Resolved once, centrally, by `utils/paths.get_database_path()` — no other module hardcodes an OS path.
 
@@ -170,7 +170,7 @@ Resolved once, centrally, by `utils/paths.get_database_path()` — no other modu
 Implemented once, using `QSystemTrayIcon`, which natively maps to the Windows tray and the macOS menu bar:
 
 ```
-Activity Tracker
+Workpulse
 ----------------
 Show Dashboard
 Start Tracking
@@ -194,10 +194,10 @@ Equivalent to:
 
 ```powershell
 pip install -r requirements.txt -r requirements-windows.txt
-pyinstaller --noconfirm --clean --windowed --onefile --name ActivityTracker app.py
+pyinstaller --noconfirm --clean --windowed --name Workpulse app.py
 ```
 
-Output: `dist\ActivityTracker.exe`
+Output: `dist\Workpulse\Workpulse.exe`
 
 ## 16. Building the macOS `.app`
 
@@ -211,10 +211,10 @@ Equivalent to:
 
 ```bash
 pip3 install -r requirements.txt -r requirements-macos.txt
-pyinstaller --noconfirm --clean --windowed --name ActivityTracker app.py
+pyinstaller --noconfirm --clean --windowed --name Workpulse app.py
 ```
 
-Output: `dist/ActivityTracker.app`
+Output: `dist/Workpulse.app`
 
 On first launch, macOS will prompt for Screen Recording/Accessibility permission (see [macOS Permissions](#12-macos-permissions)).
 
@@ -223,15 +223,15 @@ On first launch, macOS will prompt for Screen Recording/Accessibility permission
 | Symptom | Likely cause / fix |
 |---|---|
 | Window titles are always blank on macOS | Grant Screen Recording permission in System Settings → Privacy & Security, then restart the app. |
-| "This version of Activity Tracker supports Windows and macOS." on launch | You're running on an unsupported OS (e.g. Linux). |
+| "This version of Workpulse supports Windows and macOS." on launch | You're running on an unsupported OS (e.g. Linux). |
 | Tray icon doesn't appear | Some minimal Linux/VM/CI environments have no system tray; this doesn't affect Windows/macOS. |
-| Database/log files not found | Check `%LOCALAPPDATA%\ActivityTracker` (Windows) or `~/Library/Application Support/ActivityTracker` (macOS). |
+| Database/log files not found | Check `%LOCALAPPDATA%\Workpulse` (Windows) or `~/Library/Application Support/Workpulse` (macOS). |
 | `pywin32`/`pyobjc` install errors | Make sure you installed the OS-specific requirements file for *your* OS only (`requirements-windows.txt` on Windows, `requirements-macos.txt` on macOS) — never both. |
 | App seems to "lose" a few seconds per switch | Expected: the poll interval is ~1s, so a session boundary can be off by up to one poll tick. Lower `POLL_INTERVAL_SECONDS` in `config/settings.py` if you need finer granularity. |
 
 ## 18. Privacy Considerations
 
-Activity Tracker only ever records: application name, process ID, window title (where permitted), and timestamps/durations. It deliberately does **not** implement keylogging, password/credential capture, clipboard monitoring, screenshots, webcam/microphone recording, browser history extraction, or any hidden/background surveillance beyond what's visibly described above. The GUI always shows a clear tracking-status indicator.
+Workpulse only ever records: application name, process ID, window title (where permitted), and timestamps/durations. It deliberately does **not** implement keylogging, password/credential capture, clipboard monitoring, screenshots, webcam/microphone recording, browser history extraction, or any hidden/background surveillance beyond what's visibly described above. The GUI always shows a clear tracking-status indicator.
 
 ---
 

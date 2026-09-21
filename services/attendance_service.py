@@ -26,6 +26,9 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+from utils.paths import get_data_directory
+
+
 def _get_boot_datetime() -> datetime:
     """Return the system boot time as a localized datetime."""
     try:
@@ -66,16 +69,30 @@ class AttendanceService:
 
     def _resolve_state_file_path(self) -> Path:
         """Resolve persistent JSON file path in user app data or local directory."""
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            data_dir = Path(local_app_data) / "iHRMS Monitor" / "data"
-        else:
-            data_dir = Path.home() / ".ihrms_monitor" / "data"
+        try:
+            data_dir = get_data_directory()
+        except Exception:
+            local_app_data = os.environ.get("LOCALAPPDATA", "")
+            if local_app_data:
+                data_dir = Path(local_app_data) / "Workpulse" / "data"
+            else:
+                data_dir = Path.home() / ".workpulse" / "data"
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
-        return data_dir / "attendance_state.json"
+        target_file = data_dir / "attendance_state.json"
+        if not target_file.exists():
+            local_app_data = os.environ.get("LOCALAPPDATA", "")
+            if local_app_data:
+                legacy_file = Path(local_app_data) / "iHRMS Monitor" / "data" / "attendance_state.json"
+                if legacy_file.exists():
+                    try:
+                        import shutil
+                        shutil.copy2(legacy_file, target_file)
+                    except Exception:
+                        pass
+        return target_file
 
     def _load_state(self) -> dict:
         """Load attendance dictionary from persistent JSON file."""

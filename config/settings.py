@@ -13,8 +13,8 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "iHRMS Monitor"
-ORG_NAME = "iHRMSMonitorApp"
+APP_NAME = "Workpulse"
+ORG_NAME = "WorkpulseApp"
 
 
 def _read_pe_file_version(exe_path: str | Path) -> str | None:
@@ -43,7 +43,7 @@ def get_running_app_version() -> str:
     1. If running as a frozen executable (PyInstaller), inspects the embedded
        binary metadata of the current executable via win32api.GetFileVersionInfo.
     2. If running uncompiled (development / test), automatically checks the installed
-       binary in %LOCALAPPDATA%\\Programs\\iHRMS Monitor\\iHRMS Monitor.exe, the local
+       binary in %LOCALAPPDATA%\\Programs\\Workpulse\\Workpulse.exe, the local
        dist build, or VERSION / version.txt build descriptors.
     3. Never requires manual version maintenance in code or Settings.
     """
@@ -69,11 +69,12 @@ def get_running_app_version() -> str:
     # 3. Check installed application binary if available
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        installed_exe = Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe"
-        if installed_exe.exists():
-            v = _read_pe_file_version(installed_exe)
-            if v:
-                return v
+        for folder, exe_name in (("Workpulse", "Workpulse.exe"), ("iHRMS Monitor", "iHRMS Monitor.exe")):
+            installed_exe = Path(local_app_data) / "Programs" / folder / exe_name
+            if installed_exe.exists():
+                v = _read_pe_file_version(installed_exe)
+                if v:
+                    return v
 
     return "2.1"
 

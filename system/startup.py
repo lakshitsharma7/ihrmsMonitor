@@ -75,11 +75,14 @@ def _windows_is_enabled() -> bool:
         import winreg  # type: ignore
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_READ) as key:
-            try:
-                val, _ = winreg.QueryValueEx(key, APP_NAME)
-                return bool(val)
-            except FileNotFoundError:
-                return False
+            for key_name in (APP_NAME, "iHRMS Monitor"):
+                try:
+                    val, _ = winreg.QueryValueEx(key, key_name)
+                    if val:
+                        return True
+                except FileNotFoundError:
+                    pass
+            return False
     except Exception:  # noqa: BLE001
         logger.exception("Failed to read Windows Run key")
         return False
@@ -94,12 +97,15 @@ def _windows_set_enabled(enabled: bool, exe_path: str) -> bool:
     ) as key:
         if enabled:
             clean_exe = str(exe_path).strip().strip('"')
-            # Only register auto-start for packaged/frozen builds or compiled iHRMS Monitor.exe.
+            # Only register auto-start for packaged/frozen builds or compiled Workpulse.exe.
             # Never register bare python.exe or development scripts.
             is_dev_python = "python" in Path(clean_exe).name.lower() or clean_exe.endswith(".py")
             if not getattr(sys, "frozen", False) and is_dev_python:
                 # Check if a compiled binary exists in standard locations
                 candidate_paths = [
+                    Path(r"C:\Program Files\Workpulse\Workpulse.exe"),
+                    Path(r"C:\Program Files (x86)\Workpulse\Workpulse.exe"),
+                    Path(__file__).resolve().parent.parent / "dist" / "Workpulse" / "Workpulse.exe",
                     Path(r"C:\Program Files\iHRMS Monitor\iHRMS Monitor.exe"),
                     Path(r"C:\Program Files (x86)\iHRMS Monitor\iHRMS Monitor.exe"),
                     Path(__file__).resolve().parent.parent / "dist" / "iHRMS Monitor" / "iHRMS Monitor.exe",
@@ -113,20 +119,22 @@ def _windows_set_enabled(enabled: bool, exe_path: str) -> bool:
                         "Skipping Windows startup registration for development interpreter: %s",
                         clean_exe,
                     )
-                    try:
-                        winreg.DeleteValue(key, APP_NAME)
-                    except FileNotFoundError:
-                        pass
+                    for k in (APP_NAME, "iHRMS Monitor"):
+                        try:
+                            winreg.DeleteValue(key, k)
+                        except FileNotFoundError:
+                            pass
                     return True
 
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{clean_exe}"')
             logger.info("Registered Windows auto-start Run key for: %s", clean_exe)
         else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-                logger.info("Removed Windows auto-start Run key for: %s", APP_NAME)
-            except FileNotFoundError:
-                pass
+            for k in (APP_NAME, "iHRMS Monitor"):
+                try:
+                    winreg.DeleteValue(key, k)
+                    logger.info("Removed Windows auto-start Run key for: %s", k)
+                except FileNotFoundError:
+                    pass
     return True
 
 
