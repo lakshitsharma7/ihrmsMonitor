@@ -41,4 +41,12 @@ We are excited to release **Workpulse v2.0.2**, introducing native macOS distrib
 
 ### Verification & Checksums
 
+| File | SHA-256 Checksum |
+| :--- | :--- |
+| `WorkpulseSetup.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
+| `Workpulse.dmg` | `a8abd1de6748bf768107f1e11297b5741379c038c035e470c124fe6c61672d77` |
+| `Workpulse.exe` | `abf763d6145bc93178c3195033165f8a9fb46f487206203d9c10664a6da3207b` |
+| `Workpulse-Installer.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
+| `iHRMSMonitorSetup.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
+
 All binaries are built directly from source tag `v2.0.2` on the `feature/activity-tracker` branch.
