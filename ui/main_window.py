@@ -771,6 +771,12 @@ class MainWindow(QMainWindow):
         self.attendance_page.back_requested.connect(
             lambda: self.tabs.setCurrentWidget(self.dashboard_page)
         )
+        self.dashboard_page.tracking_start_requested.connect(
+            self.start_tracking
+        )
+        self.dashboard_page.tracking_stop_requested.connect(
+            lambda: self.stop_tracking(manual=True)
+        )
 
         self.tabs.addTab(
             self.dashboard_page,

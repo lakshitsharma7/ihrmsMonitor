@@ -177,7 +177,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
                 # 5. Verify NO login window required & tracking automatically resumed
                 self.assertTrue(win._tracker.is_tracking, "Tracking MUST automatically resume after restart")
                 self.assertEqual(win.status_badge.text(), "Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Active")
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
                 # 6. Verify version displayed reflects v2.1
                 self.assertIn("2.1", win.dashboard_page.version_label.text())
                 # 7. Verify NO Stop Tracking button/control is visible anywhere
@@ -210,7 +210,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
                 if hasattr(win, "tray") and win.tray:
                     self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop action must not be visible")
                 self.assertTrue(win._tracker.is_tracking, "Tracking must be active")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Active")
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
             finally:
                 win._shutdown()
                 win.close()

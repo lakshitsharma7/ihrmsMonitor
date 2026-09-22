@@ -54,6 +54,79 @@ class ActivityService:
         except Exception:
             return None
 
+    def save_daily_active_seconds(
+        self,
+        target_date: date,
+        seconds: int,
+        employee_id: str | None = None,
+    ) -> None:
+        """Persist accumulated active tracked seconds for a specific calendar date.
+
+        Saves both date-scoped and user-scoped keys in persistent storage and updates
+        the active today counter when target_date is today.
+        """
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            date_str = str(target_date)
+            sec_int = max(0, int(seconds))
+
+            # Date-scoped key (retained across days as historical data)
+            store.settings.setValue(f"dashboard/daily_active_seconds/{date_str}", sec_int)
+
+            # Optional user-scoped key if employee_id is available
+            emp_id = employee_id or self._current_employee_id()
+            if emp_id:
+                store.settings.setValue(
+                    f"dashboard/user_daily_active_seconds/{emp_id}/{date_str}",
+                    sec_int,
+                )
+
+            # Backward compatibility for today's date
+            local_now = datetime.now().astimezone().date()
+            if target_date == local_now:
+                store.settings.setValue("dashboard/today_total_seconds", sec_int)
+                store.settings.setValue("dashboard/today_date", date_str)
+        except Exception as err:
+            logger.debug("save_daily_active_seconds failed: %s", err)
+
+    def get_persisted_daily_active_seconds(
+        self,
+        target_date: date,
+        employee_id: str | None = None,
+    ) -> int:
+        """Retrieve persisted active tracked seconds for a given calendar date."""
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            date_str = str(target_date)
+
+            # 1. User-scoped check if employee_id is available
+            emp_id = employee_id or self._current_employee_id()
+            if emp_id:
+                user_val = store.settings.value(
+                    f"dashboard/user_daily_active_seconds/{emp_id}/{date_str}"
+                )
+                if user_val is not None:
+                    return max(0, int(user_val))
+
+            # 2. General date-scoped key
+            val = store.settings.value(f"dashboard/daily_active_seconds/{date_str}")
+            if val is not None:
+                return max(0, int(val))
+
+            # 3. Fallback to legacy today key if target_date matches
+            saved_date = store.settings.value("dashboard/today_date")
+            if saved_date and str(saved_date) == date_str:
+                legacy_val = store.settings.value("dashboard/today_total_seconds")
+                if legacy_val is not None:
+                    return max(0, int(legacy_val))
+
+            return 0
+        except Exception as err:
+            logger.debug("get_persisted_daily_active_seconds failed: %s", err)
+            return 0
+
     def get_day_total_seconds(
         self,
         target_date: date,
@@ -61,7 +134,8 @@ class ActivityService:
         """Return total active tracked seconds for a given local calendar date.
 
         Computes the exact local day bounds (00:00:00 to 23:59:59.999999)
-        and converts to UTC to query the database.
+        and converts to UTC to query the database, combining with locally
+        persisted daily active time to guarantee accuracy across restarts.
         """
         local_now = datetime.now().astimezone()
         local_tz = local_now.tzinfo
@@ -93,20 +167,8 @@ class ActivityService:
         finally:
             db_session.close()
 
-        if target_date == local_now.date():
-            try:
-                from services.secure_session import SessionStore
-                store = SessionStore()
-                saved_date = store.settings.value("dashboard/today_date")
-                if saved_date and str(saved_date) == str(target_date):
-                    val = store.settings.value("dashboard/today_total_seconds")
-                    if val is not None:
-                        persisted_s = max(0, int(val))
-                        db_total = max(db_total, persisted_s)
-            except Exception:
-                pass
-
-        return db_total
+        persisted_s = self.get_persisted_daily_active_seconds(target_date)
+        return max(db_total, persisted_s)
 
     def get_today_total_seconds(
         self,

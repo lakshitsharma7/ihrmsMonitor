@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import threading
 from typing import Any
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -38,45 +38,33 @@ def _format_time_ampm(time_val: Any) -> str | None:
     """Convert datetime or time string to user-friendly HH:MM AM/PM format."""
     if not time_val:
         return None
-    s = str(time_val).strip()
-    if not s or s.lower() in ("none", "null", "-", "00:00:00"):
-        return None
-
-    # Already contains AM/PM
-    if "am" in s.lower() or "pm" in s.lower():
-        return s
-
-    # Full datetime string "YYYY-MM-DD HH:MM:SS"
-    if len(s) >= 19 and s[4] == "-" and s[7] == "-":
-        try:
-            dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
-            return dt.strftime("%I:%M %p")
-        except Exception:
-            pass
-
-    # Time string "HH:MM:SS" or "HH:MM"
-    if ":" in s:
-        parts = s.split(":")
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1])
-            dt = datetime(2000, 1, 1, hour, minute)
-            return dt.strftime("%I:%M %p")
-        except Exception:
-            pass
-
-    return s
-
-
-def format_hh_mm_ss(total_seconds: Any) -> str:
-    """Format total seconds strictly as HH:MM:SS format."""
     try:
-        s = max(0, int(total_seconds or 0))
+        val_str = str(time_val).strip()
+        if not val_str or val_str.lower() in ("null", "none", "", "-", "--", "--:--", "--:-- --", "not punched"):
+            return None
+        if "T" in val_str:
+            dt = datetime.fromisoformat(val_str.replace("Z", "+00:00"))
+            return dt.strftime("%I:%M %p")
+        if "-" in val_str and " " in val_str:
+            dt = datetime.strptime(val_str[:19], "%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%I:%M %p")
+        if ":" in val_str:
+            parts = val_str.split(":")
+            h = int(parts[0])
+            m = int(parts[1]) if len(parts) > 1 else 0
+            period = "PM" if h >= 12 else "AM"
+            h_12 = h % 12 or 12
+            return f"{h_12:02d}:{m:02d} {period}"
+        return val_str
     except Exception:
-        s = 0
-    h = s // 3600
-    m = (s % 3600) // 60
-    sec = s % 60
+        return str(time_val)
+
+
+def format_hh_mm_ss(total_seconds: int | float) -> str:
+    """Format seconds into HH:MM:SS format."""
+    total_seconds = max(0, int(total_seconds))
+    h, rem = divmod(total_seconds, 3600)
+    m, sec = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
@@ -87,6 +75,9 @@ class DashboardPage(QWidget):
     weekly_timeline_requested = attendance_requested
     data_refreshed = Signal(dict)
     error_reported = Signal(str, str)
+    tracking_start_requested = Signal()
+    tracking_stop_requested = Signal()
+    tracking_toggle_requested = Signal()
 
     def __init__(
         self,
@@ -100,6 +91,14 @@ class DashboardPage(QWidget):
         self._cached_today_idle = 0
         self._cached_uploaded_count = 0
         self._cached_calendar_date = datetime.now().astimezone().date()
+
+        self._is_tracking = False
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            self._is_tracking = store.is_tracking_active() and not store.is_tracking_manually_stopped()
+        except Exception:
+            pass
 
         self.data_refreshed.connect(self._apply_dashboard_data)
         self.error_reported.connect(self._on_error_reported)
@@ -122,6 +121,12 @@ class DashboardPage(QWidget):
         self._cached_today_total_seconds = max(persisted, db_seconds)
 
         self._build_ui()
+
+        # Autonomous timer to detect midnight/calendar date rollover even if tracking is stopped
+        self._date_timer = QTimer(self)
+        self._date_timer.setInterval(10000)
+        self._date_timer.timeout.connect(self._check_date_rollover)
+        self._date_timer.start()
 
         try:
             att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
@@ -149,25 +154,79 @@ class DashboardPage(QWidget):
             self.punch_time_label.setText("Punch Time: Not Punched")
 
     def _save_persisted_today_seconds(self, seconds: int, cal_date) -> None:
+        """Persist accumulated active seconds using ActivityService and SessionStore."""
         try:
-            from services.secure_session import SessionStore
-            store = SessionStore()
-            store.settings.setValue("dashboard/today_total_seconds", int(seconds))
-            store.settings.setValue("dashboard/today_date", str(cal_date))
-        except Exception:
-            pass
+            if hasattr(self._service, "save_daily_active_seconds"):
+                self._service.save_daily_active_seconds(cal_date, seconds)
+            else:
+                from services.secure_session import SessionStore
+                store = SessionStore()
+                date_str = str(cal_date)
+                store.settings.setValue(f"dashboard/daily_active_seconds/{date_str}", int(seconds))
+                store.settings.setValue("dashboard/today_total_seconds", int(seconds))
+                store.settings.setValue("dashboard/today_date", date_str)
+        except Exception as err:
+            logger.debug("_save_persisted_today_seconds failed: %s", err)
 
     def _load_persisted_today_seconds(self, cal_date) -> int:
+        """Retrieve persisted active seconds for a given calendar date."""
         try:
+            if hasattr(self._service, "get_persisted_daily_active_seconds"):
+                val = self._service.get_persisted_daily_active_seconds(cal_date)
+                if isinstance(val, (int, float)):
+                    return max(0, int(val))
             from services.secure_session import SessionStore
             store = SessionStore()
+            date_str = str(cal_date)
+            val = store.settings.value(f"dashboard/daily_active_seconds/{date_str}")
+            if val is not None:
+                return max(0, int(val))
             saved_date = store.settings.value("dashboard/today_date")
-            if saved_date and str(saved_date) == str(cal_date):
+            if saved_date and str(saved_date) == date_str:
                 val = store.settings.value("dashboard/today_total_seconds")
                 return max(0, int(val)) if val is not None else 0
             return 0
-        except Exception:
+        except Exception as err:
+            logger.debug("_load_persisted_today_seconds failed: %s", err)
             return 0
+
+    def _check_date_rollover(self) -> None:
+        """Verify calendar date and perform clean rollover when a new day begins."""
+        current_date = datetime.now().astimezone().date()
+        if current_date != self._cached_calendar_date:
+            logger.info(
+                "Calendar date rolled over from %s to %s. Finalizing previous day and resetting Active Time.",
+                self._cached_calendar_date,
+                current_date,
+            )
+            # Finalize and preserve previous day's accumulated active time
+            prev_date = self._cached_calendar_date
+            prev_seconds = self._cached_today_total_seconds
+            self._save_persisted_today_seconds(prev_seconds, prev_date)
+
+            # Advance to new calendar date
+            self._cached_calendar_date = current_date
+            new_day_seconds = self._load_persisted_today_seconds(current_date)
+            self._cached_today_total_seconds = new_day_seconds
+            self._cached_today_idle = 0
+            self._save_persisted_today_seconds(new_day_seconds, current_date)
+
+            self.active_time_val_label.setText(format_hh_mm_ss(new_day_seconds))
+            self.today_idle_val_label.setText("00:00:00")
+            self.today_total_label.setText(ActivityService.format_duration(new_day_seconds))
+            try:
+                att = AttendanceService().get_daily_attendance(current_date.strftime("%Y-%m-%d"))
+                self._update_attendance_ui(att)
+            except Exception:
+                pass
+
+    def _on_tracking_toggle_clicked(self) -> None:
+        """Handle user clicking Start Tracking / Stop Tracking button on Dashboard."""
+        self.tracking_toggle_requested.emit()
+        if getattr(self, "_is_tracking", False):
+            self.tracking_stop_requested.emit()
+        else:
+            self.tracking_start_requested.emit()
 
     def _build_ui(self) -> None:
         """Build the dashboard interface."""
@@ -286,17 +345,18 @@ class DashboardPage(QWidget):
         top_row.addWidget(attendance_group, stretch=1)
 
         # --------------------------------------------------------------
-        # 3. Tracking & Sync Status
-        # Contains ONLY: Tracking, Idle Time, Records uploading,
-        # Records Uploaded, Version, Status
+        # 3. Online & Sync Status
+        # Contains: Online Status, Idle Time, Version, Records Uploaded,
+        # Status, Last Successful Sync, and Start/Stop Tracking button
         # --------------------------------------------------------------
-        status_group = QGroupBox("Tracking && Sync Status")
+        status_group = QGroupBox("Online && Sync Status")
         status_grid = QGridLayout(status_group)
         status_grid.setContentsMargins(14, 12, 14, 12)
         status_grid.setHorizontalSpacing(18)
         status_grid.setVerticalSpacing(8)
 
-        self.tracking_status_label = QLabel("Tracking: Inactive")
+        is_initially_active = getattr(self, "_is_tracking", False)
+        self.tracking_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")
         self.tracking_status_label.setObjectName("StatusLabel")
 
         self.idle_time_label = QLabel("Idle Time: 0 seconds")
@@ -332,10 +392,21 @@ class DashboardPage(QWidget):
         self.current_window_label = QLabel("")
         self.current_window_label.setVisible(False)
 
-        # Layout: Row 0 – Tracking | Idle Time
-        #         Row 1 – Version  | Records Uploaded
-        #         Row 2 – Status   (spans both columns)
-        #         Row 3 – Last Successful Sync (full width)
+        # Start / Stop Tracking button on Dashboard
+        initial_btn_text = "Stop Tracking" if is_initially_active else "Start Tracking"
+        self.tracking_toggle_button = QPushButton(initial_btn_text)
+        self.tracking_toggle_button.setObjectName("TrackingToggleButton")
+        self.tracking_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tracking_toggle_button.clicked.connect(self._on_tracking_toggle_clicked)
+        self.start_tracking_button = self.tracking_toggle_button
+        self.stop_tracking_button = self.tracking_toggle_button
+        self._apply_toggle_button_style(is_initially_active)
+
+        # Layout: Row 0 – Online Status | Idle Time
+        #         Row 1 – Version       | Records Uploaded
+        #         Row 2 – Status        (spans both columns)
+        #         Row 3 – Last Sync     (full width)
+        #         Row 4 – Start/Stop Tracking Button (full width)
         status_grid.addWidget(self.tracking_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
@@ -346,7 +417,9 @@ class DashboardPage(QWidget):
 
         status_grid.addWidget(self.last_sync_label, 3, 0, 1, 2)
 
-        status_group.setMinimumHeight(135)
+        status_grid.addWidget(self.tracking_toggle_button, 4, 0, 1, 2)
+
+        status_group.setMinimumHeight(165)
         status_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -432,9 +505,87 @@ class DashboardPage(QWidget):
                 ""
             )
 
-        # Update tracking status
+    def _apply_toggle_button_style(self, is_active: bool) -> None:
+        """Apply dynamic color and styling to Start/Stop tracking button."""
+        if is_active:
+            self.tracking_toggle_button.setText("Stop Tracking")
+            self.tracking_toggle_button.setStyleSheet(
+                "QPushButton#TrackingToggleButton {"
+                "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
+                "    background-color: #ef4444; color: #ffffff; border: none;"
+                "}"
+                "QPushButton#TrackingToggleButton:hover {"
+                "    background-color: #dc2626;"
+                "}"
+            )
+        else:
+            self.tracking_toggle_button.setText("Start Tracking")
+            self.tracking_toggle_button.setStyleSheet(
+                "QPushButton#TrackingToggleButton {"
+                "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
+                "    background-color: #0284c7; color: #ffffff; border: none;"
+                "}"
+                "QPushButton#TrackingToggleButton:hover {"
+                "    background-color: #0369a1;"
+                "}"
+            )
+
+    def _shutdown(self) -> None:
+        """Clean up background timers and persist active state on widget disposal."""
+        try:
+            if hasattr(self, "_date_timer") and self._date_timer:
+                self._date_timer.stop()
+            self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
+        except Exception:
+            pass
+
+    def update_tracker_state(
+        self,
+        state: TrackerState,
+    ) -> None:
+        """Update the Current Application section, Online status, and Active Time."""
+
+        if not state.is_tracking:
+            self.current_app_label.setText(
+                "Not tracking"
+            )
+
+            self.current_window_label.setText(
+                ""
+            )
+
+        elif state.is_idle:
+            self.current_app_label.setText(
+                state.current_application or "Idle"
+            )
+
+            self.current_window_label.setText(
+                state.current_window_title or ""
+            )
+
+        elif state.current_application:
+            self.current_app_label.setText(
+                state.current_application
+            )
+
+            self.current_window_label.setText(
+                state.current_window_title or ""
+            )
+
+        else:
+            self.current_app_label.setText(
+                "Detecting..."
+            )
+
+            self.current_window_label.setText(
+                ""
+            )
+
+        # Update Online status and dynamic toggle button
+        self._is_tracking = bool(state.is_tracking)
         tracking_text = "Active" if state.is_tracking else "Inactive"
-        self.tracking_status_label.setText(f"Tracking: {tracking_text}")
+        self.tracking_status_label.setText(f"Online: {tracking_text}")
+        self._apply_toggle_button_style(state.is_tracking)
 
         # Update idle time label in real time second by second
         idle_s = max(0, int(getattr(state, "idle_seconds", 0) or 0))
@@ -459,25 +610,7 @@ class DashboardPage(QWidget):
         self.set_records_uploaded(self._cached_uploaded_count)
 
         # Check calendar date rollover: reset ONLY when a new calendar day begins
-        current_date = datetime.now().astimezone().date()
-        if current_date != self._cached_calendar_date:
-            logger.info(
-                "Calendar date rolled over from %s to %s. Resetting Today's Time counter.",
-                self._cached_calendar_date,
-                current_date,
-            )
-            self._cached_calendar_date = current_date
-            self._cached_today_total_seconds = 0
-            self._cached_today_idle = 0
-            self._save_persisted_today_seconds(0, current_date)
-            self.active_time_val_label.setText("00:00:00")
-            self.today_idle_val_label.setText("00:00:00")
-            self.today_total_label.setText(ActivityService.format_duration(0))
-            try:
-                att = AttendanceService().get_daily_attendance(current_date.strftime("%Y-%m-%d"))
-                self._update_attendance_ui(att)
-            except Exception:
-                pass
+        self._check_date_rollover()
 
         # Continuous accumulation throughout the day:
         # If tracking is active and user is not idle, accumulate active tracked time
@@ -485,19 +618,23 @@ class DashboardPage(QWidget):
             self._cached_today_total_seconds += 1
             self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
             self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
-            if self._cached_today_total_seconds % 5 == 0:
-                self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
+            # On every active tracking interval, update the saved value
+            self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
     def set_records_uploaded(self, count: int) -> None:
         """Update the dynamic Records Uploaded count on the dashboard."""
         self.records_uploaded_label.setText(f"Records Uploaded: {count}")
 
     def set_tracking_active(self, active: bool) -> None:
-        """Explicitly update the tracking status label and app indicators."""
-        self.tracking_status_label.setText(f"Tracking: {'Active' if active else 'Inactive'}")
+        """Explicitly update the online tracking status label, button, and app indicators."""
+        self._is_tracking = bool(active)
+        self.tracking_status_label.setText(f"Online: {'Active' if active else 'Inactive'}")
+        self._apply_toggle_button_style(active)
         if not active:
             self.current_app_label.setText("Not tracking")
             self.current_window_label.setText("")
+            # Save accumulated active time immediately upon stopping
+            self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
     def refresh(self, async_mode: bool | None = None) -> None:
         """Reload today's total, applications, timeline, and uploaded records count."""
@@ -507,15 +644,11 @@ class DashboardPage(QWidget):
 
         if not async_mode:
             try:
+                self._check_date_rollover()
                 total_seconds = self._service.get_today_total_seconds()
-                current_date = datetime.now().astimezone().date()
                 if isinstance(total_seconds, (int, float)):
                     total_seconds = int(total_seconds)
-                    if current_date != self._cached_calendar_date:
-                        self._cached_calendar_date = current_date
-                        self._cached_today_total_seconds = total_seconds
-                    else:
-                        self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
+                    self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
                     self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
                     self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
                     self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
@@ -619,16 +752,11 @@ class DashboardPage(QWidget):
     def _apply_dashboard_data(self, data: dict) -> None:
         """Apply refreshed database statistics to dashboard widgets on the UI thread."""
         try:
+            self._check_date_rollover()
             total_seconds = data.get("total_seconds", 0)
-            current_date = datetime.now().astimezone().date()
             if isinstance(total_seconds, (int, float)):
                 total_seconds = int(total_seconds)
-                if current_date != self._cached_calendar_date:
-                    self._cached_calendar_date = current_date
-                    self._cached_today_total_seconds = total_seconds
-                else:
-                    self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
-
+                self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
                 self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
                 self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
                 self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)

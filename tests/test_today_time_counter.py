@@ -34,6 +34,7 @@ class TestTodayTimeCounter(unittest.TestCase):
     def setUp(self):
         self.mock_service = MagicMock(spec=ActivityService)
         self.mock_service.get_today_total_seconds.return_value = 100
+        self.mock_service.get_persisted_daily_active_seconds.return_value = 100
         self.mock_service.get_uploaded_records_count.return_value = 5
         self.mock_service.get_today_total_idle_seconds.return_value = 20
         self.mock_service.get_today_timeline.return_value = []
@@ -197,15 +198,20 @@ class TestTodayTimeCounter(unittest.TestCase):
         dashboard1._cached_today_total_seconds = 750
         today_date = dashboard1._cached_calendar_date
         dashboard1._save_persisted_today_seconds(750, today_date)
+        self.mock_service.save_daily_active_seconds.assert_called_with(today_date, 750)
 
         # Create fresh DashboardPage instance as would occur on app restart
         self.mock_service.get_today_total_seconds.return_value = 750
+        self.mock_service.get_persisted_daily_active_seconds.return_value = 750
         dashboard2 = DashboardPage(self.mock_service)
         self.assertEqual(dashboard2._cached_today_total_seconds, 750)
         self.assertEqual(dashboard2.today_total_label.text(), ActivityService.format_duration(750))
 
     def test_08_resets_only_when_new_calendar_day_begins(self):
         """Counter resets to 0 ONLY when the local calendar date rolls over to a new day."""
+        self.mock_service.get_persisted_daily_active_seconds.side_effect = lambda d: 600 if d == date(2026, 9, 8) else 0
+        self.mock_service.get_day_total_seconds.side_effect = lambda d: 600 if d == date(2026, 9, 8) else 0
+
         dashboard = DashboardPage(self.mock_service)
         dashboard._cached_today_total_seconds = 600
         dashboard._cached_calendar_date = date(2026, 9, 8)
@@ -233,6 +239,50 @@ class TestTodayTimeCounter(unittest.TestCase):
             self.assertEqual(dashboard._cached_calendar_date, date(2026, 9, 9))
             self.assertEqual(dashboard._cached_today_total_seconds, 1)
             self.assertEqual(dashboard.today_total_label.text(), ActivityService.format_duration(1))
+
+    def test_09_every_active_tick_persists_accumulated_seconds(self):
+        """Active non-idle ticks persist accumulated seconds on every interval."""
+        dashboard = DashboardPage(self.mock_service)
+        start_sec = dashboard._cached_today_total_seconds
+        today_date = dashboard._cached_calendar_date
+
+        state = TrackerState(
+            is_tracking=True,
+            is_idle=False,
+            current_application="Editor.exe",
+            current_window_title="Code",
+            idle_seconds=0.0,
+        )
+
+        self.mock_service.save_daily_active_seconds.reset_mock()
+        dashboard.update_tracker_state(state)
+        self.mock_service.save_daily_active_seconds.assert_called_with(today_date, start_sec + 1)
+
+    def test_10_online_status_and_toggle_tracking_button(self):
+        """Online status reflects tracking active state and toggle button triggers correct signals."""
+        dashboard = DashboardPage(self.mock_service)
+
+        # Initial active state
+        dashboard.set_tracking_active(True)
+        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Active")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Stop Tracking")
+
+        # Clicking toggle button while active emits tracking_stop_requested
+        stop_mock = MagicMock()
+        dashboard.tracking_stop_requested.connect(stop_mock)
+        dashboard.tracking_toggle_button.click()
+        stop_mock.assert_called_once()
+
+        # Update state to inactive
+        dashboard.set_tracking_active(False)
+        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Inactive")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Start Tracking")
+
+        # Clicking toggle button while inactive emits tracking_start_requested
+        start_mock = MagicMock()
+        dashboard.tracking_start_requested.connect(start_mock)
+        dashboard.tracking_toggle_button.click()
+        start_mock.assert_called_once()
 
 
 if __name__ == "__main__":

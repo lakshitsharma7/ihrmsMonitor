@@ -76,8 +76,9 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win._tracker.is_tracking, "Tracker must be actively running")
                 self.assertEqual(win.status_badge.text(), "Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Active")
-                # Stop button and Start button must be completely hidden for all users
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
+                # Header buttons are hidden
                 self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must NOT be visible")
                 self.assertFalse(win.start_button.isVisible(), "Start Tracking button must NOT be visible")
                 if hasattr(win, "tray") and win.tray:
@@ -88,7 +89,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_stop_tracking_button_permanently_hidden(self):
-        """Stop Tracking button and manual stop controls are permanently hidden from UI for all users."""
+        """Header Stop Tracking button and manual stop controls are permanently hidden from UI for all users."""
         self._login_test_user(tracking_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
@@ -120,24 +121,27 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win._tracker.is_tracking)
                 self.assertFalse(self.store.is_tracking_manually_stopped())
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
 
-                # User clicks stop tracking
-                win.stop_tracking(manual=True)
+                # User clicks stop tracking via dashboard toggle button
+                win.dashboard_page.tracking_toggle_button.click()
                 QApplication.processEvents()
 
                 self.assertTrue(self.store.is_tracking_manually_stopped())
                 self.assertFalse(self.store.is_tracking_active())
                 self.assertEqual(win.status_badge.text(), "Not Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Inactive")
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Inactive")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Start Tracking")
 
-                # User clicks start tracking
-                win.start_tracking()
+                # User clicks start tracking via dashboard toggle button
+                win.dashboard_page.tracking_toggle_button.click()
                 QApplication.processEvents()
 
                 self.assertFalse(self.store.is_tracking_manually_stopped())
                 self.assertTrue(self.store.is_tracking_active())
                 self.assertEqual(win.status_badge.text(), "Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Tracking: Active")
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
             finally:
                 win._shutdown()
                 win.close()
@@ -173,7 +177,8 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win2._tracker.is_tracking, "Tracking must resume after update restart")
                 self.assertEqual(win2.status_badge.text(), "Tracking")
-                self.assertEqual(win2.dashboard_page.tracking_status_label.text(), "Tracking: Active")
+                self.assertEqual(win2.dashboard_page.tracking_status_label.text(), "Online: Active")
+                self.assertEqual(win2.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
             finally:
                 win2._shutdown()
                 win2.close()
