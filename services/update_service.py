@@ -116,7 +116,23 @@ def validate_installer_file(file_path: Path | str, target_version: str | None = 
             return False, f"Installer file too small: {file_size} bytes (minimum 102400 bytes required)"
 
         is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
-        is_dmg = str(p).lower().endswith(".dmg") or (sys.platform == "darwin" and not str(p).lower().endswith(".exe"))
+        name_lower = str(p).lower()
+        is_dmg = name_lower.endswith(".dmg") or name_lower.endswith(".dmg.download")
+        is_exe = name_lower.endswith(".exe") or name_lower.endswith(".exe.download")
+
+        # Read first bytes to detect file format
+        with open(p, "rb") as f:
+            first_bytes = f.read(16)
+
+        # Immediate rejection of web server error documents (HTML, JSON, XML)
+        if first_bytes.startswith((b"<!DO", b"<htm", b"<HTM", b"{\n", b'{"', b"{'")):
+            return False, f"Invalid executable header ({first_bytes[:4]!r}), expected 'MZ'"
+
+        if not is_dmg and not is_exe:
+            if first_bytes.startswith(b"MZ"):
+                is_exe = True
+            elif sys.platform == "darwin":
+                is_dmg = True
 
         if is_dmg:
             if sys.platform.startswith("win"):
@@ -130,7 +146,7 @@ def validate_installer_file(file_path: Path | str, target_version: str | None = 
                     return False, "File is not a valid macOS disk image (missing UDIF koly signature)"
             return True, "Valid macOS disk image installer"
 
-        if sys.platform == "darwin" and str(p).lower().endswith(".exe"):
+        if sys.platform == "darwin" and is_exe:
             return False, f"Cannot execute Windows installer (.exe) on macOS: {p.name}"
 
         with open(p, "rb") as f:
@@ -1530,7 +1546,7 @@ Write-UpdateLog "PowerShell updater finished."
     try:
         spawned = False
         if sys.platform == "darwin":
-            if not is_running_tests and sh_path.exists():
+            if sh_path.exists():
                 try:
                     subprocess.Popen(["/bin/bash", str(sh_path)], start_new_session=True, close_fds=True)
                     logger.info("Spawned detached macOS updater: %s", sh_path)

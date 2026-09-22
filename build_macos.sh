@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
-# Build a standalone native macOS .app bundle and distributable .dmg.
-# Run this on macOS.
+# Build, sign, notarize, staple, and package a standalone native macOS Workpulse application and DMG.
+# Run this script on macOS.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+ENTITLEMENTS_FILE="entitlements.mac.plist"
+APP_BUNDLE="dist/Workpulse.app"
+DMG_FILE="dist/Workpulse.dmg"
+DMG_STAGING="dist/dmg_staging"
+
 echo "==================================================="
-echo "[1/4] Preparing Environment & Dependencies..."
+echo "[1/6] Preparing Environment & Cleaning Stale Builds"
 echo "==================================================="
+rm -rf build/ dist/ "${DMG_STAGING}"
 python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
     echo ""
     echo "==================================================="
-    echo "[2/4] Running Automated Tests..."
+    echo "[2/6] Running Automated Tests..."
     echo "==================================================="
     export QT_QPA_PLATFORM=offscreen
     python3 scripts/run_tests.py
@@ -24,50 +30,207 @@ fi
 
 echo ""
 echo "==================================================="
-echo "[3/4] Building Workpulse.app with PyInstaller..."
+echo "[3/6] Building Workpulse.app with PyInstaller..."
 echo "==================================================="
 pyinstaller --noconfirm --clean Workpulse-macos.spec
 
-if [ ! -d "dist/Workpulse.app" ]; then
-    echo "ERROR: dist/Workpulse.app was not generated!" >&2
+if [ ! -d "${APP_BUNDLE}" ]; then
+    echo "ERROR: ${APP_BUNDLE} was not generated!" >&2
     exit 1
 fi
 
-echo "App bundle created successfully at dist/Workpulse.app"
+echo "Workpulse.app bundle created at ${APP_BUNDLE}"
 
 echo ""
 echo "==================================================="
-echo "[4/4] Creating Distributable Workpulse.dmg..."
+echo "[4/6] Code Signing Workpulse.app (Inside-Out)..."
 echo "==================================================="
-DMG_STAGING="dist/dmg_staging"
-rm -rf "$DMG_STAGING" "dist/Workpulse.dmg"
-mkdir -p "$DMG_STAGING"
 
-cp -R "dist/Workpulse.app" "$DMG_STAGING/"
-ln -s /Applications "$DMG_STAGING/Applications"
+# Discover Signing Identity
+SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
+if [ -z "${SIGNING_IDENTITY}" ]; then
+    # Auto-detect Developer ID Application certificate from macOS keychain
+    DETECTED_ID="$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application:" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+    if [ -n "${DETECTED_ID}" ]; then
+        SIGNING_IDENTITY="${DETECTED_ID}"
+        echo "Auto-detected Developer ID Application identity from keychain: ${SIGNING_IDENTITY}"
+    fi
+fi
 
-# Copy Volume Icon if available
+if [ -n "${SIGNING_IDENTITY}" ]; then
+    echo "Signing identity: ${SIGNING_IDENTITY}"
+
+    if [ ! -f "${ENTITLEMENTS_FILE}" ]; then
+        echo "ERROR: Entitlements file ${ENTITLEMENTS_FILE} not found!" >&2
+        exit 1
+    fi
+
+    # Clean any extended attributes or DS_Store before signing
+    find "${APP_BUNDLE}" -name ".DS_Store" -delete 2>/dev/null || true
+    xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
+
+    echo "--> [4a] Signing embedded libraries (.dylib, .so)..."
+    find "${APP_BUNDLE}/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r lib; do
+        codesign --force --timestamp --options runtime --sign "${SIGNING_IDENTITY}" "${lib}"
+    done
+
+    echo "--> [4b] Signing embedded frameworks..."
+    if [ -d "${APP_BUNDLE}/Contents/Frameworks" ]; then
+        for fw in "${APP_BUNDLE}/Contents/Frameworks"/*.framework; do
+            if [ -d "${fw}" ]; then
+                codesign --force --timestamp --options runtime --sign "${SIGNING_IDENTITY}" "${fw}"
+            fi
+        done
+    fi
+
+    echo "--> [4c] Signing main executable with Hardened Runtime & Entitlements..."
+    codesign --force --timestamp --options runtime \
+        --entitlements "${ENTITLEMENTS_FILE}" \
+        --sign "${SIGNING_IDENTITY}" \
+        "${APP_BUNDLE}/Contents/MacOS/Workpulse"
+
+    echo "--> [4d] Signing top-level Workpulse.app bundle..."
+    codesign --force --timestamp --options runtime \
+        --entitlements "${ENTITLEMENTS_FILE}" \
+        --sign "${SIGNING_IDENTITY}" \
+        "${APP_BUNDLE}"
+
+    echo ""
+    echo "--> [4e] Verifying code signature..."
+    codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+    codesign --display --verbose=4 "${APP_BUNDLE}"
+    echo "Code signature verified successfully."
+else
+    echo "WARNING: No Apple Developer ID Application signing identity provided."
+    echo "Set APPLE_SIGNING_IDENTITY or import Developer ID certificate to sign for production."
+fi
+
+echo ""
+echo "==================================================="
+echo "[5/6] Creating & Signing Workpulse.dmg..."
+echo "==================================================="
+rm -rf "${DMG_STAGING}" "${DMG_FILE}"
+mkdir -p "${DMG_STAGING}"
+
+cp -R "${APP_BUNDLE}" "${DMG_STAGING}/"
+ln -s /Applications "${DMG_STAGING}/Applications"
+
 if [ -f "assets/ihrms-logo-icon.icns" ]; then
-    cp "assets/ihrms-logo-icon.icns" "$DMG_STAGING/.VolumeIcon.icns" || true
+    cp "assets/ihrms-logo-icon.icns" "${DMG_STAGING}/.VolumeIcon.icns" 2>/dev/null || true
 fi
 
 hdiutil create \
     -volname "Workpulse" \
-    -srcfolder "$DMG_STAGING" \
+    -srcfolder "${DMG_STAGING}" \
     -ov \
     -format UDZO \
-    "dist/Workpulse.dmg"
+    "${DMG_FILE}"
 
-rm -rf "$DMG_STAGING"
+rm -rf "${DMG_STAGING}"
 
-if [ ! -f "dist/Workpulse.dmg" ]; then
-    echo "ERROR: dist/Workpulse.dmg was not generated!" >&2
+if [ ! -f "${DMG_FILE}" ]; then
+    echo "ERROR: ${DMG_FILE} was not generated!" >&2
     exit 1
+fi
+
+if [ -n "${SIGNING_IDENTITY}" ]; then
+    echo "Signing ${DMG_FILE} with Developer ID..."
+    codesign --force --timestamp --sign "${SIGNING_IDENTITY}" "${DMG_FILE}"
+    codesign --verify --verbose=2 "${DMG_FILE}"
+fi
+
+echo "DMG created at ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
+
+echo ""
+echo "==================================================="
+echo "[6/6] Apple Notarization & Stapling..."
+echo "==================================================="
+
+NOTARY_ARGS=()
+TEMP_KEY_FILE=""
+
+# Check for API Key credentials
+if [ -n "${APPLE_API_KEY_BASE64:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+    TEMP_KEY_FILE="$(mktemp /tmp/AuthKey_XXXXXX.p8)"
+    echo "${APPLE_API_KEY_BASE64}" | base64 --decode > "${TEMP_KEY_FILE}"
+    NOTARY_ARGS=(
+        "--key" "${TEMP_KEY_FILE}"
+        "--key-id" "${APPLE_API_KEY_ID}"
+        "--issuer" "${APPLE_API_ISSUER}"
+    )
+elif [ -n "${APPLE_API_KEY_PATH:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+    NOTARY_ARGS=(
+        "--key" "${APPLE_API_KEY_PATH}"
+        "--key-id" "${APPLE_API_KEY_ID}"
+        "--issuer" "${APPLE_API_ISSUER}"
+    )
+# Check for Apple ID + App-Specific Password
+elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+    NOTARY_ARGS=(
+        "--apple-id" "${APPLE_ID}"
+        "--password" "${APPLE_APP_SPECIFIC_PASSWORD}"
+        "--team-id" "${APPLE_TEAM_ID}"
+    )
+# Check for stored Keychain profile
+elif [ -n "${APPLE_KEYCHAIN_PROFILE:-}" ]; then
+    NOTARY_ARGS=(
+        "--keychain-profile" "${APPLE_KEYCHAIN_PROFILE}"
+    )
+fi
+
+cleanup_notary() {
+    if [ -n "${TEMP_KEY_FILE}" ] && [ -f "${TEMP_KEY_FILE}" ]; then
+        rm -f "${TEMP_KEY_FILE}"
+    fi
+}
+trap cleanup_notary EXIT
+
+if [ ${#NOTARY_ARGS[@]} -gt 0 ]; then
+    echo "Submitting ${DMG_FILE} to Apple Notary Service via xcrun notarytool..."
+    
+    # Run notarytool submit and capture output
+    set +e
+    NOTARY_SUBMISSION=$(xcrun notarytool submit "${DMG_FILE}" "${NOTARY_ARGS[@]}" --wait 2>&1)
+    NOTARY_EXIT_CODE=$?
+    set -e
+
+    echo "${NOTARY_SUBMISSION}"
+
+    # Extract Submission ID
+    SUBMISSION_ID=$(echo "${NOTARY_SUBMISSION}" | grep -E "^\s*id:" | head -n 1 | awk '{print $2}' || true)
+    
+    if [ ${NOTARY_EXIT_CODE} -ne 0 ] || echo "${NOTARY_SUBMISSION}" | grep -qi "status: Invalid"; then
+        echo ""
+        echo "==================================================="
+        echo "ERROR: Apple Notarization Failed!"
+        echo "==================================================="
+        if [ -n "${SUBMISSION_ID}" ]; then
+            echo "Fetching Apple Notarization Log for Submission ID: ${SUBMISSION_ID}..."
+            xcrun notarytool log "${SUBMISSION_ID}" "${NOTARY_ARGS[@]}" || true
+        fi
+        exit 1
+    fi
+
+    echo ""
+    echo "Apple Notarization Accepted! Stapling ticket to ${DMG_FILE}..."
+    xcrun stapler staple "${DMG_FILE}"
+    xcrun stapler validate "${DMG_FILE}"
+    echo "Ticket successfully stapled and validated."
+
+    # Also assess the app with spctl Gatekeeper
+    if command -v spctl >/dev/null 2>&1; then
+        echo ""
+        echo "Running Gatekeeper assessment (spctl)..."
+        spctl --assess --type execute --verbose=4 "${APP_BUNDLE}" || true
+    fi
+else
+    echo "Notice: Apple Notarization credentials not configured. Skipping notarytool."
+    echo "To notarize, supply APPLE_API_KEY_BASE64/ID/ISSUER or APPLE_ID/PASSWORD/TEAM_ID."
 fi
 
 echo ""
 echo "==================================================="
-echo "macOS Build Complete:"
-echo "  1. dist/Workpulse.app"
-echo "  2. dist/Workpulse.dmg ($(du -h dist/Workpulse.dmg | cut -f1))"
+echo "macOS Build Pipeline Completed Successfully!"
+echo "  1. App: ${APP_BUNDLE}"
+echo "  2. DMG: ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
 echo "==================================================="

@@ -15,6 +15,7 @@ Verifies:
 12. Network unavailable / download failure / install failure handling keeps app running safely.
 """
 
+import sys
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
@@ -101,17 +102,21 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            fake_installer = tmp_path / f"iHRMSMonitorSetup_v{server_ver}.exe"
+            installer_name = "Workpulse_v2.1.dmg" if sys.platform == "darwin" else f"iHRMSMonitorSetup_v{server_ver}.exe"
+            fake_installer = tmp_path / installer_name
             with open(fake_installer, "wb") as f:
-                f.write(b"MZ" + b"X" * (1024 * 200))  # Valid PE header and size
+                if sys.platform == "darwin":
+                    f.write(b"0" * (1024 * 200))
+                else:
+                    f.write(b"MZ" + b"X" * (1024 * 200))  # Valid PE header and size
 
             mock_v_resp = MagicMock()
             mock_v_resp.status_code = 200
             mock_v_resp.json.return_value = {
                 "status": 1,
                 "version_code": "2.1",
-                "file_name": "iHRMSMonitorSetup_v2.1.exe",
-                "download_url": "https://demo.indovisionservices.in/uploads/iHRMSMonitorSetup_v2.1.exe",
+                "file_name": installer_name,
+                "download_url": f"https://demo.indovisionservices.in/uploads/{installer_name}",
             }
             mock_v_resp.text = '{"status": 1, "version_code": "2.1"}'
 

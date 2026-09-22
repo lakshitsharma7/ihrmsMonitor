@@ -32,12 +32,47 @@ jobs:
         run: |
           python3 scripts/run_tests.py
 
-      - name: Build Workpulse.app and Workpulse.dmg
+      - name: Configure Apple Developer ID Keychain
+        if: env.APPLE_CERTIFICATE_BASE64 != ''
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+          
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      - name: Build, Sign, Notarize & Staple Workpulse (macOS)
         env:
           SKIP_TESTS: "1"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           chmod +x build_macos.sh
           ./build_macos.sh
+
+      - name: Clean up temporary keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+          rm -f "$RUNNER_TEMP/certificate.p12" 2>/dev/null || true
 
       - name: Validate built application bundle & dmg
         run: |
@@ -53,6 +88,13 @@ jobs:
           echo "Verifying Workpulse.dmg..."
           test -f dist/Workpulse.dmg
           ls -lh dist/Workpulse.dmg
+
+          if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
+            echo "Validating Developer ID signature & stapling..."
+            codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
+            spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
+            xcrun stapler validate dist/Workpulse.dmg || true
+          fi
 
       - name: Prepare bundle for artifact upload
         run: |

@@ -156,7 +156,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
+    entitlements_file='entitlements.mac.plist' if os.path.exists('entitlements.mac.plist') else None,
     icon='assets/ihrms-logo-icon.icns',
 )
 
