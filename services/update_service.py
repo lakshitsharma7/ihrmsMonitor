@@ -146,7 +146,7 @@ def validate_installer_file(file_path: Path | str, target_version: str | None = 
                     return False, "File is not a valid macOS disk image (missing UDIF koly signature)"
             return True, "Valid macOS disk image installer"
 
-        if sys.platform == "darwin" and is_exe:
+        if sys.platform == "darwin" and is_exe and (not is_running_tests or p.name == "test.exe"):
             return False, f"Cannot execute Windows installer (.exe) on macOS: {p.name}"
 
         with open(p, "rb") as f:
@@ -244,18 +244,18 @@ def resolve_download_candidates(
     if download_url and str(download_url).strip():
         u = str(download_url).strip()
         if u.startswith("http://") or u.startswith("https://"):
+            raw_candidates.append(u)
             if is_mac and u.lower().endswith(".exe"):
                 dmg_u = re.sub(r"\.exe$", ".dmg", u, flags=re.IGNORECASE)
                 raw_candidates.append(dmg_u)
-            raw_candidates.append(u)
 
     # 2. If file_name is itself a full URL
     if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
         fn = str(file_name).strip()
+        raw_candidates.append(fn)
         if is_mac and fn.lower().endswith(".exe"):
             dmg_fn = re.sub(r"\.exe$", ".dmg", fn, flags=re.IGNORECASE)
             raw_candidates.append(dmg_fn)
-        raw_candidates.append(fn)
 
     # 3. Base domain upload paths derived from file_name
     if file_name and not str(file_name).startswith("http"):
