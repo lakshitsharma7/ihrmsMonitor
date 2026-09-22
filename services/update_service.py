@@ -594,9 +594,14 @@ class UpdateCheckWorker(QThread):
         """Download installer file with streaming progress to updates directory."""
         clean_v = str(version).lstrip("vV").strip()
         updates_dir = get_updates_directory()
-        safe_name = f"WorkpulseSetup_v{clean_v}.exe"
-        installer_path = updates_dir / safe_name
-        legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+        if sys.platform == "darwin":
+            safe_name = f"Workpulse_v{clean_v}.dmg"
+            installer_path = updates_dir / safe_name
+            legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.dmg"
+        else:
+            safe_name = f"WorkpulseSetup_v{clean_v}.exe"
+            installer_path = updates_dir / safe_name
+            legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
         if not installer_path.exists() and legacy_installer_path.exists():
             installer_path = legacy_installer_path
         temp_path = updates_dir / f"{safe_name}.download"
@@ -676,7 +681,10 @@ class UpdateCheckWorker(QThread):
                                     return
                                 if chunk:
                                     if is_valid_header is None:
-                                        if chunk[:2] != b"MZ":
+                                        if sys.platform == "win32" and chunk[:2] != b"MZ":
+                                            is_valid_header = False
+                                            break
+                                        if chunk.startswith((b"<!DO", b"<htm", b"<HTM", b"{\n", b'{"', b"{'")):
                                             is_valid_header = False
                                             break
                                         is_valid_header = True
@@ -687,7 +695,7 @@ class UpdateCheckWorker(QThread):
                                         self.download_progress.emit(percent, downloaded, total_size)
 
                         if is_valid_header is False:
-                            logger.warning("Candidate %s lacked MZ header", cand_url)
+                            logger.warning("Candidate %s had invalid installer content", cand_url)
                             if temp_path.exists():
                                 temp_path.unlink()
                             continue
@@ -719,6 +727,8 @@ class UpdateCheckWorker(QThread):
             # Dev / local test fallback
             if not download_successful:
                 local_candidates = [
+                    Path(f"dist/Workpulse_v{clean_v}.dmg"),
+                    Path("dist/Workpulse.dmg"),
                     Path("installer/WorkpulseSetup.exe"),
                     Path("dist/installer/WorkpulseSetup.exe"),
                     Path("dist/installer/Workpulse-Installer.exe"),
@@ -1949,9 +1959,14 @@ class UpdatePipelineWorker(QThread):
             self.phase_changed.emit("downloading", f"Downloading update v{clean_v}...")
             self.status_message.emit(f"Downloading update v{clean_v}...")
             updates_dir = get_updates_directory()
-            safe_name = f"WorkpulseSetup_v{clean_v}.exe"
-            installer_path = updates_dir / safe_name
-            legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+            if sys.platform == "darwin":
+                safe_name = f"Workpulse_v{clean_v}.dmg"
+                installer_path = updates_dir / safe_name
+                legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.dmg"
+            else:
+                safe_name = f"WorkpulseSetup_v{clean_v}.exe"
+                installer_path = updates_dir / safe_name
+                legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
             if not installer_path.exists() and legacy_installer_path.exists():
                 installer_path = legacy_installer_path
             temp_path = updates_dir / f"{safe_name}.download"
@@ -2025,7 +2040,10 @@ class UpdatePipelineWorker(QThread):
                                         return
                                     if chunk:
                                         if is_valid_header is None:
-                                            if chunk[:2] != b"MZ":
+                                            if sys.platform == "win32" and chunk[:2] != b"MZ":
+                                                is_valid_header = False
+                                                break
+                                            if chunk.startswith((b"<!DO", b"<htm", b"<HTM", b"{\n", b'{"', b"{'")):
                                                 is_valid_header = False
                                                 break
                                             is_valid_header = True
@@ -2037,7 +2055,7 @@ class UpdatePipelineWorker(QThread):
                                             self.status_message.emit(f"Downloading update: {pct}%")
 
                             if is_valid_header is False:
-                                logger.debug("Candidate %s lacked MZ header", cand_url)
+                                logger.debug("Candidate %s had invalid installer content", cand_url)
                                 if temp_path.exists():
                                     temp_path.unlink()
                                 continue
@@ -2069,6 +2087,8 @@ class UpdatePipelineWorker(QThread):
                 # Development / test fallback: if server doesn't host file yet, check local built installer
                 if not download_successful:
                     local_candidates = [
+                        Path(f"dist/Workpulse_v{clean_v}.dmg"),
+                        Path("dist/Workpulse.dmg"),
                         Path("installer/WorkpulseSetup.exe"),
                         Path("dist/installer/WorkpulseSetup.exe"),
                         Path("dist/installer/Workpulse-Installer.exe"),
