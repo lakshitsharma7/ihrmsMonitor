@@ -19,7 +19,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
     echo "[2/4] Running Automated Tests..."
     echo "==================================================="
     export QT_QPA_PLATFORM=offscreen
-    python3 -m unittest discover tests
+    python3 scripts/run_tests.py
 fi
 
 echo ""
