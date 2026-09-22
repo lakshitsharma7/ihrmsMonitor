@@ -423,6 +423,7 @@ class DashboardPage(QWidget):
         self.update_status_label = QLabel("Status: Online")
         self.update_status_label.setObjectName("StatusLabel")
         self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
+        self.update_status_label.setVisible(False)  # Hidden to avoid duplicate network status line
         self.sync_status_label = self.update_status_label
 
         # Initial last successful sync timestamp
@@ -452,22 +453,19 @@ class DashboardPage(QWidget):
 
         # Layout: Row 0 – Network Status | Idle Time
         #         Row 1 – Version        | Records Uploaded
-        #         Row 2 – Status         (spans both columns)
-        #         Row 3 – Last Sync      (full width)
-        #         Row 4 – Single Tracking Button (full width)
+        #         Row 2 – Last Sync      (full width)
+        #         Row 3 – Single Tracking Button (full width)
         status_grid.addWidget(self.network_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
         status_grid.addWidget(self.version_label, 1, 0)
         status_grid.addWidget(self.records_uploaded_label, 1, 1)
 
-        status_grid.addWidget(self.update_status_label, 2, 0, 1, 2)
+        status_grid.addWidget(self.last_sync_label, 2, 0, 1, 2)
 
-        status_grid.addWidget(self.last_sync_label, 3, 0, 1, 2)
+        status_grid.addWidget(self.tracking_toggle_button, 3, 0, 1, 2)
 
-        status_grid.addWidget(self.tracking_toggle_button, 4, 0, 1, 2)
-
-        status_group.setMinimumHeight(165)
+        status_group.setMinimumHeight(140)
         status_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -481,26 +479,11 @@ class DashboardPage(QWidget):
         # ==============================================================
         tasks_group = QGroupBox("Assigned Tasks")
         tasks_layout = QVBoxLayout(tasks_group)
-        tasks_layout.setContentsMargins(10, 10, 10, 10)
-        tasks_layout.setSpacing(4)
+        tasks_layout.setContentsMargins(12, 14, 12, 12)
+        tasks_layout.setSpacing(0)
 
         self.task_table = AssignedTasksTable()
-
-        # Wrap the table in a scroll area so horizontal overflow is accessible
-        # without clipping. The table itself has AlwaysOn horizontal scrollbar,
-        # and the outer scroll area provides the viewport for the full table width.
-        task_scroll = QScrollArea()
-        task_scroll.setObjectName("TaskTableScrollArea")
-        task_scroll.setWidget(self.task_table)
-        task_scroll.setWidgetResizable(True)
-        task_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        task_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        task_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        task_scroll.setStyleSheet(
-            "QScrollArea#TaskTableScrollArea { background: transparent; border: none; }"
-        )
-        task_scroll.setMinimumHeight(220)
-        tasks_layout.addWidget(task_scroll)
+        tasks_layout.addWidget(self.task_table)
 
         root.addWidget(tasks_group)
         root.addStretch(1)

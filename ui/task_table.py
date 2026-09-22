@@ -28,17 +28,23 @@ TABLE_STYLESHEET = """
 QTableWidget#AssignedTasksTable {
     background-color: #ffffff;
     alternate-background-color: #f8fafc;
-    border: 1.5px solid #cbd5e1;
-    border-radius: 6px;
-    gridline-color: #94a3b8;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    gridline-color: #e2e8f0;
     font-size: 12px;
+    color: #1e293b;
+    outline: none;
 }
 
 QTableWidget#AssignedTasksTable::item {
-    padding: 4px 8px;
+    padding: 8px 10px;
     color: #1e293b;
-    border-right: 1px solid #94a3b8;
-    border-bottom: 1px solid #cbd5e1;
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+QTableWidget#AssignedTasksTable::item:last-child {
+    border-right: none;
 }
 
 QTableWidget#AssignedTasksTable::item:alternate {
@@ -46,25 +52,31 @@ QTableWidget#AssignedTasksTable::item:alternate {
 }
 
 QTableWidget#AssignedTasksTable::item:selected {
-    background-color: #e2e8f0;
+    background-color: #f1f5f9;
     color: #0f172a;
+}
+
+QTableWidget#AssignedTasksTable::item:hover {
+    background-color: #f8fafc;
 }
 
 QHeaderView {
-    background-color: #f1f5f9;
+    background-color: #f8fafc;
     border: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 
 QHeaderView::section {
-    background-color: #f1f5f9;
-    color: #0f172a;
+    background-color: #f8fafc;
+    color: #334155;
     font-weight: 700;
     font-size: 12px;
-    padding: 8px 6px;
+    padding: 9px 10px;
     border-top: none;
     border-left: none;
-    border-right: 1px solid #94a3b8;
-    border-bottom: 2px solid #475569;
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 1.5px solid #cbd5e1;
 }
 
 QHeaderView::section:last {
@@ -72,26 +84,26 @@ QHeaderView::section:last {
 }
 
 QTableCornerButton::section {
-    background-color: #f1f5f9;
-    border-right: 1px solid #94a3b8;
-    border-bottom: 2px solid #475569;
+    background-color: #f8fafc;
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 1.5px solid #cbd5e1;
 }
 
 QScrollBar:horizontal {
-    height: 12px;
+    height: 8px;
     background: #f1f5f9;
     border-radius: 4px;
     margin: 0px;
 }
 
 QScrollBar::handle:horizontal {
-    background: #94a3b8;
+    background: #cbd5e1;
     min-width: 24px;
     border-radius: 4px;
 }
 
 QScrollBar::handle:horizontal:hover {
-    background: #475569;
+    background: #94a3b8;
 }
 
 QScrollBar::add-line:horizontal,
@@ -100,20 +112,20 @@ QScrollBar::sub-line:horizontal {
 }
 
 QScrollBar:vertical {
-    width: 10px;
+    width: 8px;
     background: #f1f5f9;
     border-radius: 4px;
     margin: 0px;
 }
 
 QScrollBar::handle:vertical {
-    background: #94a3b8;
+    background: #cbd5e1;
     min-height: 24px;
     border-radius: 4px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #475569;
+    background: #94a3b8;
 }
 
 QScrollBar::add-line:vertical,
@@ -122,32 +134,33 @@ QScrollBar::sub-line:vertical {
 }
 """
 
-# ── Shared QLineEdit stylesheets (avoids repetition and makes error/clear easy) ─
 _LE_NORMAL = (
     "QLineEdit {"
     "  background-color: #ffffff;"
-    "  border: 1.5px solid #94a3b8;"
-    "  border-radius: 4px;"
-    "  padding: 4px 6px;"
+    "  border: 1px solid #cbd5e1;"
+    "  border-radius: 6px;"
+    "  padding: 5px 8px;"
     "  font-size: 12px;"
     "  font-weight: 500;"
+    "  color: #1e293b;"
     "}"
     "QLineEdit:hover {"
-    "  border: 1.5px solid #64748b;"
+    "  border: 1px solid #94a3b8;"
     "}"
     "QLineEdit:focus {"
-    "  border: 2px solid #1a73e8;"
-    "  background-color: #f8faff;"
+    "  border: 1.5px solid #1a73e8;"
+    "  background-color: #ffffff;"
     "}"
 )
 
 _LE_ERROR = (
     "QLineEdit {"
-    "  background-color: #fff5f5;"
-    "  border: 1.5px solid #d93025;"
-    "  border-radius: 4px;"
-    "  padding: 4px 6px;"
+    "  background-color: #fef2f2;"
+    "  border: 1.5px solid #ef4444;"
+    "  border-radius: 6px;"
+    "  padding: 5px 8px;"
     "  font-size: 12px;"
+    "  color: #991b1b;"
     "}"
 )
 
@@ -177,17 +190,16 @@ class AssignedTasksTable(QTableWidget):
     """
 
     # Column config: (header_label, initial_width_px, header_alignment)
-    # Total default width ~1395px — always needs horizontal scroll on standard screens
     COLUMN_CONFIG = [
-        ("Name",                 150, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Description",          200, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Name",                 160, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Description",          220, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
         ("Category",             110, Qt.AlignmentFlag.AlignCenter),
-        ("Target",               100, Qt.AlignmentFlag.AlignCenter),
-        ("Measurement Criteria", 175, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Target",                90, Qt.AlignmentFlag.AlignCenter),
+        ("Measurement Criteria", 190, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
         ("Weightage",             90, Qt.AlignmentFlag.AlignCenter),
         ("Task Done Till Now",   130, Qt.AlignmentFlag.AlignCenter),
         ("Task Completed",       130, Qt.AlignmentFlag.AlignCenter),
-        ("Comment",              200, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Comment",              220, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
         ("Action",               110, Qt.AlignmentFlag.AlignCenter),
     ]
 
@@ -206,12 +218,13 @@ class AssignedTasksTable(QTableWidget):
 
         self.setColumnCount(len(self.COLUMN_CONFIG))
         self.setShowGrid(True)
+        self.setWordWrap(True)
 
         # ── Header ────────────────────────────────────────────────────────────
         header = self.horizontalHeader()
-        header.setFixedHeight(44)
+        header.setFixedHeight(40)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-        header.setMinimumSectionSize(80)
+        header.setMinimumSectionSize(70)
         header.setStretchLastSection(False)
 
         for col_idx, (col_name, col_width, _col_align) in enumerate(self.COLUMN_CONFIG):
@@ -228,7 +241,6 @@ class AssignedTasksTable(QTableWidget):
 
         # ── Row config ────────────────────────────────────────────────────────
         self.verticalHeader().setVisible(False)
-        # 52px rows so the embedded QLineEdit widgets are fully visible
         self.verticalHeader().setDefaultSectionSize(52)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -236,19 +248,14 @@ class AssignedTasksTable(QTableWidget):
         self.setAlternatingRowColors(True)
 
         # ── Scroll behaviour ──────────────────────────────────────────────────
-        # AlwaysOn makes the scrollbar permanently visible so the user knows
-        # there are more columns to the right.
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-
-        # Prevent the table from shrinking its viewport to fit the parent widget
-        # — this is what causes right-side columns to be merged/clipped.
         self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
 
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(200)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(120)
 
     @property
     def tasks(self) -> List[Dict[str, Any]]:
@@ -272,13 +279,18 @@ class AssignedTasksTable(QTableWidget):
 
         if not self._tasks:
             self.setRowCount(1)
+            self.setRowHeight(0, 70)
             empty_item = QTableWidgetItem("No assigned tasks found.")
             empty_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
+            empty_font = QFont()
+            empty_font.setPointSize(9)
+            empty_item.setFont(empty_font)
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.setItem(0, 0, empty_item)
             self.setSpan(0, 0, 1, len(self.COLUMN_CONFIG))
+            self.setMinimumHeight(115)
             self.setUpdatesEnabled(True)
             return
 
@@ -290,7 +302,6 @@ class AssignedTasksTable(QTableWidget):
 
         for row, task in enumerate(self._tasks):
             self.insertRow(row)
-            # Explicitly set row height so cell widgets are fully visible
             self.setRowHeight(row, 52)
 
             name = str(task.get("name") or task.get("title") or "Task").strip()
@@ -310,7 +321,7 @@ class AssignedTasksTable(QTableWidget):
             name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 0, name_item)
 
-            # 1. Description (Read-only, Left-aligned)
+            # 1. Description (Read-only, Left-aligned, Wrapped)
             desc_item = QTableWidgetItem(desc)
             desc_item.setToolTip(desc)
             desc_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -331,7 +342,7 @@ class AssignedTasksTable(QTableWidget):
             target_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 3, target_item)
 
-            # 4. Measurement Criteria (Read-only, Left-aligned)
+            # 4. Measurement Criteria (Read-only, Left-aligned, Wrapped)
             crit_item = QTableWidgetItem(criteria)
             crit_item.setToolTip(criteria)
             crit_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -362,7 +373,6 @@ class AssignedTasksTable(QTableWidget):
             completed_edit.setValidator(QRegularExpressionValidator(num_regex, completed_edit))
             completed_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             completed_edit.setStyleSheet(_LE_NORMAL)
-            # No max-width — let it expand to fill the column
             completed_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
@@ -404,6 +414,7 @@ class AssignedTasksTable(QTableWidget):
             action_layout.addWidget(save_btn)
             self.setCellWidget(row, 9, action_container)
 
+        self.setMinimumHeight(min(450, 42 + len(self._tasks) * 54))
         self.setUpdatesEnabled(True)
 
     def _on_task_completed_changed(self, row: int, text: str) -> None:
@@ -416,7 +427,7 @@ class AssignedTasksTable(QTableWidget):
 
         # Clear error styling if active
         comp_edit = self._get_line_edit(row, 7)
-        if comp_edit and "border: 1.5px solid #d93025" in comp_edit.styleSheet():
+        if comp_edit and "border: 1.5px solid #ef4444" in comp_edit.styleSheet():
             comp_edit.setStyleSheet(_LE_NORMAL)
             comp_edit.setToolTip("")
 
@@ -430,7 +441,7 @@ class AssignedTasksTable(QTableWidget):
 
         # Clear error styling if active
         comment_edit = self._get_line_edit(row, 8)
-        if comment_edit and "border: 1.5px solid #d93025" in comment_edit.styleSheet():
+        if comment_edit and "border: 1.5px solid #ef4444" in comment_edit.styleSheet():
             comment_edit.setStyleSheet(_LE_NORMAL)
             comment_edit.setToolTip("")
 
@@ -489,11 +500,11 @@ class AssignedTasksTable(QTableWidget):
                 "  background-color: #93bbf8;"
                 "  color: #ffffff;"
                 "  border: none;"
-                "  border-radius: 4px;"
-                "  padding: 5px 14px;"
-                "  font-size: 11px;"
+                "  border-radius: 6px;"
+                "  padding: 6px 16px;"
+                "  font-size: 12px;"
                 "  font-weight: 600;"
-                "  min-width: 70px;"
+                "  min-width: 65px;"
                 "}"
             )
 
@@ -526,7 +537,6 @@ class AssignedTasksTable(QTableWidget):
                     )
 
                 if ok:
-                    # Re-fetch the fresh KRA data to confirm persisted values from backend
                     fresh_tasks = svc.fetch_assigned_tasks(date=date_val, force=True)
                     self._signals.submit_success.emit(
                         row,
@@ -554,13 +564,11 @@ class AssignedTasksTable(QTableWidget):
         saved_info = data.get("saved_task", {})
         fresh_tasks = data.get("fresh_tasks", [])
 
-        # Find matching task in fresh tasks or update current row
         if row < len(self._tasks):
             task = self._tasks[row]
             task_completed_val = saved_info.get("task_completed", "")
             comment_val = saved_info.get("comment", "")
 
-            # If fresh tasks returned from backend, check for updated task
             if fresh_tasks:
                 for ft in fresh_tasks:
                     if ft.get("kra_id") and ft.get("kra_id") == task.get("kra_id"):
@@ -602,17 +610,17 @@ class AssignedTasksTable(QTableWidget):
                 save_btn.setToolTip("Timesheet saved successfully.")
                 save_btn.setStyleSheet(
                     "QPushButton {"
-                    "  background-color: #e6f4ea;"
-                    "  color: #137333;"
-                    "  border: 1px solid #34a853;"
-                    "  border-radius: 4px;"
-                    "  padding: 5px 14px;"
-                    "  font-size: 11px;"
+                    "  background-color: #ecfdf5;"
+                    "  color: #059669;"
+                    "  border: 1px solid #10b981;"
+                    "  border-radius: 6px;"
+                    "  padding: 6px 16px;"
+                    "  font-size: 12px;"
                     "  font-weight: 600;"
-                    "  min-width: 70px;"
+                    "  min-width: 65px;"
                     "}"
                     "QPushButton:hover {"
-                    "  background-color: #ceead6;"
+                    "  background-color: #d1fae5;"
                     "}"
                 )
 
@@ -630,17 +638,17 @@ class AssignedTasksTable(QTableWidget):
                 save_btn.setToolTip(f"Unable to save changes ({err_msg}). Click to retry.")
                 save_btn.setStyleSheet(
                     "QPushButton {"
-                    "  background-color: #fce8e6;"
-                    "  color: #c5221f;"
-                    "  border: 1px solid #ea4335;"
-                    "  border-radius: 4px;"
-                    "  padding: 5px 14px;"
-                    "  font-size: 11px;"
+                    "  background-color: #fef2f2;"
+                    "  color: #dc2626;"
+                    "  border: 1px solid #ef4444;"
+                    "  border-radius: 6px;"
+                    "  padding: 6px 16px;"
+                    "  font-size: 12px;"
                     "  font-weight: 600;"
-                    "  min-width: 70px;"
+                    "  min-width: 65px;"
                     "}"
                     "QPushButton:hover {"
-                    "  background-color: #fad2cf;"
+                    "  background-color: #fee2e2;"
                     "}"
                 )
 
@@ -659,11 +667,11 @@ class AssignedTasksTable(QTableWidget):
             "  background-color: #1a73e8;"
             "  color: #ffffff;"
             "  border: none;"
-            "  border-radius: 4px;"
-            "  padding: 5px 14px;"
-            "  font-size: 11px;"
+            "  border-radius: 6px;"
+            "  padding: 6px 16px;"
+            "  font-size: 12px;"
             "  font-weight: 600;"
-            "  min-width: 70px;"
+            "  min-width: 65px;"
             "}"
             "QPushButton:hover {"
             "  background-color: #1557b0;"
@@ -681,6 +689,7 @@ class AssignedTasksTable(QTableWidget):
         """Display a clean loading state in the table."""
         self.setUpdatesEnabled(False)
         self.setRowCount(1)
+        self.setRowHeight(0, 60)
         loading_item = QTableWidgetItem("Loading KRA...")
         loading_item.setTextAlignment(
             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
@@ -695,6 +704,7 @@ class AssignedTasksTable(QTableWidget):
         logger.warning("AssignTaskTable: unable to load KRA data: %s", message)
         self.setUpdatesEnabled(False)
         self.setRowCount(1)
+        self.setRowHeight(0, 60)
         err_item = QTableWidgetItem("Unable to load KRA data.")
         err_item.setTextAlignment(
             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
@@ -705,5 +715,3 @@ class AssignedTasksTable(QTableWidget):
         self.setItem(0, 0, err_item)
         self.setSpan(0, 0, 1, len(self.COLUMN_CONFIG))
         self.setUpdatesEnabled(True)
-
-
