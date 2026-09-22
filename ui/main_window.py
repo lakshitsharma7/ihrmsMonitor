@@ -1435,7 +1435,7 @@ class MainWindow(QMainWindow):
             state
         )
 
-        if getattr(self.dashboard_page, "_is_paused", False):
+        if getattr(self.dashboard_page, "_is_paused", False) or store.is_tracking_paused():
             self.status_badge.setText(
                 "Paused"
             )
