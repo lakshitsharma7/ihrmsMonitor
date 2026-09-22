@@ -261,6 +261,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 win.close()
                 QApplication.processEvents()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Windows registry startup test")
     def test_startup_registration_compiled_exe_only(self):
         """Startup registration writes registry only for compiled iHRMS Monitor.exe, never dev python.exe."""
         from system import startup

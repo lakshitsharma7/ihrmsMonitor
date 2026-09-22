@@ -192,6 +192,7 @@ class TestSleepResumeHandling(unittest.TestCase):
 
         tracker.stop()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Windows-specific idle detector test")
     def test_windows_idle_detector_resume_capping(self):
         """Verify platform_support.windows.idle_detector caps pre-sleep tick counts after resume."""
         from platform_support.windows import idle_detector
@@ -212,6 +213,7 @@ class TestSleepResumeHandling(unittest.TestCase):
             # Idle time must NOT be 50,000 seconds! It should be capped near 0.0s!
             self.assertLess(idle, 5.0)
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Windows-specific idle detector test")
     def test_windows_idle_detector_detects_mouse_move_and_clicks(self):
         """Verify platform_support.windows.idle_detector returns 0.0 on cursor movement or button press."""
         from platform_support.windows import idle_detector
