@@ -264,6 +264,45 @@ class TestAutoUpdateExactScenarios(unittest.TestCase):
         self.assertEqual(os.environ["REQUESTS_CA_BUNDLE"], resolved)
         self.assertNotEqual(os.environ["REQUESTS_CA_BUNDLE"], invalid_path)
 
+    # ==============================================================
+    # 7. CROSS-PLATFORM CANDIDATE RESOLUTION & VALIDATION
+    # ==============================================================
+    def test_macos_candidate_resolution_derives_dmg(self):
+        """On macOS, candidate resolution converts .exe URLs to .dmg and adds DMG GitHub fallback."""
+        with patch("services.update_service.sys.platform", "darwin"):
+            candidates = resolve_download_candidates(
+                api_url="https://hrms.workpulse.in/hrms_api/ci4/api",
+                file_name="WorkpulseSetup.exe",
+                download_url="https://hrms.workpulse.in/uploads/WorkpulseSetup.exe",
+                server_version="2.0.2",
+            )
+            # Should contain .dmg candidates
+            dmg_candidates = [c for c in candidates if c.endswith(".dmg")]
+            self.assertTrue(len(dmg_candidates) > 0)
+            self.assertIn("https://hrms.workpulse.in/uploads/WorkpulseSetup.dmg", dmg_candidates)
+            self.assertIn(
+                "https://github.com/hrmsportal/ihrms_monitor/releases/download/v2.0.2/Workpulse.dmg",
+                candidates,
+            )
+
+    def test_cross_platform_installer_validation_guard(self):
+        """Windows rejects .dmg files and macOS rejects .exe files."""
+        fake_dmg = self.tmp_path / "test.dmg"
+        fake_dmg.write_bytes(b"0" * 102400)
+
+        with patch("services.update_service.sys.platform", "win32"):
+            valid, reason = validate_installer_file(fake_dmg)
+            self.assertFalse(valid)
+            self.assertIn("Cannot execute macOS disk image installer on Windows", reason)
+
+        fake_exe = self.tmp_path / "test.exe"
+        fake_exe.write_bytes(b"0" * 102400)
+
+        with patch("services.update_service.sys.platform", "darwin"):
+            valid, reason = validate_installer_file(fake_exe)
+            self.assertFalse(valid)
+            self.assertIn("Cannot execute Windows installer (.exe) on macOS", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

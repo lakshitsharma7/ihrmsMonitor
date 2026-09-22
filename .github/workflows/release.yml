@@ -1,0 +1,157 @@
+name: Multi-Platform Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (e.g. v2.0.2)'
+        required: true
+        default: 'v2.0.2'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit and integration tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python scripts/run_tests.py
+
+      - name: Build Windows Executable (PyInstaller)
+        run: |
+          pyinstaller Workpulse.spec --clean --noconfirm
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress
+
+      - name: Compile Inno Setup Installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\WorkpulseSetup.iss
+
+      - name: Prepare Windows Distribution Files
+        shell: pwsh
+        run: |
+          mkdir dist\windows_release -Force
+          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\WorkpulseSetup.exe
+          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\Workpulse-Installer.exe
+          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\iHRMSMonitorSetup.exe
+          Copy-Item dist\Workpulse\Workpulse.exe dist\windows_release\Workpulse.exe
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: dist/windows_release/*
+          retention-days: 5
+
+  build-macos:
+    name: Build macOS Release
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install -r requirements.txt -r requirements-macos.txt
+
+      - name: Run unit and integration tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python3 scripts/run_tests.py
+
+      - name: Build Workpulse.app and Workpulse.dmg
+        env:
+          SKIP_TESTS: "1"
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Validate built application bundle & dmg
+        run: |
+          test -d dist/Workpulse.app
+          test -f dist/Workpulse.app/Contents/MacOS/Workpulse
+          test -f dist/Workpulse.dmg
+          ls -lh dist/Workpulse.dmg
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-assets
+          path: dist/Workpulse.dmg
+          retention-days: 5
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-assets
+          path: release_assets/windows
+
+      - name: Download macOS Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release-assets
+          path: release_assets/macos
+
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: Workpulse ${{ steps.vars.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            release_assets/windows/WorkpulseSetup.exe
+            release_assets/windows/Workpulse.exe
+            release_assets/windows/Workpulse-Installer.exe
+            release_assets/windows/iHRMSMonitorSetup.exe
+            release_assets/macos/Workpulse.dmg

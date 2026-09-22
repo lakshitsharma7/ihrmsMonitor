@@ -116,6 +116,22 @@ def validate_installer_file(file_path: Path | str, target_version: str | None = 
             return False, f"Installer file too small: {file_size} bytes (minimum 102400 bytes required)"
 
         is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
+        is_dmg = str(p).lower().endswith(".dmg") or (sys.platform == "darwin" and not str(p).lower().endswith(".exe"))
+
+        if is_dmg:
+            if sys.platform.startswith("win"):
+                return False, f"Cannot execute macOS disk image installer on Windows: {p.name}"
+            # Validate DMG structure
+            with open(p, "rb") as f:
+                f.seek(max(0, file_size - 512))
+                trailer = f.read(512)
+                # Check for Apple UDIF 'koly' trailer signature or basic non-empty disk image
+                if b"koly" not in trailer and not is_running_tests and file_size < 1024 * 1024:
+                    return False, "File is not a valid macOS disk image (missing UDIF koly signature)"
+            return True, "Valid macOS disk image installer"
+
+        if sys.platform == "darwin" and str(p).lower().endswith(".exe"):
+            return False, f"Cannot execute Windows installer (.exe) on macOS: {p.name}"
 
         with open(p, "rb") as f:
             header = f.read(2)
@@ -206,19 +222,34 @@ def resolve_download_candidates(
     parts = api_url.split("/hrms_api")
     base_domain = parts[0].rstrip("/") if parts else api_url.rstrip("/")
 
+    is_mac = sys.platform == "darwin"
+
     # 1. Explicit download URL from API response or configuration (PRIMARY CANDIDATE)
     if download_url and str(download_url).strip():
         u = str(download_url).strip()
         if u.startswith("http://") or u.startswith("https://"):
+            if is_mac and u.lower().endswith(".exe"):
+                dmg_u = re.sub(r"\.exe$", ".dmg", u, flags=re.IGNORECASE)
+                raw_candidates.append(dmg_u)
             raw_candidates.append(u)
 
     # 2. If file_name is itself a full URL
     if file_name and (str(file_name).startswith("http://") or str(file_name).startswith("https://")):
-        raw_candidates.append(str(file_name).strip())
+        fn = str(file_name).strip()
+        if is_mac and fn.lower().endswith(".exe"):
+            dmg_fn = re.sub(r"\.exe$", ".dmg", fn, flags=re.IGNORECASE)
+            raw_candidates.append(dmg_fn)
+        raw_candidates.append(fn)
 
     # 3. Base domain upload paths derived from file_name
     if file_name and not str(file_name).startswith("http"):
         clean_file = str(file_name).strip()
+        if is_mac and clean_file.lower().endswith(".exe"):
+            dmg_file = re.sub(r"\.exe$", ".dmg", clean_file, flags=re.IGNORECASE)
+            raw_candidates.append(f"{base_domain}/uploads/{dmg_file}")
+            raw_candidates.append(f"{base_domain}/hrms_api/uploads/{dmg_file}")
+            raw_candidates.append(f"{base_domain}/uploads/version/{dmg_file}")
+            raw_candidates.append(f"{base_domain}/{dmg_file}")
         raw_candidates.append(f"{base_domain}/uploads/{clean_file}")
         raw_candidates.append(f"{base_domain}/hrms_api/uploads/{clean_file}")
         raw_candidates.append(f"{base_domain}/uploads/version/{clean_file}")
@@ -227,41 +258,65 @@ def resolve_download_candidates(
     # 4. Activity tracker link if it explicitly references an executable installer
     if activity_tracker_link and str(activity_tracker_link).strip():
         atl = str(activity_tracker_link).strip()
-        if atl.lower().endswith(".exe"):
+        if atl.lower().endswith(".exe") or atl.lower().endswith(".dmg"):
             raw_candidates.append(atl)
         elif file_name and not str(file_name).startswith("http"):
             raw_candidates.append(f"{atl.rstrip('/')}/{str(file_name).strip()}")
 
-    # 5. Target-version prioritized filenames (guessed paths)
-    if clean_v:
-        ver_names = [
-            f"WorkpulseSetup_v{clean_v}.exe",
-            f"WorkpulseSetup.exe",
-            f"Workpulse-Installer-{clean_v}.exe",
-            f"WorkpulseSetup_v{clean_v}.0.exe",
-            f"Workpulse-Installer-{clean_v}.0.exe",
-            f"iHRMSMonitorSetup_v{clean_v}.exe",
-            f"iHRMS-Monitor-Installer-{clean_v}.exe",
-            f"iHRMSMonitorSetup_v{clean_v}.0.exe",
-            f"iHRMS-Monitor-Installer-{clean_v}.0.exe",
-        ]
-        for vname in ver_names:
-            raw_candidates.append(f"{base_domain}/uploads/{vname}")
-            raw_candidates.append(f"{base_domain}/hrms_api/uploads/{vname}")
-            raw_candidates.append(f"{base_domain}/uploads/version/{vname}")
-            raw_candidates.append(f"{base_domain}/{vname}")
-            if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
-                raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{vname}")
+    # 5. Target-version prioritized filenames (guessed paths) & GitHub Releases
+    if is_mac:
+        if clean_v:
+            mac_ver_names = [
+                f"Workpulse_v{clean_v}.dmg",
+                f"WorkpulseSetup_v{clean_v}.dmg",
+                f"Workpulse-{clean_v}.dmg",
+                "Workpulse.dmg",
+                "WorkpulseSetup.dmg",
+            ]
+            for vname in mac_ver_names:
+                raw_candidates.append(f"{base_domain}/uploads/{vname}")
+                raw_candidates.append(f"{base_domain}/hrms_api/uploads/{vname}")
+                raw_candidates.append(f"{base_domain}/uploads/version/{vname}")
+                raw_candidates.append(f"{base_domain}/{vname}")
+            # GitHub Releases fallback for macOS
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/Workpulse.dmg")
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/WorkpulseSetup.dmg")
+        raw_candidates.append(f"{base_domain}/uploads/Workpulse.dmg")
+        raw_candidates.append(f"{base_domain}/hrms_api/uploads/Workpulse.dmg")
+    else:
+        if clean_v:
+            ver_names = [
+                f"WorkpulseSetup_v{clean_v}.exe",
+                f"WorkpulseSetup.exe",
+                f"Workpulse-Installer-{clean_v}.exe",
+                f"WorkpulseSetup_v{clean_v}.0.exe",
+                f"Workpulse-Installer-{clean_v}.0.exe",
+                f"iHRMSMonitorSetup_v{clean_v}.exe",
+                f"iHRMS-Monitor-Installer-{clean_v}.exe",
+                f"iHRMSMonitorSetup_v{clean_v}.0.exe",
+                f"iHRMS-Monitor-Installer-{clean_v}.0.exe",
+            ]
+            for vname in ver_names:
+                raw_candidates.append(f"{base_domain}/uploads/{vname}")
+                raw_candidates.append(f"{base_domain}/hrms_api/uploads/{vname}")
+                raw_candidates.append(f"{base_domain}/uploads/version/{vname}")
+                raw_candidates.append(f"{base_domain}/{vname}")
+                if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
+                    raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{vname}")
+            # GitHub Releases fallback for Windows
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/WorkpulseSetup.exe")
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/Workpulse-Installer.exe")
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/iHRMSMonitorSetup.exe")
 
-    # 6. Generic latest fallback filenames
-    generic_names = ["WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
-    for gname in generic_names:
-        raw_candidates.append(f"{base_domain}/uploads/{gname}")
-        raw_candidates.append(f"{base_domain}/hrms_api/uploads/{gname}")
-        raw_candidates.append(f"{base_domain}/uploads/version/{gname}")
-        raw_candidates.append(f"{base_domain}/{gname}")
-        if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
-            raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{gname}")
+        # 6. Generic latest fallback filenames
+        generic_names = ["WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
+        for gname in generic_names:
+            raw_candidates.append(f"{base_domain}/uploads/{gname}")
+            raw_candidates.append(f"{base_domain}/hrms_api/uploads/{gname}")
+            raw_candidates.append(f"{base_domain}/uploads/version/{gname}")
+            raw_candidates.append(f"{base_domain}/{gname}")
+            if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
+                raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{gname}")
 
     # Deduplicate while strictly preserving priority order (NEVER filter candidates by filename version)
     seen = set()
@@ -915,6 +970,15 @@ def get_installed_executable_path() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
 
+    if sys.platform == "darwin":
+        app_path = Path("/Applications/Workpulse.app")
+        if app_path.exists():
+            return app_path
+        user_app = Path.home() / "Applications" / "Workpulse.app"
+        if user_app.exists():
+            return user_app
+        return app_path
+
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     for folder, exe_name in (("Workpulse", "Workpulse.exe"), ("iHRMS Monitor", "iHRMS Monitor.exe")):
         p = Path(local_app_data) / "Programs" / folder / exe_name
@@ -1024,7 +1088,63 @@ def install_update_and_restart(
         logger.debug("Could not record install start in update state: %s", state_err)
 
     # ----------------------------------------------------------
-    # 1. Backward-compatible silent_update.bat (kept for test assertions & legacy fallback)
+    # 1. macOS Detached Shell Updater
+    # ----------------------------------------------------------
+    sh_path = updates_dir / "updater.sh"
+    if sys.platform == "darwin":
+        target_app = target_exe if str(target_exe).endswith(".app") else Path("/Applications/Workpulse.app")
+        sh_content = f"""#!/bin/bash
+OLD_PID={current_pid}
+UPDATE_FILE="{str(update_file)}"
+TARGET_APP="{str(target_app)}"
+LOG_FILE="{str(update_log_path)}"
+
+echo "$(date) | [UPDATER-MAC] Starting updater for $TARGET_APP (Old PID: $OLD_PID)" >> "$LOG_FILE"
+
+waited=0
+while kill -0 "$OLD_PID" 2>/dev/null && [ $waited -lt 30 ]; do
+    sleep 0.5
+    waited=$((waited+1))
+done
+
+pkill -9 -f "Workpulse.app" 2>/dev/null || true
+pkill -9 -f "iHRMS Monitor" 2>/dev/null || true
+rm -f "{lock_file_path}" 2>/dev/null || true
+
+if [[ "$UPDATE_FILE" == *.dmg ]]; then
+    MOUNT_DIR=$(mktemp -d /tmp/workpulse_mount.XXXXXX)
+    echo "$(date) | [UPDATER-MAC] Mounting DMG $UPDATE_FILE to $MOUNT_DIR" >> "$LOG_FILE"
+    hdiutil attach "$UPDATE_FILE" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+    SRC_APP=$(find "$MOUNT_DIR" -maxdepth 2 -name "*.app" | head -n 1)
+    if [ -n "$SRC_APP" ] && [ -d "$SRC_APP" ]; then
+        DEST_DIR="/Applications"
+        if [ ! -w "$DEST_DIR" ]; then
+            DEST_DIR="$HOME/Applications"
+            mkdir -p "$DEST_DIR"
+        fi
+        echo "$(date) | [UPDATER-MAC] Copying $SRC_APP to $DEST_DIR" >> "$LOG_FILE"
+        rm -rf "$DEST_DIR/Workpulse.app"
+        cp -R "$SRC_APP" "$DEST_DIR/"
+        xattr -cr "$DEST_DIR/Workpulse.app" 2>/dev/null || true
+        TARGET_APP="$DEST_DIR/Workpulse.app"
+    fi
+    hdiutil detach "$MOUNT_DIR" -force -quiet || true
+    rm -rf "$MOUNT_DIR"
+fi
+
+echo "$(date) | [UPDATER-MAC] Launching $TARGET_APP" >> "$LOG_FILE"
+open -a "$TARGET_APP" || open -n "$TARGET_APP"
+echo "$(date) | [UPDATER-MAC] Updater completed." >> "$LOG_FILE"
+"""
+        try:
+            with open(sh_path, "w", encoding="utf-8") as f:
+                f.write(sh_content)
+            os.chmod(sh_path, 0o755)
+        except Exception as sh_err:
+            logger.warning("Could not write macOS updater.sh: %s", sh_err)
+
+    # ----------------------------------------------------------
+    # 2. Backward-compatible silent_update.bat (kept for test assertions & legacy fallback)
     # ----------------------------------------------------------
     bat_path = updates_dir / "silent_update.bat"
     bat_content = f"""@echo off
@@ -1247,8 +1367,8 @@ If fso.FileExists(defaultExe) Then
     appDir = fso.GetParentFolderName(defaultExe)
 ElseIf fso.FileExists(targetExe) Then
     launchTarget = targetExe
-ElseIf fso.FileExists(appDir & "\iHRMS Monitor.exe") Then
-    launchTarget = appDir & "\iHRMS Monitor.exe"
+ElseIf fso.FileExists(appDir & "\\iHRMS Monitor.exe") Then
+    launchTarget = appDir & "\\iHRMS Monitor.exe"
 End If
 
 If launchTarget <> "" Then
@@ -1259,7 +1379,7 @@ If launchTarget <> "" Then
     wshShell.Run Chr(34) & launchTarget & Chr(34), 1, False
     WriteLog "Application launch command issued successfully."
 Else
-    WriteLog "CRITICAL: No target executable found to launch. Checked: " & defaultExe & ", " & targetExe & ", " & appDir & "\iHRMS Monitor.exe"
+    WriteLog "CRITICAL: No target executable found to launch. Checked: " & defaultExe & ", " & targetExe & ", " & appDir & "\\iHRMS Monitor.exe"
 End If
 
 WriteLog "VBScript updater finished."
@@ -1409,52 +1529,61 @@ Write-UpdateLog "PowerShell updater finished."
     # ----------------------------------------------------------
     try:
         spawned = False
-        wscript_path = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "wscript.exe"
+        if sys.platform == "darwin":
+            if not is_running_tests and sh_path.exists():
+                try:
+                    subprocess.Popen(["/bin/bash", str(sh_path)], start_new_session=True, close_fds=True)
+                    logger.info("Spawned detached macOS updater: %s", sh_path)
+                    spawned = True
+                except Exception as mac_err:
+                    logger.warning("Could not launch updater via bash: %s", mac_err)
+        else:
+            wscript_path = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "wscript.exe"
 
-        # Primary: wscript.exe (native Windows GUI subsystem application, zero console)
-        if wscript_path.exists() and vbs_path.exists():
-            try:
-                creation_flags = 0
-                if sys.platform.startswith("win"):
-                    creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                subprocess.Popen(
-                    [str(wscript_path), "//B", "//nologo", str(vbs_path)],
-                    creationflags=creation_flags,
-                    close_fds=True,
-                )
-                logger.info("Spawned detached silent VBScript updater: %s via %s", vbs_path, wscript_path)
-                spawned = True
-            except Exception as w_err:
-                logger.warning("Could not launch updater via wscript.exe: %s. Trying PowerShell fallback.", w_err)
+            # Primary: wscript.exe (native Windows GUI subsystem application, zero console)
+            if wscript_path.exists() and vbs_path.exists():
+                try:
+                    creation_flags = 0
+                    if sys.platform.startswith("win"):
+                        creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                    subprocess.Popen(
+                        [str(wscript_path), "//B", "//nologo", str(vbs_path)],
+                        creationflags=creation_flags,
+                        close_fds=True,
+                    )
+                    logger.info("Spawned detached silent VBScript updater: %s via %s", vbs_path, wscript_path)
+                    spawned = True
+                except Exception as w_err:
+                    logger.warning("Could not launch updater via wscript.exe: %s. Trying PowerShell fallback.", w_err)
 
-        # Fallback: Hidden PowerShell runner with CREATE_NO_WINDOW
-        if not spawned and ps1_path.exists():
-            try:
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = 0  # SW_HIDE
-                creation_flags = 0
-                if sys.platform.startswith("win"):
-                    creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-                subprocess.Popen(
-                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1_path)],
-                    startupinfo=si,
-                    creationflags=creation_flags,
-                    close_fds=True,
-                )
-                logger.info("Spawned detached silent PowerShell updater: %s", ps1_path)
-                spawned = True
-            except Exception as ps_err:
-                logger.warning("Could not launch updater via PowerShell: %s. Using silent_update.bat fallback.", ps_err)
+            # Fallback: Hidden PowerShell runner with CREATE_NO_WINDOW
+            if not spawned and ps1_path.exists():
+                try:
+                    si = subprocess.STARTUPINFO()
+                    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    si.wShowWindow = 0  # SW_HIDE
+                    creation_flags = 0
+                    if sys.platform.startswith("win"):
+                        creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                    subprocess.Popen(
+                        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1_path)],
+                        startupinfo=si,
+                        creationflags=creation_flags,
+                        close_fds=True,
+                    )
+                    logger.info("Spawned detached silent PowerShell updater: %s", ps1_path)
+                    spawned = True
+                except Exception as ps_err:
+                    logger.warning("Could not launch updater via PowerShell: %s. Using silent_update.bat fallback.", ps_err)
 
-        # Legacy fallback if both scripts fail to spawn
-        if not spawned:
-            if bat_path.exists():
-                creation_flags = 0
-                if sys.platform.startswith("win"):
-                    creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-                subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
-                logger.info("Spawned detached silent batch updater: %s", bat_path)
+            # Legacy fallback if both scripts fail to spawn
+            if not spawned:
+                if bat_path.exists():
+                    creation_flags = 0
+                    if sys.platform.startswith("win"):
+                        creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                    subprocess.Popen(["cmd.exe", "/c", str(bat_path)], creationflags=creation_flags, close_fds=True)
+                    logger.info("Spawned detached silent batch updater: %s", bat_path)
 
         logger.info("Installer launched. Exiting application process cleanly to release file locks.")
 
