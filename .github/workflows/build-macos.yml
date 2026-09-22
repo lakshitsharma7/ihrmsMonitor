@@ -32,6 +32,53 @@ jobs:
         run: |
           python3 scripts/run_tests.py
 
+      - name: Smoke-test macOS Screen Recording permission service
+        run: |
+          python3 - <<'PYEOF'
+          import sys
+          assert sys.platform == "darwin", "This step must run on macOS"
+
+          # 1. Verify module loads without errors
+          from services.mac_permission_service import (
+              has_screen_recording_permission,
+              request_screen_recording_permission,
+              open_screen_recording_settings,
+              can_relaunch,
+              reset_relaunch_state,
+          )
+          print("[OK] mac_permission_service imported successfully")
+
+          # 2. CGPreflightScreenCaptureAccess must not raise
+          result = has_screen_recording_permission()
+          print(f"[OK] has_screen_recording_permission() -> {result}")
+          # In a GitHub Actions runner TCC is not granted, so either True or False is acceptable
+          # as long as the function does not raise.
+
+          # 3. Relaunch guard round-trip
+          import tempfile, json
+          from pathlib import Path
+          import services.mac_permission_service as m
+          with tempfile.TemporaryDirectory() as td:
+              sp = Path(td) / "test_relaunch_state.json"
+              m._get_state_path = lambda: sp
+              # First call: no state file -> allowed
+              ok, reason = can_relaunch()
+              assert ok, f"Expected can_relaunch()=True on first call, got: {reason}"
+              # Reset clears counter
+              reset_relaunch_state()
+              data = json.loads(sp.read_text())
+              assert data["count"] == 0, f"count != 0 after reset: {data}"
+          print("[OK] Relaunch guard state I/O works correctly")
+
+          # 4. NSScreenCaptureUsageDescription present in spec
+          spec = Path("Workpulse-macos.spec").read_text()
+          assert "NSScreenCaptureUsageDescription" in spec, \
+              "NSScreenCaptureUsageDescription missing from Workpulse-macos.spec"
+          print("[OK] NSScreenCaptureUsageDescription present in spec")
+
+          print("\n=== macOS Screen Recording permission smoke-test: ALL PASSED ===")
+          PYEOF
+
       - name: Configure Apple Developer ID Keychain
         if: env.APPLE_CERTIFICATE_BASE64 != ''
         env:

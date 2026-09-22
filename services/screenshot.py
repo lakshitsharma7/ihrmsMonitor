@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +20,11 @@ from utils.logger import get_logger
 
 
 logger = get_logger(__name__)
+
+# Rate-limit the "no Screen Recording permission" log so it is not emitted
+# on every scheduled capture interval (every ~30 s).
+_mac_permission_logged = False
+_mac_permission_lock = threading.Lock()
 
 
 # ==============================================================
@@ -251,7 +257,35 @@ def capture_screenshot(
     Otherwise a plain screenshot filename is used. Returns None if the
     screen could not be captured or the file could not be written, having
     logged the reason.
+
+    On macOS this function returns None when Screen Recording permission has
+    not been granted. The caller (activity tracker) should surface the
+    permission banner to the user instead of treating this as an error.
     """
+    global _mac_permission_logged  # noqa: PLW0603
+
+    # ----------------------------------------------------------
+    # macOS Screen Recording TCC permission check
+    # ----------------------------------------------------------
+    if sys.platform == "darwin":
+        try:
+            from services.mac_permission_service import has_screen_recording_permission
+            if not has_screen_recording_permission():
+                with _mac_permission_lock:
+                    if not _mac_permission_logged:
+                        logger.debug(
+                            "macOS Screen Recording permission not granted – "
+                            "screenshot capture skipped for session=%s",
+                            activity_session_id,
+                        )
+                        _mac_permission_logged = True
+                return None
+            else:
+                # Permission restored (e.g. after relaunch) – reset log flag
+                with _mac_permission_lock:
+                    _mac_permission_logged = False
+        except Exception as _perm_err:
+            logger.debug("mac_permission_service unavailable: %s", _perm_err)
 
     timestamp = datetime.now().strftime(
         "%Y-%m-%d_%H-%M-%S-%f"

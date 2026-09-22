@@ -576,6 +576,11 @@ class MainWindow(QMainWindow):
         else:
             self._periodic_settings_timer = None
 
+        # macOS-only: defer Screen Recording permission check until window is visible
+        if sys.platform == "darwin" and not is_running_tests:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(800, self._check_mac_screen_recording_permission)
+
     def _sync_permissions_from_backend(self) -> None:
         """Fetch latest backend configuration to dynamically apply permission changes in a background thread."""
         if getattr(self, "_syncing_permissions", False):
@@ -594,6 +599,116 @@ class MainWindow(QMainWindow):
                 self._syncing_permissions = False
 
         threading.Thread(target=_bg_fetch, name="SettingsSyncWorker", daemon=True).start()
+
+    # ==========================================================
+    # macOS SCREEN RECORDING PERMISSION  (ISOLATED FROM AUTO-UPDATE)
+    # ==========================================================
+
+    def _check_mac_screen_recording_permission(self) -> None:
+        """Check macOS Screen Recording TCC permission on startup.
+
+        This method is ONLY called on darwin and is completely separate from
+        the auto-update pipeline.  It must NEVER modify ``update_button``,
+        call ``UpdateService``, or touch ``UpdateStateManager``.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            from services.mac_permission_service import (
+                has_screen_recording_permission,
+                reset_relaunch_state,
+            )
+            if has_screen_recording_permission():
+                # Permission granted (normal path after relaunch)
+                logger.info("macOS Screen Recording permission: granted")
+                reset_relaunch_state()  # Clear loop counter on successful grant
+                # Ensure screenshot tracking is active now that permission exists
+                self._ensure_tracking_started()
+                return
+            logger.warning(
+                "macOS Screen Recording permission: NOT granted. "
+                "Scheduling user prompt."
+            )
+            self._prompt_mac_screen_recording()
+        except Exception as exc:
+            logger.debug("_check_mac_screen_recording_permission error: %s", exc)
+
+    def _prompt_mac_screen_recording(self) -> None:
+        """Show a user-friendly dialog explaining Screen Recording permission.
+
+        Offers 'Open Settings' to navigate directly to the Privacy pane and
+        'Quit & Reopen' to relaunch the app once the user has toggled the
+        permission switch.
+
+        A persistent loop-guard (mac_permission_service.can_relaunch) prevents
+        infinite relaunch cycles if the user never actually enables the
+        permission.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            from services.mac_permission_service import (
+                can_relaunch,
+                open_screen_recording_settings,
+                relaunch_application,
+                request_screen_recording_permission,
+            )
+
+            # Trigger the TCC alert so the app registers with Privacy DB
+            request_screen_recording_permission()
+
+            ok, reason = can_relaunch()
+            if not ok:
+                # Relaunch limit reached – show a plain info message and stop.
+                logger.error(
+                    "macOS Screen Recording relaunch limit reached: %s", reason
+                )
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Screen Recording Permission Required")
+                msg.setIcon(QMessageBox.Icon.Warning)
+                msg.setText(
+                    "Workpulse needs Screen Recording permission to capture "
+                    "screenshots for attendance tracking.\n\n"
+                    f"{reason}"
+                )
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+                return
+
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Screen Recording Permission Required")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText(
+                "Workpulse needs Screen Recording permission to capture "
+                "screenshots for attendance tracking."
+            )
+            msg.setInformativeText(
+                "1. Click \"Open Settings\" below.\n"
+                "2. Find Workpulse in the list and enable the toggle.\n"
+                "3. Return here and click \"Quit & Reopen\"."
+            )
+            open_btn = msg.addButton("Open Settings", QMessageBox.ButtonRole.ActionRole)
+            relaunch_btn = msg.addButton("Quit & Reopen", QMessageBox.ButtonRole.AcceptRole)
+            msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+            msg.exec()
+
+            clicked = msg.clickedButton()
+            if clicked is open_btn:
+                open_screen_recording_settings()
+                # Re-show the dialog so the user can click Quit & Reopen
+                # after they enable the permission.
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(500, self._prompt_mac_screen_recording)
+            elif clicked is relaunch_btn:
+                logger.info(
+                    "User clicked 'Quit & Reopen' for Screen Recording permission."
+                )
+                # Clean shutdown -> relaunch (mac_permission_service handles
+                # both QApplication.quit() and the new process spawn)
+                self._really_quit = True
+                relaunch_application()
+        except Exception as exc:
+            logger.debug("_prompt_mac_screen_recording error: %s", exc)
 
     # ==========================================================
     # BUILD UI
