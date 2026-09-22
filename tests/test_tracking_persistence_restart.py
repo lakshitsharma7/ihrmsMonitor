@@ -76,8 +76,8 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win._tracker.is_tracking, "Tracker must be actively running")
                 self.assertEqual(win.status_badge.text(), "Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
+                self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
                 # Header buttons are hidden
                 self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must NOT be visible")
                 self.assertFalse(win.start_button.isVisible(), "Start Tracking button must NOT be visible")
@@ -121,7 +121,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win._tracker.is_tracking)
                 self.assertFalse(self.store.is_tracking_manually_stopped())
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
 
                 # User clicks stop tracking via dashboard toggle button
                 win.dashboard_page.tracking_toggle_button.click()
@@ -131,7 +131,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 self.assertFalse(self.store.is_tracking_active())
                 self.assertEqual(win.status_badge.text(), "Not Tracking")
                 self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Inactive")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Start Tracking")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Resume")
 
                 # User clicks start tracking via dashboard toggle button
                 win.dashboard_page.tracking_toggle_button.click()
@@ -141,7 +141,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 self.assertTrue(self.store.is_tracking_active())
                 self.assertEqual(win.status_badge.text(), "Tracking")
                 self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
             finally:
                 win._shutdown()
                 win.close()
@@ -177,8 +177,8 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win2._tracker.is_tracking, "Tracking must resume after update restart")
                 self.assertEqual(win2.status_badge.text(), "Tracking")
-                self.assertEqual(win2.dashboard_page.tracking_status_label.text(), "Online: Active")
-                self.assertEqual(win2.dashboard_page.tracking_toggle_button.text(), "Stop Tracking")
+                self.assertEqual(win2.dashboard_page.network_status_label.text(), "● Online")
+                self.assertEqual(win2.dashboard_page.tracking_toggle_button.text(), "Paused")
             finally:
                 win2._shutdown()
                 win2.close()

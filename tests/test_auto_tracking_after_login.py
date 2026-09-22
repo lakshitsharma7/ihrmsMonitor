@@ -121,11 +121,12 @@ class TestAutoTrackingAfterLogin(unittest.TestCase):
              patch.object(MainWindow, "_sync_permissions_from_backend"):
             win = MainWindow()
             win.show()
-            QApplication.processEvents()
             try:
-                # Dashboard labels should be Active
+                # Dashboard labels should be Active, button Paused, and network Online
                 self.assertEqual(win.status_badge.text(), "Tracking")
                 self.assertIn("Active", win.dashboard_page.tracking_status_label.text())
+                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
             finally:
                 win._shutdown()
                 win.close()

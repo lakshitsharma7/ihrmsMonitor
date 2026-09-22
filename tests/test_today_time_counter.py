@@ -259,30 +259,42 @@ class TestTodayTimeCounter(unittest.TestCase):
         self.mock_service.save_daily_active_seconds.assert_called_with(today_date, start_sec + 1)
 
     def test_10_online_status_and_toggle_tracking_button(self):
-        """Online status reflects tracking active state and toggle button triggers correct signals."""
+        """Single button shows Paused/Resume based on tracking state, and network status is independent."""
         dashboard = DashboardPage(self.mock_service)
 
-        # Initial active state
+        # Initial active state -> button shows "Paused", network status shows "● Online"
         dashboard.set_tracking_active(True)
-        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Active")
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Stop Tracking")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.network_status_label.text(), "● Online")
 
-        # Clicking toggle button while active emits tracking_stop_requested
+        # Clicking "Paused" while active emits tracking_stop_requested
         stop_mock = MagicMock()
         dashboard.tracking_stop_requested.connect(stop_mock)
         dashboard.tracking_toggle_button.click()
         stop_mock.assert_called_once()
 
-        # Update state to inactive
+        # Update state to inactive -> button shows "Resume"
         dashboard.set_tracking_active(False)
-        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Inactive")
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Start Tracking")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Resume")
 
-        # Clicking toggle button while inactive emits tracking_start_requested
+        # Clicking "Resume" while inactive emits tracking_start_requested
         start_mock = MagicMock()
         dashboard.tracking_start_requested.connect(start_mock)
         dashboard.tracking_toggle_button.click()
         start_mock.assert_called_once()
+
+        # Network status is completely independent from tracking state
+        dashboard.set_network_status(False)
+        self.assertEqual(dashboard.network_status_label.text(), "● Offline")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Resume")
+
+        dashboard.set_tracking_active(True)
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.network_status_label.text(), "● Offline")
+
+        dashboard.set_network_status(True)
+        self.assertEqual(dashboard.network_status_label.text(), "● Online")
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
 
 
 if __name__ == "__main__":

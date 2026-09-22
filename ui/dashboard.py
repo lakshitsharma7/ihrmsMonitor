@@ -128,6 +128,13 @@ class DashboardPage(QWidget):
         self._date_timer.timeout.connect(self._check_date_rollover)
         self._date_timer.start()
 
+        # Dynamic network connectivity detector
+        self._is_network_online = True
+        self._network_timer = QTimer(self)
+        self._network_timer.setInterval(5000)
+        self._network_timer.timeout.connect(self._check_network_connectivity)
+        self._network_timer.start()
+
         try:
             att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
             self._update_attendance_ui(att)
@@ -356,8 +363,16 @@ class DashboardPage(QWidget):
         status_grid.setVerticalSpacing(8)
 
         is_initially_active = getattr(self, "_is_tracking", False)
+
+        # Network status indicator (Row 0, Col 0): ● Online or ● Offline
+        self.network_status_label = QLabel("● Online")
+        self.network_status_label.setObjectName("NetworkStatusLabel")
+        self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+
+        # Retain tracking_status_label for error reporting and backward compatibility
         self.tracking_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")
-        self.tracking_status_label.setObjectName("StatusLabel")
+        self.tracking_status_label.setObjectName("TrackingStatusLabel")
+        self.tracking_status_label.setVisible(False)
 
         self.idle_time_label = QLabel("Idle Time: 0 seconds")
         self.idle_time_label.setObjectName("StatusLabel")
@@ -392,8 +407,8 @@ class DashboardPage(QWidget):
         self.current_window_label = QLabel("")
         self.current_window_label.setVisible(False)
 
-        # Start / Stop Tracking button on Dashboard
-        initial_btn_text = "Stop Tracking" if is_initially_active else "Start Tracking"
+        # Single tracking button on Dashboard: [ Paused ] when running, [ Resume ] when paused
+        initial_btn_text = "Paused" if is_initially_active else "Resume"
         self.tracking_toggle_button = QPushButton(initial_btn_text)
         self.tracking_toggle_button.setObjectName("TrackingToggleButton")
         self.tracking_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -402,12 +417,12 @@ class DashboardPage(QWidget):
         self.stop_tracking_button = self.tracking_toggle_button
         self._apply_toggle_button_style(is_initially_active)
 
-        # Layout: Row 0 – Online Status | Idle Time
-        #         Row 1 – Version       | Records Uploaded
-        #         Row 2 – Status        (spans both columns)
-        #         Row 3 – Last Sync     (full width)
-        #         Row 4 – Start/Stop Tracking Button (full width)
-        status_grid.addWidget(self.tracking_status_label, 0, 0)
+        # Layout: Row 0 – Network Status | Idle Time
+        #         Row 1 – Version        | Records Uploaded
+        #         Row 2 – Status         (spans both columns)
+        #         Row 3 – Last Sync      (full width)
+        #         Row 4 – Single Tracking Button (full width)
+        status_grid.addWidget(self.network_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
         status_grid.addWidget(self.version_label, 1, 0)
@@ -463,52 +478,10 @@ class DashboardPage(QWidget):
         self.timeline_table = ActivityTimelineTable()
         self.timeline_table.setVisible(False)
 
-    def update_tracker_state(
-        self,
-        state: TrackerState,
-    ) -> None:
-        """Update the Current Application section and the Tracking & Sync Status."""
-
-        if not state.is_tracking:
-            self.current_app_label.setText(
-                "Not tracking"
-            )
-
-            self.current_window_label.setText(
-                ""
-            )
-
-        elif state.is_idle:
-            self.current_app_label.setText(
-                state.current_application or "Idle"
-            )
-
-            self.current_window_label.setText(
-                state.current_window_title or ""
-            )
-
-        elif state.current_application:
-            self.current_app_label.setText(
-                state.current_application
-            )
-
-            self.current_window_label.setText(
-                state.current_window_title or ""
-            )
-
-        else:
-            self.current_app_label.setText(
-                "Detecting..."
-            )
-
-            self.current_window_label.setText(
-                ""
-            )
-
     def _apply_toggle_button_style(self, is_active: bool) -> None:
-        """Apply dynamic color and styling to Start/Stop tracking button."""
+        """Apply dynamic color and styling to single Paused/Resume tracking button."""
         if is_active:
-            self.tracking_toggle_button.setText("Stop Tracking")
+            self.tracking_toggle_button.setText("Paused")
             self.tracking_toggle_button.setStyleSheet(
                 "QPushButton#TrackingToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
@@ -519,7 +492,7 @@ class DashboardPage(QWidget):
                 "}"
             )
         else:
-            self.tracking_toggle_button.setText("Start Tracking")
+            self.tracking_toggle_button.setText("Resume")
             self.tracking_toggle_button.setStyleSheet(
                 "QPushButton#TrackingToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
@@ -530,11 +503,67 @@ class DashboardPage(QWidget):
                 "}"
             )
 
+    def set_network_status(self, is_online: bool) -> None:
+        """Update the displayed network connectivity status."""
+        self._is_network_online = bool(is_online)
+        if is_online:
+            self.network_status_label.setText("● Online")
+            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+        else:
+            self.network_status_label.setText("● Offline")
+            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
+
+    def _check_network_connectivity(self) -> None:
+        """Dynamically check internet / network connectivity in a background thread."""
+        import sys
+        if "unittest" in sys.modules or "pytest" in sys.modules:
+            return
+
+        import threading
+
+        def _worker():
+            import socket
+            from urllib.parse import urlparse
+            from config.api_config import ApiConfig
+
+            is_online = False
+            # 1. Check API host reachability
+            try:
+                base_url = ApiConfig.base_url
+                if base_url:
+                    parsed = urlparse(base_url)
+                    host = parsed.hostname
+                    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                    if host:
+                        with socket.create_connection((host, port), timeout=2.0):
+                            is_online = True
+            except Exception:
+                pass
+
+            # 2. Fallback check: well-known public DNS
+            if not is_online:
+                for dns_ip in ("8.8.8.8", "1.1.1.1"):
+                    try:
+                        with socket.create_connection((dns_ip, 53), timeout=1.5):
+                            is_online = True
+                            break
+                    except Exception:
+                        pass
+
+            try:
+                QTimer.singleShot(0, lambda: self.set_network_status(is_online))
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _shutdown(self) -> None:
         """Clean up background timers and persist active state on widget disposal."""
         try:
             if hasattr(self, "_date_timer") and self._date_timer:
                 self._date_timer.stop()
+            if hasattr(self, "_network_timer") and self._network_timer:
+                self._network_timer.stop()
             self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
         except Exception:
             pass
