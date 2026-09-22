@@ -939,6 +939,8 @@ class DashboardPage(QWidget):
         if not status or status in ("Sync Successful", "Status: Sync Successful", "Sent", "Successful"):
             self.set_network_status(self._is_network_online)
             return
+        clean_msg = self._clean_status_text(status)
+        self.sync_status_label.setText(f"Status: {clean_msg}")
 
     def set_update_status(self, status: str) -> None:
         """Dynamically update the displayed device update verification status."""
@@ -975,7 +977,11 @@ class DashboardPage(QWidget):
             err_upper = str(error_type).upper()
             msg_lower = str(error_message).lower()
 
-            if any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
+            if any(k in err_upper for k in ("SYNC", "API", "UPLOAD", "NETWORK", "SOCKET")):
+                clean_msg = self._clean_status_text(error_message)
+                self.sync_status_label.setText(f"Status: {clean_msg}")
+                self.sync_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+            elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
                 if any(net in msg_lower for net in ("connect", "timeout", "offline", "unreachable", "name resolution", "httpsconnectionpool")):
                     self.set_update_status("Update Pending (Offline)")
                 else:

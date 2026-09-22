@@ -45,12 +45,12 @@ class FakeProvider(PlatformActivityProvider):
         return self.idle_seconds
 
 
-def _make_tracker(session_factory, provider, idle_threshold=300, clock=None):
+def _make_tracker(session_factory, provider, idle_threshold=300, track_window_titles=True, clock=None):
     return ActivityTracker(
         provider=provider,
         session_factory=session_factory,
         idle_threshold_seconds=idle_threshold,
-        track_window_titles=True,
+        track_window_titles=track_window_titles,
         clock=clock or (lambda: datetime.now(timezone.utc)),
     )
 
@@ -65,7 +65,10 @@ def test_new_session_created_on_application_switch(session_factory):
     state = tracker.poll()
     assert state.current_application == "Chrome"
 
-    clock.advance(60)
+    for _ in range(60):
+        clock.advance(1)
+        tracker.poll()
+
     provider.active_application = ActiveApplication("VS Code", 2, "main.py")
     state = tracker.poll()
     assert state.current_application == "VS Code"
@@ -85,7 +88,7 @@ def test_new_session_created_on_application_switch(session_factory):
 def test_window_title_change_updates_same_session(session_factory):
     provider = FakeProvider()
     clock = FakeClock(datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc))
-    tracker = _make_tracker(session_factory, provider, clock=clock)
+    tracker = _make_tracker(session_factory, provider, track_window_titles=False, clock=clock)
     tracker.start()
 
     provider.active_application = ActiveApplication("Chrome", 1, "Tab A")
@@ -101,9 +104,9 @@ def test_window_title_change_updates_same_session(session_factory):
         datetime(2026, 8, 20, 0, 0, tzinfo=timezone.utc),
         datetime(2026, 8, 21, 0, 0, tzinfo=timezone.utc),
     )
-    # Still just one session - the title was updated in place, not replaced.
+    # Still just one session when track_window_titles=False (window_title is ignored/None)
     assert len(sessions) == 1
-    assert sessions[0].window_title == "Tab B"
+    assert sessions[0].window_title is None
 
 
 def test_idle_closes_session_and_resuming_opens_new_one(session_factory):

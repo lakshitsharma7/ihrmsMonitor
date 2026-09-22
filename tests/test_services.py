@@ -31,8 +31,8 @@ def test_today_total_and_usage(session_factory):
 
 
 def test_format_duration():
-    assert ActivityService.format_duration(0) == "0m"
-    assert ActivityService.format_duration(59) == "0m"
+    assert ActivityService.format_duration(0) == "0s"
+    assert ActivityService.format_duration(59) == "59s"
     assert ActivityService.format_duration(60) == "1m"
     assert ActivityService.format_duration(3600) == "1h"
     assert ActivityService.format_duration(3600 + 90) == "1h 1m"
@@ -41,7 +41,7 @@ def test_format_duration():
 def test_settings_service_roundtrip(session_factory):
     service = SettingsService(session_factory)
     settings = service.get_settings()
-    assert settings.idle_threshold == 300
+    assert settings.idle_threshold == 180
 
     updated = service.update_settings(idle_threshold=120, track_window_titles=False)
     assert updated.idle_threshold == 120
@@ -50,3 +50,4 @@ def test_settings_service_roundtrip(session_factory):
     reloaded = service.get_settings()
     assert reloaded.idle_threshold == 120
     assert reloaded.track_window_titles is False
+

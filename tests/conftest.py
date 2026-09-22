@@ -23,11 +23,26 @@ def session_factory():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
 
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+    from sqlalchemy.pool import NullPool
+
+    engine = create_engine(
+        f"sqlite:///{path}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     yield factory
 
-    engine.dispose()
-    os.unlink(path)
+    try:
+        engine.dispose()
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists(path):
+            os.unlink(path)
+    except Exception:
+        pass
+

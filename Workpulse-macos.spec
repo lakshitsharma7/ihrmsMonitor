@@ -48,6 +48,7 @@ a = Analysis(
         'services.device_registry_service',
         'services.error_report_service',
         'services.hrms_portal_service',
+        'services.network_monitor',
         'services.screenshot',
         'services.secure_session',
         'services.session_service',

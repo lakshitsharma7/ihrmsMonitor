@@ -1045,7 +1045,10 @@ class ActivityRepository:
 
         for session in sessions:
             sess_start = _to_utc(session.started_at)
-            sess_end = _to_utc(session.ended_at) if session.ended_at is not None else now_utc
+            if session.ended_at is not None:
+                sess_end = _to_utc(session.ended_at)
+            else:
+                sess_end = sess_start + timedelta(seconds=max(0, int(session.duration_seconds or 0)))
 
             overlap_start = max(sess_start, start_utc)
             overlap_end = min(sess_end, end_utc)
