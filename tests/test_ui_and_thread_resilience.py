@@ -181,8 +181,15 @@ class TestUIAndThreadResilience(unittest.TestCase):
         dashboard.refresh(async_mode=True)
 
         # Wait for worker to finish
-        time.sleep(0.12)
+        for _ in range(40):
+            app.processEvents()
+            if not dashboard._is_refreshing:
+                break
+            time.sleep(0.05)
+
         self.assertFalse(dashboard._is_refreshing)
+        if hasattr(dashboard, "_worker_thread") and dashboard._worker_thread:
+            dashboard._worker_thread.wait(2000)
 
     def test_weekly_timeline_refresh_async_mode_is_non_blocking(self):
         """Verify WeeklyTimelinePage.refresh(async_mode=True) offloads 7-day aggregation to background thread."""
