@@ -1266,9 +1266,13 @@ class MainWindow(QMainWindow):
         store.set_tracking_manually_stopped(False)
         store.set_tracking_active(True)
 
-        # Update UI state immediately to show Active
-        self.status_badge.setText("Online")
-        self.status_badge.setProperty("tracking", "true")
+        # Update UI state immediately to show Active or Paused
+        if store.is_tracking_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
+            self.status_badge.setText("Paused")
+            self.status_badge.setProperty("tracking", "paused")
+        else:
+            self.status_badge.setText("Online")
+            self.status_badge.setProperty("tracking", "true")
         self._refresh_badge_style()
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -1346,18 +1350,17 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Update UI after tracking starts."""
         from services.secure_session import SessionStore
-        if SessionStore().is_tracking_manually_stopped():
+        store = SessionStore()
+        if store.is_tracking_manually_stopped():
             logger.debug("Stale tracking_started signal received while tracking is marked stopped; ignoring")
             return
 
-        self.status_badge.setText(
-            "Online"
-        )
-
-        self.status_badge.setProperty(
-            "tracking",
-            "true",
-        )
+        if store.is_tracking_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
+            self.status_badge.setText("Paused")
+            self.status_badge.setProperty("tracking", "paused")
+        else:
+            self.status_badge.setText("Online")
+            self.status_badge.setProperty("tracking", "true")
 
         self._refresh_badge_style()
 
