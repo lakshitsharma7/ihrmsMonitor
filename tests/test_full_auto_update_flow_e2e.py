@@ -159,9 +159,14 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
         self.assertIsNotNone(SessionService().current_user, "User must be authenticated without re-login")
 
         # 4. Launch MainWindow on restart (as done in app.py)
+        mock_provider = MagicMock()
+        mock_provider.get_idle_seconds.return_value = 0.0
+        mock_provider.get_active_application.return_value = None
+
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://demo.indovisionservices.in/hrms_api/ci4/api"), \
              patch("config.settings.get_running_app_version", return_value="2.1"), \
              patch("services.update_service.get_running_app_version", return_value="2.1"), \
+             patch("platform_support.create_activity_provider", return_value=mock_provider), \
              patch.object(MainWindow, "_check_for_updates"), \
              patch.object(MainWindow, "_sync_permissions_from_backend"):
 

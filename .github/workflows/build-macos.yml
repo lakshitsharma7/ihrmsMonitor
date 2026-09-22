@@ -33,6 +33,8 @@ jobs:
           python3 -m unittest discover tests
 
       - name: Build Workpulse.app and Workpulse.dmg
+        env:
+          SKIP_TESTS: "1"
         run: |
           chmod +x build_macos.sh
           ./build_macos.sh

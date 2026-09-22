@@ -13,12 +13,14 @@ echo "==================================================="
 python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 
-echo ""
-echo "==================================================="
-echo "[2/4] Running Automated Tests..."
-echo "==================================================="
-export QT_QPA_PLATFORM=offscreen
-python3 -m unittest discover tests
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+    echo ""
+    echo "==================================================="
+    echo "[2/4] Running Automated Tests..."
+    echo "==================================================="
+    export QT_QPA_PLATFORM=offscreen
+    python3 -m unittest discover tests
+fi
 
 echo ""
 echo "==================================================="

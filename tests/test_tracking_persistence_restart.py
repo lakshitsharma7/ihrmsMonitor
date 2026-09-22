@@ -9,6 +9,7 @@ Verifies:
 6. Fresh login resets any previous manual stop flag.
 """
 
+import sys
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 from PySide6.QtWidgets import QApplication
