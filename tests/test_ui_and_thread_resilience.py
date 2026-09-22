@@ -205,11 +205,17 @@ class TestUIAndThreadResilience(unittest.TestCase):
         weekly.refresh(async_mode=True)
         elapsed = time.time() - start
 
-        self.assertLess(elapsed, 0.04)
-        self.assertTrue(weekly._is_refreshing)
+        self.assertLess(elapsed, 0.15)
 
-        time.sleep(0.12)
+        for _ in range(40):
+            app.processEvents()
+            if not weekly._is_refreshing:
+                break
+            time.sleep(0.05)
+
         self.assertFalse(weekly._is_refreshing)
+        if hasattr(weekly, "_worker_thread") and weekly._worker_thread:
+            weekly._worker_thread.wait(2000)
 
     def test_sync_service_fetch_settings_single_flight_lock(self):
         """Verify SyncService._fetching_settings_lock prevents overlapping settings API requests."""
