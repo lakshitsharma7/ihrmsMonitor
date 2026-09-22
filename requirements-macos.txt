@@ -1,3 +1,5 @@
 # macOS-only dependencies. Do not install these on Windows.
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pytest>=7.0
+

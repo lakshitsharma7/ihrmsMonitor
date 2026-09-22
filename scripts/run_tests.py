@@ -16,15 +16,23 @@ def main() -> None:
     if root_dir not in sys.path:
         sys.path.insert(0, root_dir)
 
-    loader = unittest.defaultTestLoader
-    start_dir = os.path.join(root_dir, "tests")
-    suite = loader.discover(start_dir, top_level_dir=root_dir)
-    runner = unittest.TextTestRunner(verbosity=1)
-    result = runner.run(suite)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0 if result.wasSuccessful() else 1)
+    try:
+        import pytest
+        exit_code = pytest.main([os.path.join(root_dir, "tests"), "-q"])
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(exit_code)
+    except ImportError:
+        loader = unittest.defaultTestLoader
+        start_dir = os.path.join(root_dir, "tests")
+        suite = loader.discover(start_dir, top_level_dir=root_dir)
+        runner = unittest.TextTestRunner(verbosity=1)
+        result = runner.run(suite)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0 if result.wasSuccessful() else 1)
 
 
 if __name__ == "__main__":
     main()
+

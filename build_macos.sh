@@ -30,7 +30,7 @@ fi
 
 echo ""
 echo "==================================================="
-echo "[3/6] Building Workpulse.app with PyInstaller..."
+echo "[3/6] Building Workpulse.app from current source..."
 echo "==================================================="
 pyinstaller --noconfirm --clean Workpulse-macos.spec
 
@@ -39,7 +39,25 @@ if [ ! -d "${APP_BUNDLE}" ]; then
     exit 1
 fi
 
-echo "Workpulse.app bundle created at ${APP_BUNDLE}"
+if [ ! -f "${APP_BUNDLE}/Contents/MacOS/Workpulse" ]; then
+    echo "ERROR: Main executable ${APP_BUNDLE}/Contents/MacOS/Workpulse missing!" >&2
+    exit 1
+fi
+
+if [ ! -f "${APP_BUNDLE}/Contents/Info.plist" ]; then
+    echo "ERROR: Info.plist not found in ${APP_BUNDLE}/Contents/!" >&2
+    exit 1
+fi
+
+# Verify version in Info.plist is 2.0.2
+PLIST_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true)"
+echo "Verified Info.plist version: ${PLIST_VER}"
+if [ "${PLIST_VER}" != "2.0.2" ]; then
+    echo "ERROR: Expected CFBundleShortVersionString to be 2.0.2, got: '${PLIST_VER}'" >&2
+    exit 1
+fi
+
+echo "Newly built Workpulse.app bundle verified at ${APP_BUNDLE}"
 
 echo ""
 echo "==================================================="
@@ -107,7 +125,7 @@ fi
 
 echo ""
 echo "==================================================="
-echo "[5/6] Creating & Signing Workpulse.dmg..."
+echo "[5/6] Creating & Verifying Workpulse.dmg..."
 echo "==================================================="
 rm -rf "${DMG_STAGING}" "${DMG_FILE}"
 mkdir -p "${DMG_STAGING}"
@@ -140,6 +158,25 @@ if [ -n "${SIGNING_IDENTITY}" ]; then
 fi
 
 echo "DMG created at ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
+
+# Test mounting the newly created DMG and verify payload
+echo "Verifying DMG mount and installation structure..."
+MOUNT_DIR="$(mktemp -d /tmp/workpulse_dmg_mount.XXXXXX)"
+hdiutil attach "${DMG_FILE}" -mountpoint "${MOUNT_DIR}" -nobrowse -readonly
+
+if [ ! -d "${MOUNT_DIR}/Workpulse.app" ]; then
+    echo "ERROR: Workpulse.app not present inside mounted DMG!" >&2
+    hdiutil detach "${MOUNT_DIR}" || true
+    rm -rf "${MOUNT_DIR}"
+    exit 1
+fi
+
+MOUNTED_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_DIR}/Workpulse.app/Contents/Info.plist" 2>/dev/null || true)"
+echo "Verified version inside mounted DMG: ${MOUNTED_VER}"
+
+hdiutil detach "${MOUNT_DIR}"
+rm -rf "${MOUNT_DIR}"
+echo "DMG mount test passed cleanly."
 
 echo ""
 echo "==================================================="

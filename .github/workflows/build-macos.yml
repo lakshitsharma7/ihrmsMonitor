@@ -136,6 +136,18 @@ jobs:
           test -f dist/Workpulse.dmg
           ls -lh dist/Workpulse.dmg
 
+          echo "Mounting and verifying DMG payload..."
+          MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
+          hdiutil attach dist/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
+          test -d "${MOUNT_PT}/Workpulse.app"
+          test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
+          MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
+          echo "Mounted DMG version: ${MOUNT_VER}"
+          test "${MOUNT_VER}" = "2.0.2"
+          hdiutil detach "${MOUNT_PT}"
+          rm -rf "${MOUNT_PT}"
+          echo "DMG payload verification successful."
+
           if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
             echo "Validating Developer ID signature & stapling..."
             codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
