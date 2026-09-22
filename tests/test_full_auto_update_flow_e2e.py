@@ -181,7 +181,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             try:
                 # 5. Verify NO login window required & tracking automatically resumed
                 self.assertTrue(win._tracker.is_tracking, "Tracking MUST automatically resume after restart")
-                self.assertEqual(win.status_badge.text(), "Tracking")
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
                 # 6. Verify version displayed reflects v2.1
                 self.assertIn("2.1", win.dashboard_page.version_label.text())

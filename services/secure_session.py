@@ -57,6 +57,7 @@ class SessionStore:
     _KEY_ENCRYPTED_CHECKSUM = "session/checksum"
     _KEY_TRACKING_MANUALLY_STOPPED = "session/tracking_manually_stopped"
     _KEY_TRACKING_ACTIVE = "session/tracking_active"
+    _KEY_TRACKING_PAUSED = "session/tracking_paused"
 
     def __init__(self) -> None:
         """Initialize session store with QSettings."""
@@ -355,6 +356,7 @@ class SessionStore:
             self.settings.remove(self._KEY_ENCRYPTED_CHECKSUM)
             self.settings.remove(self._KEY_TRACKING_MANUALLY_STOPPED)
             self.settings.remove(self._KEY_TRACKING_ACTIVE)
+            self.settings.remove(self._KEY_TRACKING_PAUSED)
 
             logger.info("Session data cleared")
         except Exception:
@@ -377,6 +379,15 @@ class SessionStore:
     def set_tracking_active(self, active: bool) -> None:
         """Record whether tracking is actively running."""
         self.settings.setValue(self._KEY_TRACKING_ACTIVE, bool(active))
+
+    def is_tracking_paused(self) -> bool:
+        """Check if user paused tracking status."""
+        raw = self.settings.value(self._KEY_TRACKING_PAUSED, False)
+        return raw is True or str(raw).lower() in ("true", "1")
+
+    def set_tracking_paused(self, paused: bool) -> None:
+        """Record whether user paused tracking status."""
+        self.settings.setValue(self._KEY_TRACKING_PAUSED, bool(paused))
 
     def validate_session(self) -> bool:
         """Validate that a saved session can be decrypted.

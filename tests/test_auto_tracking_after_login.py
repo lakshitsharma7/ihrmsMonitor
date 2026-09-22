@@ -123,7 +123,7 @@ class TestAutoTrackingAfterLogin(unittest.TestCase):
             win.show()
             try:
                 # Dashboard labels should be Active, button Paused, and network Online
-                self.assertEqual(win.status_badge.text(), "Tracking")
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertIn("Active", win.dashboard_page.tracking_status_label.text())
                 self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")

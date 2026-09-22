@@ -259,42 +259,107 @@ class TestTodayTimeCounter(unittest.TestCase):
         self.mock_service.save_daily_active_seconds.assert_called_with(today_date, start_sec + 1)
 
     def test_10_online_status_and_toggle_tracking_button(self):
-        """Single button shows Paused/Resume based on tracking state, and network status is independent."""
+        """Single button toggles Paused/Resume status without stopping tracking, and network status is independent."""
         dashboard = DashboardPage(self.mock_service)
 
         # Initial active state -> button shows "Paused", network status shows "● Online"
         dashboard.set_tracking_active(True)
         self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
+        self.assertFalse(dashboard.is_paused())
 
-        # Clicking "Paused" while active emits tracking_stop_requested
-        stop_mock = MagicMock()
-        dashboard.tracking_stop_requested.connect(stop_mock)
+        # Clicking "Paused" while active toggles to paused state, button changes to "Resume"
+        pause_mock = MagicMock()
+        dashboard.pause_state_changed.connect(pause_mock)
         dashboard.tracking_toggle_button.click()
-        stop_mock.assert_called_once()
-
-        # Update state to inactive -> button shows "Resume"
-        dashboard.set_tracking_active(False)
+        pause_mock.assert_called_once_with(True)
+        self.assertTrue(dashboard.is_paused())
         self.assertEqual(dashboard.tracking_toggle_button.text(), "Resume")
+        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Paused")
 
-        # Clicking "Resume" while inactive emits tracking_start_requested
-        start_mock = MagicMock()
-        dashboard.tracking_start_requested.connect(start_mock)
+        # Clicking "Resume" while paused toggles back to active state, button changes to "Paused"
         dashboard.tracking_toggle_button.click()
-        start_mock.assert_called_once()
+        self.assertFalse(dashboard.is_paused())
+        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Active")
 
         # Network status is completely independent from tracking state
         dashboard.set_network_status(False)
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Resume")
-
-        dashboard.set_tracking_active(True)
         self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
-        self.assertEqual(dashboard.network_status_label.text(), "● Offline")
 
         dashboard.set_network_status(True)
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+
+    def test_11_cross_midnight_stale_fetch_is_discarded(self):
+        """A background refresh result tagged with yesterday's date must NOT update today's counter.
+
+        Scenario: fetch was started at 23:59:58 on Day 1 (tagged with Day 1 date),
+        data arrives after midnight (Day 2). The total_seconds in the payload is
+        yesterday's value (3600 s). This must NOT flow into Day 2's counter.
+        """
+        from datetime import date
+        from unittest.mock import patch
+
+        day1 = date(2026, 9, 8)
+        day2 = date(2026, 9, 9)
+
+        # Day 1 has 3600 s persisted; Day 2 has 0 (fresh start)
+        self.mock_service.get_persisted_daily_active_seconds.side_effect = (
+            lambda d: 3600 if d == day1 else 0
+        )
+        self.mock_service.get_day_total_seconds.side_effect = (
+            lambda d: 3600 if d == day1 else 0
+        )
+
+        dashboard = DashboardPage(self.mock_service)
+        dashboard._cached_calendar_date = day1
+        dashboard._cached_today_total_seconds = 3600  # Day 1 accumulated value
+
+        # Force date rollover by patching datetime.now so _check_date_rollover detects day2
+        with patch("ui.dashboard.datetime") as mock_dt:
+            mock_local = MagicMock()
+            mock_local.date.return_value = day2
+            mock_dt.now.return_value.astimezone.return_value = mock_local
+
+            # Background fetch was tagged with day1 (old date), carries day1's total
+            stale_payload = {
+                "total_seconds": 3600,   # yesterday's value
+                "uploaded_count": 5,
+                "today_idle": 10,
+                "timeline": [],
+                "fetch_date": day1,       # tagged as old day
+            }
+            dashboard._apply_dashboard_data(stale_payload)
+
+        # After rollover, _cached_calendar_date should be day2
+        self.assertEqual(dashboard._cached_calendar_date, day2)
+        # The stale 3600 s must NOT have been applied — counter must be 0 (new day)
+        self.assertEqual(
+            dashboard._cached_today_total_seconds,
+            0,
+            "Stale cross-midnight fetch must NOT carry yesterday's time into today",
+        )
+        self.assertEqual(dashboard.active_time_val_label.text(), "00:00:00")
+
+
+    def test_12_app_restart_on_new_day_starts_from_zero(self):
+        """If the app restarts on a new calendar day, Active Time starts at 00:00:00.
+
+        Scenario: persisted data from Day 1 = 1800 s. App restarts on Day 2.
+        Service returns 0 for today (correct new day). Counter must initialize to 0.
+        """
+        self.mock_service.get_today_total_seconds.return_value = 0
+        self.mock_service.get_persisted_daily_active_seconds.return_value = 0
+
+        dashboard = DashboardPage(self.mock_service)
+        self.assertEqual(
+            dashboard._cached_today_total_seconds,
+            0,
+            "On a new day (no DB records, no persisted seconds for today) counter must be 0",
+        )
+        self.assertEqual(dashboard.active_time_val_label.text(), "00:00:00")
 
 
 if __name__ == "__main__":

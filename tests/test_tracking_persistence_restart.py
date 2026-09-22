@@ -75,7 +75,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             QApplication.processEvents()
             try:
                 self.assertTrue(win._tracker.is_tracking, "Tracker must be actively running")
-                self.assertEqual(win.status_badge.text(), "Tracking")
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
                 self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
                 # Header buttons are hidden
@@ -123,23 +123,23 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 self.assertFalse(self.store.is_tracking_manually_stopped())
                 self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
 
-                # User clicks stop tracking via dashboard toggle button
+                # User clicks "Paused" button on dashboard -> toggles to Paused state, tracker stays active
                 win.dashboard_page.tracking_toggle_button.click()
                 QApplication.processEvents()
 
-                self.assertTrue(self.store.is_tracking_manually_stopped())
-                self.assertFalse(self.store.is_tracking_active())
-                self.assertEqual(win.status_badge.text(), "Not Tracking")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Inactive")
+                self.assertTrue(win._tracker.is_tracking)
+                self.assertTrue(self.store.is_tracking_paused())
+                self.assertEqual(win.status_badge.text(), "Paused")
+                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Paused")
                 self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Resume")
 
-                # User clicks start tracking via dashboard toggle button
+                # User clicks "Resume" button on dashboard -> toggles back to Online/Active state
                 win.dashboard_page.tracking_toggle_button.click()
                 QApplication.processEvents()
 
-                self.assertFalse(self.store.is_tracking_manually_stopped())
-                self.assertTrue(self.store.is_tracking_active())
-                self.assertEqual(win.status_badge.text(), "Tracking")
+                self.assertTrue(win._tracker.is_tracking)
+                self.assertFalse(self.store.is_tracking_paused())
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
                 self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
             finally:
@@ -176,7 +176,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             QApplication.processEvents()
             try:
                 self.assertTrue(win2._tracker.is_tracking, "Tracking must resume after update restart")
-                self.assertEqual(win2.status_badge.text(), "Tracking")
+                self.assertEqual(win2.status_badge.text(), "Online")
                 self.assertEqual(win2.dashboard_page.network_status_label.text(), "● Online")
                 self.assertEqual(win2.dashboard_page.tracking_toggle_button.text(), "Paused")
             finally:

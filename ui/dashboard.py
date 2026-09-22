@@ -78,6 +78,7 @@ class DashboardPage(QWidget):
     tracking_start_requested = Signal()
     tracking_stop_requested = Signal()
     tracking_toggle_requested = Signal()
+    pause_state_changed = Signal(bool)
 
     def __init__(
         self,
@@ -93,10 +94,12 @@ class DashboardPage(QWidget):
         self._cached_calendar_date = datetime.now().astimezone().date()
 
         self._is_tracking = False
+        self._is_paused = False
         try:
             from services.secure_session import SessionStore
             store = SessionStore()
             self._is_tracking = store.is_tracking_active() and not store.is_tracking_manually_stopped()
+            self._is_paused = store.is_tracking_paused()
         except Exception:
             pass
 
@@ -131,9 +134,16 @@ class DashboardPage(QWidget):
         # Dynamic network connectivity detector
         self._is_network_online = True
         self._network_timer = QTimer(self)
-        self._network_timer.setInterval(5000)
+        self._network_timer.setInterval(3000)
         self._network_timer.timeout.connect(self._check_network_connectivity)
         self._network_timer.start()
+
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            NetworkReachabilityMonitor().register_listener(self._on_reachability_changed)
+            NetworkReachabilityMonitor().start_monitoring(interval=3.0)
+        except Exception:
+            pass
 
         try:
             att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
@@ -227,13 +237,36 @@ class DashboardPage(QWidget):
             except Exception:
                 pass
 
-    def _on_tracking_toggle_clicked(self) -> None:
-        """Handle user clicking Start Tracking / Stop Tracking button on Dashboard."""
-        self.tracking_toggle_requested.emit()
-        if getattr(self, "_is_tracking", False):
-            self.tracking_stop_requested.emit()
+    def is_paused(self) -> bool:
+        """Return True if tracking status is currently Paused."""
+        return self._is_paused
+
+    def set_paused(self, paused: bool) -> None:
+        """Update paused status without stopping background workers."""
+        self._is_paused = bool(paused)
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().set_tracking_paused(self._is_paused)
+        except Exception:
+            pass
+        self._apply_toggle_button_style(self._is_tracking)
+        if self._is_paused:
+            self.tracking_status_label.setText("Online: Paused")
+        elif self._is_tracking:
+            self.tracking_status_label.setText("Online: Active")
         else:
-            self.tracking_start_requested.emit()
+            self.tracking_status_label.setText("Online: Inactive")
+        self.pause_state_changed.emit(self._is_paused)
+
+    def _on_tracking_toggle_clicked(self) -> None:
+        """Handle user clicking Paused / Resume button on Dashboard.
+
+        Clicking Paused does NOT stop tracking, log collection, screenshots,
+        or backend sync. It only changes the displayed tracking status to Paused
+        and toggles the button text to Resume.
+        """
+        self.tracking_toggle_requested.emit()
+        self.set_paused(not self._is_paused)
 
     def _build_ui(self) -> None:
         """Build the dashboard interface."""
@@ -387,7 +420,7 @@ class DashboardPage(QWidget):
         self.records_uploaded_label = QLabel("Records Uploaded: 0")
         self.records_uploaded_label.setObjectName("StatusLabel")
 
-        self.update_status_label = QLabel("Status: Sync Successful")
+        self.update_status_label = QLabel("Status: Online")
         self.update_status_label.setObjectName("StatusLabel")
         self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
         self.sync_status_label = self.update_status_label
@@ -480,7 +513,18 @@ class DashboardPage(QWidget):
 
     def _apply_toggle_button_style(self, is_active: bool) -> None:
         """Apply dynamic color and styling to single Paused/Resume tracking button."""
-        if is_active:
+        if self._is_paused:
+            self.tracking_toggle_button.setText("Resume")
+            self.tracking_toggle_button.setStyleSheet(
+                "QPushButton#TrackingToggleButton {"
+                "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
+                "    background-color: #0284c7; color: #ffffff; border: none;"
+                "}"
+                "QPushButton#TrackingToggleButton:hover {"
+                "    background-color: #0369a1;"
+                "}"
+            )
+        elif is_active:
             self.tracking_toggle_button.setText("Paused")
             self.tracking_toggle_button.setStyleSheet(
                 "QPushButton#TrackingToggleButton {"
@@ -509,9 +553,20 @@ class DashboardPage(QWidget):
         if is_online:
             self.network_status_label.setText("● Online")
             self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+            self.update_status_label.setText("Status: Online")
+            self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
         else:
             self.network_status_label.setText("● Offline")
             self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
+            self.update_status_label.setText("Status: Offline")
+            self.update_status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+
+    def _on_reachability_changed(self, is_online: bool) -> None:
+        """Handle async network reachability changes from NetworkReachabilityMonitor."""
+        try:
+            QTimer.singleShot(0, lambda: self.set_network_status(is_online))
+        except Exception:
+            pass
 
     def _check_network_connectivity(self) -> None:
         """Dynamically check internet / network connectivity in a background thread."""
@@ -520,37 +575,11 @@ class DashboardPage(QWidget):
             return
 
         import threading
+        from services.network_monitor import NetworkReachabilityMonitor
 
         def _worker():
-            import socket
-            from urllib.parse import urlparse
-            from config.api_config import ApiConfig
-
-            is_online = False
-            # 1. Check API host reachability
             try:
-                base_url = ApiConfig.base_url
-                if base_url:
-                    parsed = urlparse(base_url)
-                    host = parsed.hostname
-                    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-                    if host:
-                        with socket.create_connection((host, port), timeout=2.0):
-                            is_online = True
-            except Exception:
-                pass
-
-            # 2. Fallback check: well-known public DNS
-            if not is_online:
-                for dns_ip in ("8.8.8.8", "1.1.1.1"):
-                    try:
-                        with socket.create_connection((dns_ip, 53), timeout=1.5):
-                            is_online = True
-                            break
-                    except Exception:
-                        pass
-
-            try:
+                is_online = NetworkReachabilityMonitor().check_reachability(timeout=1.5)
                 QTimer.singleShot(0, lambda: self.set_network_status(is_online))
             except Exception:
                 pass
@@ -559,6 +588,11 @@ class DashboardPage(QWidget):
 
     def _shutdown(self) -> None:
         """Clean up background timers and persist active state on widget disposal."""
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            NetworkReachabilityMonitor().unregister_listener(self._on_reachability_changed)
+        except Exception:
+            pass
         try:
             if hasattr(self, "_date_timer") and self._date_timer:
                 self._date_timer.stop()
@@ -612,8 +646,11 @@ class DashboardPage(QWidget):
 
         # Update Online status and dynamic toggle button
         self._is_tracking = bool(state.is_tracking)
-        tracking_text = "Active" if state.is_tracking else "Inactive"
-        self.tracking_status_label.setText(f"Online: {tracking_text}")
+        if self._is_paused:
+            self.tracking_status_label.setText("Online: Paused")
+        else:
+            tracking_text = "Active" if state.is_tracking else "Inactive"
+            self.tracking_status_label.setText(f"Online: {tracking_text}")
         self._apply_toggle_button_style(state.is_tracking)
 
         # Update idle time label in real time second by second
@@ -657,7 +694,17 @@ class DashboardPage(QWidget):
     def set_tracking_active(self, active: bool) -> None:
         """Explicitly update the online tracking status label, button, and app indicators."""
         self._is_tracking = bool(active)
-        self.tracking_status_label.setText(f"Online: {'Active' if active else 'Inactive'}")
+        if not active:
+            self._is_paused = False
+            try:
+                from services.secure_session import SessionStore
+                SessionStore().set_tracking_paused(False)
+            except Exception:
+                pass
+        if self._is_paused:
+            self.tracking_status_label.setText("Online: Paused")
+        else:
+            self.tracking_status_label.setText(f"Online: {'Active' if active else 'Inactive'}")
         self._apply_toggle_button_style(active)
         if not active:
             self.current_app_label.setText("Not tracking")
@@ -741,6 +788,9 @@ class DashboardPage(QWidget):
 
         def _bg_fetch():
             try:
+                # Record the calendar date at the start of this fetch so that
+                # _apply_dashboard_data can discard stale cross-midnight results.
+                fetch_date = datetime.now().astimezone().date()
                 total_seconds = self._service.get_today_total_seconds()
                 uploaded_count = self._service.get_uploaded_records_count()
                 today_idle = self._service.get_today_total_idle_seconds()
@@ -769,6 +819,10 @@ class DashboardPage(QWidget):
                     "tasks": tasks,
                     "task_error": TaskService().last_error,
                     "attendance": attendance,
+                    # Tag with fetch date so _apply_dashboard_data can discard
+                    # cross-midnight stale results that would carry yesterday's
+                    # active time into today.
+                    "fetch_date": fetch_date,
                 }
                 self.data_refreshed.emit(data)
             except Exception as err:
@@ -785,10 +839,28 @@ class DashboardPage(QWidget):
             total_seconds = data.get("total_seconds", 0)
             if isinstance(total_seconds, (int, float)):
                 total_seconds = int(total_seconds)
-                self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
-                self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
-                self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
-                self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
+                # Guard: discard total_seconds from a background fetch that was
+                # started on a different calendar day (cross-midnight race).
+                # Without this, yesterday's accumulated time would flow into
+                # today's counter via the max() comparison below.
+                fetch_date = data.get("fetch_date")
+                date_mismatch = (
+                    fetch_date is not None
+                    and fetch_date != self._cached_calendar_date
+                )
+                if date_mismatch:
+                    logger.info(
+                        "Discarding stale cross-midnight refresh data "
+                        "(fetch_date=%s, current_date=%s, total_seconds=%d)",
+                        fetch_date,
+                        self._cached_calendar_date,
+                        total_seconds,
+                    )
+                else:
+                    self._cached_today_total_seconds = max(self._cached_today_total_seconds, total_seconds)
+                    self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
+                    self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
+                    self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
             uploaded_count = data.get("uploaded_count", 0)
             self._cached_uploaded_count = uploaded_count
@@ -824,28 +896,6 @@ class DashboardPage(QWidget):
                 else SyncService.last_successful_sync_time
             )
             self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
-
-            # Keep sync status updated with current SyncService state
-            sync_st = getattr(SyncService, "last_sync_status", "Sent")
-            curr_text = self.update_status_label.text()
-            if not any(u in curr_text for u in ("Downloading", "Installing", "Restarting", "Ready to Restart", "Update Pending")):
-                if sync_st in ("Sent", "Successful"):
-                    self.set_sync_status("Sync Successful")
-                elif sync_st == "Sending":
-                    self.set_sync_status("Syncing...")
-                elif sync_st in ("Pending", "Offline", "Timeout") or "Offline" in sync_st or "Timeout" in sync_st:
-                    self.set_sync_status("Sync Pending")
-                elif "Auth Failed" in sync_st:
-                    self.set_sync_status("Sync Error (Auth Failed)")
-                elif sync_st.startswith("Failed"):
-                    err_msg = getattr(SyncService, "last_sync_error", "")
-                    clean_msg = self._clean_status_text(err_msg)
-                    if clean_msg == "Sync Pending":
-                        self.set_sync_status("Sync Pending")
-                    elif "Auth" in clean_msg:
-                        self.set_sync_status("Sync Error (Auth Failed)")
-                    else:
-                        self.set_sync_status("Sync Error")
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 
@@ -902,30 +952,15 @@ class DashboardPage(QWidget):
         return t
 
     def set_sync_status(self, status: str) -> None:
-        """Dynamically update the displayed sync status with clean styling."""
-        if not status:
+        """Update sync status if relevant, preserving dynamic network online/offline display."""
+        if not status or status in ("Sync Successful", "Status: Sync Successful", "Sent", "Successful"):
+            self.set_network_status(self._is_network_online)
             return
-        s = str(status).strip()
-        if not s.startswith("Status:"):
-            display_text = f"Status: {s}"
-        else:
-            display_text = s
-
-        self.update_status_label.setText(display_text)
-        if "Successful" in s or "Sent" in s or "Updated" in s:
-            self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
-        elif "Syncing" in s or "Sending" in s:
-            self.update_status_label.setStyleSheet("color: #3b82f6; font-weight: 500;")
-        elif "Pending" in s or "Offline" in s:
-            self.update_status_label.setStyleSheet("color: #f59e0b; font-weight: 500;")
-        elif "Error" in s or "Failed" in s:
-            self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
-        else:
-            self.update_status_label.setStyleSheet("")
 
     def set_update_status(self, status: str) -> None:
         """Dynamically update the displayed device update verification status."""
         if not status:
+            self.set_network_status(self._is_network_online)
             return
         s = str(status).strip()
         if not s.startswith("Status:"):
@@ -957,22 +992,7 @@ class DashboardPage(QWidget):
             err_upper = str(error_type).upper()
             msg_lower = str(error_message).lower()
 
-            if any(k in err_upper for k in ("SYNC", "UPLOAD", "API", "NETWORK", "HTTP")):
-                if any(net in msg_lower for net in (
-                    "httpsconnectionpool", "httpconnectionpool", "connectionerror", "max retries",
-                    "failed to establish a new connection", "name resolution", "getaddrinfo",
-                    "timeout", "timed out", "temporary failure", "unreachable", "offline",
-                    "network is unreachable", "connection refused", "connection reset", "socket",
-                    "502", "503", "504"
-                )):
-                    self.set_sync_status("Sync Pending")
-                elif any(auth in msg_lower for auth in ("401", "unauthorized", "invalid key", "invalid token", "forbidden", "403", "auth failed", "device not recognized", "revoked")):
-                    self.set_sync_status("Sync Error (Auth Failed)")
-                else:
-                    clean_msg = self._clean_status_text(error_message)
-                    self.set_sync_status(f"Sync Error ({clean_msg})" if clean_msg != "Sync Pending" else "Sync Pending")
-
-            elif any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
+            if any(k in err_upper for k in ("UPDATE", "INSTALL", "DOWNLOAD")):
                 if any(net in msg_lower for net in ("connect", "timeout", "offline", "unreachable", "name resolution", "httpsconnectionpool")):
                     self.set_update_status("Update Pending (Offline)")
                 else:
@@ -982,9 +1002,5 @@ class DashboardPage(QWidget):
                 clean_msg = self._clean_status_text(error_message)
                 self.tracking_status_label.setText(f"Tracking: Error ({clean_msg})")
                 self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
-            else:
-                clean_msg = self._clean_status_text(error_message)
-                self.update_status_label.setText(f"Status: {clean_msg}")
-                self.update_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
         except Exception:
             pass

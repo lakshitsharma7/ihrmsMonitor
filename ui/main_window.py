@@ -791,7 +791,7 @@ class MainWindow(QMainWindow):
         self.status_icon.setStyleSheet("margin-right: 4px; background: transparent;")
         header_layout.addWidget(self.status_icon)
 
-        self.status_badge = QLabel("Not Tracking")
+        self.status_badge = QLabel("Offline")
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("tracking", "false")
         self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
@@ -891,6 +891,9 @@ class MainWindow(QMainWindow):
         )
         self.dashboard_page.tracking_stop_requested.connect(
             lambda: self.stop_tracking(manual=True)
+        )
+        self.dashboard_page.pause_state_changed.connect(
+            self._on_pause_state_changed
         )
 
         self.tabs.addTab(
@@ -1183,6 +1186,7 @@ class MainWindow(QMainWindow):
 
         is_active = False
         is_idle = False
+        is_paused = False
         
         # Check current state from status badge property
         tracking_prop = self.status_badge.property("tracking")
@@ -1191,6 +1195,9 @@ class MainWindow(QMainWindow):
         elif tracking_prop == "idle":
             is_active = True
             is_idle = True
+        elif tracking_prop == "paused":
+            is_active = True
+            is_paused = True
             
         from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
         from PySide6.QtCore import Qt
@@ -1203,8 +1210,8 @@ class MainWindow(QMainWindow):
         
         # Set color based on state
         if is_active:
-            if is_idle:
-                color = QColor("#b06000") # Idle (amber)
+            if is_paused or is_idle:
+                color = QColor("#b06000") # Idle / Paused (amber)
             else:
                 color = QColor("#137333") # Active (green)
         else:
@@ -1260,7 +1267,7 @@ class MainWindow(QMainWindow):
         store.set_tracking_active(True)
 
         # Update UI state immediately to show Active
-        self.status_badge.setText("Tracking")
+        self.status_badge.setText("Online")
         self.status_badge.setProperty("tracking", "true")
         self._refresh_badge_style()
         self.start_button.setEnabled(False)
@@ -1313,7 +1320,7 @@ class MainWindow(QMainWindow):
             store.set_tracking_active(False)
 
         # Update UI state immediately to show Inactive
-        self.status_badge.setText("Not Tracking")
+        self.status_badge.setText("Offline")
         self.status_badge.setProperty("tracking", "false")
         self._refresh_badge_style()
         self.start_button.setEnabled(True)
@@ -1344,7 +1351,7 @@ class MainWindow(QMainWindow):
             return
 
         self.status_badge.setText(
-            "Tracking"
+            "Online"
         )
 
         self.status_badge.setProperty(
@@ -1381,7 +1388,7 @@ class MainWindow(QMainWindow):
             return
 
         self.status_badge.setText(
-            "Not Tracking"
+            "Offline"
         )
 
         self.status_badge.setProperty(
@@ -1428,7 +1435,19 @@ class MainWindow(QMainWindow):
             state
         )
 
-        if state.is_idle:
+        if getattr(self.dashboard_page, "_is_paused", False):
+            self.status_badge.setText(
+                "Paused"
+            )
+
+            self.status_badge.setProperty(
+                "tracking",
+                "paused",
+            )
+
+            self._refresh_badge_style()
+
+        elif state.is_idle:
             self.status_badge.setText(
                 "Idle"
             )
@@ -1442,7 +1461,7 @@ class MainWindow(QMainWindow):
 
         elif state.is_tracking:
             self.status_badge.setText(
-                "Tracking"
+                "Online"
             )
 
             self.status_badge.setProperty(
@@ -1453,7 +1472,7 @@ class MainWindow(QMainWindow):
             self._refresh_badge_style()
         else:
             self.status_badge.setText(
-                "Not Tracking"
+                "Offline"
             )
 
             self.status_badge.setProperty(
@@ -1494,6 +1513,27 @@ class MainWindow(QMainWindow):
     # SETTINGS
     # ==========================================================
 
+    @Slot(bool)
+    def _on_pause_state_changed(self, is_paused: bool) -> None:
+        """Update top bar status badge when pause status changes without stopping background workers."""
+        from services.secure_session import SessionStore
+        SessionStore().set_tracking_paused(is_paused)
+        if is_paused:
+            self.status_badge.setText("Paused")
+            self.status_badge.setProperty("tracking", "paused")
+        else:
+            if hasattr(self, "_tracker") and self._tracker.is_tracking:
+                if hasattr(self, "_last_rendered_idle") and self._last_rendered_idle:
+                    self.status_badge.setText("Idle")
+                    self.status_badge.setProperty("tracking", "idle")
+                else:
+                    self.status_badge.setText("Online")
+                    self.status_badge.setProperty("tracking", "true")
+            else:
+                self.status_badge.setText("Offline")
+                self.status_badge.setProperty("tracking", "false")
+        self._refresh_badge_style()
+
     def _on_status_badge_clicked(self, event=None) -> None:
         """Allow clicking the status badge to start/resume tracking if currently inactive."""
         from services.session_service import SessionService
@@ -1504,7 +1544,7 @@ class MainWindow(QMainWindow):
         is_tracking = False
         if hasattr(self, "_tracker") and self._tracker.is_tracking:
             is_tracking = True
-        elif self.status_badge.property("tracking") in ("true", "idle"):
+        elif self.status_badge.property("tracking") in ("true", "idle", "paused"):
             is_tracking = True
 
         if not is_tracking:
@@ -1527,6 +1567,8 @@ class MainWindow(QMainWindow):
         tracking_prop = self.status_badge.property("tracking")
         if tracking_prop == "true":
             self.status_badge.setToolTip("Tracking is active")
+        elif tracking_prop == "paused":
+            self.status_badge.setToolTip("Status: Paused")
         elif tracking_prop == "idle":
             self.status_badge.setToolTip("Currently idle")
         else:

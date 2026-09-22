@@ -55,6 +55,11 @@ QMainWindow {
     color: #b06000;
 }
 
+#StatusBadge[tracking="paused"] {
+    background-color: #fef7e0;
+    color: #b06000;
+}
+
 QGroupBox {
     background-color: #ffffff;
     border: 1px solid #dfe3eb;
