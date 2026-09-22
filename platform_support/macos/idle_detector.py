@@ -7,6 +7,8 @@ not require any special privacy permission.
 
 from __future__ import annotations
 
+import os
+
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +20,10 @@ def get_idle_seconds() -> float:
     Returns 0.0 (i.e. "assume active") if the API is unavailable or fails,
     so a transient failure never falsely marks a user idle.
     """
+    # On headless CI runners (GitHub Actions, etc.), Quartz reports the runner's
+    # boot uptime as idle time since no physical input devices are connected.
+    if os.environ.get("CI") == "true" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return 0.0
     try:
         from Quartz import (  # type: ignore
             CGEventSourceSecondsSinceLastEventType,
