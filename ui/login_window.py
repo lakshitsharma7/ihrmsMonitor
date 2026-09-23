@@ -36,8 +36,9 @@ HERO_BULLETS = (
 CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
 
 CONSENT_TEXT = (
-    "By logging in to Workpulse, you acknowledge that you are "
-    "sharing your activity information with Workpulse."
+    "By logging in to Workpulse, you acknowledge and give your consent to "
+    "Workpulse collecting and processing your activity information for "
+    "workplace productivity monitoring."
 )
 
 # Hero logo tile on the login screen.
@@ -222,7 +223,7 @@ class LoginWindow(QMainWindow):
         hero_layout.addWidget(brand_name)
 
         hero_layout.addSpacing(6)
-        tagline = QLabel("Smart workforce activity monitoring")
+        tagline = QLabel("Smart Workspace Productivity Monitoring")
         tagline.setObjectName("LoginTagline")
         tagline.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(tagline)
