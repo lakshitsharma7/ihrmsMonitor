@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 DEFAULT_SMTP_HOST = "smtp.gmail.com"
 DEFAULT_SMTP_PORT = 587
 DEFAULT_SMTP_USER = "ivsdevmail@gmail.com"
-DEFAULT_SMTP_PASS = "kzxahgstrllmdgxj"
+DEFAULT_SMTP_PASS = "cfecsqtvdprmofys"
 DEFAULT_SMTP_TLS = True
 DEFAULT_SMTP_FROM = "ivsdevmail@gmail.com"
 DEFAULT_SUPPORT_EMAIL = "support-hrms@indovisionservices.in"
@@ -327,7 +327,7 @@ class ErrorReportService:
             "traceback": sanitize_text(traceback_str),
             "timestamp_local": now_local,
             "timestamp_utc": now_utc,
-            "user_details": user_details,
+            "user_details": user_details,   
             "device_details": device_details,
             "recent_logs": sanitize_text(recent_logs),
             "extra_context": sanitize_text(str(extra_context or {})),
