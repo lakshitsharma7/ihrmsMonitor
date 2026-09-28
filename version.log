@@ -5,6 +5,18 @@ Maintained automatically. Add a new block at the top for each release.
 Do not duplicate version entries. Preserve all previous entries below.
 ================================================================================
 
+Version 1.0
+Date: 28-09-2026
+
+New Features & Improvements:
+- Current application version unified to 1.0 across all components, metadata, and build pipelines.
+- Dynamic App Controller API integration for auto-updates:
+    * Server update version, installer/DMG URLs, and force_to_update flags dynamically read from App Controller API response (`WINDOWS` / `MAC`).
+    * Full semantic version comparison ensuring dynamic update triggers and preventing improper downgrades or redundant updates.
+    * Fallback support to existing punch version check endpoint.
+
+--------------------------------------------------------------------------------
+
 Version 2.0.2
 Date: 22-09-2026
 

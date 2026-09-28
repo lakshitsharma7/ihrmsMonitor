@@ -37,8 +37,7 @@ CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
 
 CONSENT_TEXT = (
     "By logging in to Workpulse, you acknowledge and give your consent to "
-    "Workpulse collecting and processing your activity information for "
-    "workplace productivity monitoring."
+    "your activity information for workplace productivity monitoring."
 )
 
 # Hero logo tile on the login screen.
@@ -137,6 +136,8 @@ class LoginWindow(QMainWindow):
 
         self.main_window = None
         self.login_step = 1
+        self._update_dialog = None
+        self.update_status_label = None
 
         # Company Code starts blank and nothing is verified yet.
         self._verified_company_code = None
@@ -486,21 +487,6 @@ class LoginWindow(QMainWindow):
 
         panel_layout.addStretch(1)
 
-        # Footer update status row on form panel
-        footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(0, 8, 0, 0)
-        footer_layout.addStretch()
-
-        self.update_status_label = QLabel("")
-        self.update_status_label.setObjectName("LoginUpdateStatus")
-        self.update_status_label.setStyleSheet("color: #1a73e8; font-size: 11px; font-weight: 600; text-decoration: underline;")
-        self.update_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_status_label.setVisible(False)
-        self.update_status_label.mousePressEvent = self._on_update_status_clicked
-        footer_layout.addWidget(self.update_status_label)
-
-        panel_layout.addLayout(footer_layout)
-
         return panel
 
     def show_and_clear(self) -> None:
@@ -547,22 +533,21 @@ class LoginWindow(QMainWindow):
             self.password_input.echoMode() == QLineEdit.EchoMode.Password
         )
 
-    def _on_update_status_clicked(self, event: object) -> None:
-        """Open update dialog when clicking update status on login screen."""
-        try:
-            from services.update_service import UpdateService
-            service = UpdateService()
-            if service.available_version:
-                from ui.update_dialog import UpdateDialog
-                dialog = UpdateDialog(
-                    version=service.available_version,
-                    is_force=service.is_force_update,
-                    installer_path=service._downloaded_installer,
-                    parent=self,
-                )
-                dialog.exec()
-        except Exception as err:
-            logger.warning("Could not open update dialog from login screen: %s", err)
+    def _show_update_dialog(
+        self,
+        version: str = "",
+        is_force: bool = False,
+        installer_path: str | None = None,
+        worker: object | None = None,
+    ) -> None:
+        """Silent update mode: No-op to avoid popup interruptions."""
+        logger.debug("Silent update mode active; suppressing login update dialog popup.")
+        return
+
+    def _on_update_status_clicked(self, event: object = None) -> None:
+        """Silent update mode: Suppress manual popup."""
+        logger.debug("Silent update mode active; suppressing update popup.")
+        return
 
     def _on_consent_toggled(self, checked: bool) -> None:
         """Clear the consent validation message once the box is ticked."""
@@ -957,75 +942,41 @@ class LoginWindow(QMainWindow):
                     )
                     api_key = password
                 
+                # ----------------------------------------------
+                # App Controller Version Check & Silent Background Update
+                # ----------------------------------------------
                 try:
-                    os_name = platform.system().upper()
-                    os_type = "MACOS" if os_name == "DARWIN" else "WINDOWS"
-                    version_url = api_config.check_version_url
-                    version_data = {
-                        "indo_code": indo_code,
-                        "key": api_key,
-                        "os_type": os_type
-                    }
-                    version_json = {}
-                    try:
-                        import requests
-                        v_resp = requests.post(version_url, data=version_data, headers=req_headers, timeout=10)
-                        version_json = v_resp.json()
-                    except Exception:
-                        encoded_version_data = urllib.parse.urlencode(version_data).encode("utf-8")
-                        version_req = urllib.request.Request(
-                            version_url,
-                            data=encoded_version_data,
-                            headers=req_headers,
-                            method="POST"
-                        )
-                        import ssl
-                        try:
-                            import certifi
-                            v_ssl = ssl.create_default_context(cafile=certifi.where())
-                        except Exception:
-                            v_ssl = ssl.create_default_context()
-                        with urllib.request.urlopen(version_req, timeout=10, context=v_ssl) as version_response:
-                            version_body = version_response.read().decode("utf-8")
-                        version_json = json.loads(version_body)
+                    from services.update_service import fetch_app_controller_update_info, is_newer_version, UpdateService
+                    from services.update_state import UpdateStateManager
+                    from config.settings import get_running_app_version
 
-                    logger.info(
-                        "Check version response: status=%s, version_code=%s, force_update=%s",
-                        version_json.get("status"),
-                        version_json.get("version_code"),
-                        version_json.get("force_update")
+                    server_ver, file_name, dl_url, is_force = fetch_app_controller_update_info(
+                        company_code=company_code,
+                        api_url=api_url,
+                        indo_code=indo_code,
+                        api_key=api_key,
                     )
 
-                    # Trigger update check if newer version detected
-                    if version_json.get("status") == 1:
-                        from services.update_service import is_newer_version, UpdateService
-                        from services.update_state import UpdateStateManager
-                        from config.settings import get_running_app_version
-                        server_ver = str(version_json.get("version_code", "")).strip()
-                        if is_newer_version(server_ver, get_running_app_version()):
-                            allowed, loop_reason = UpdateStateManager().should_attempt_update(server_ver)
-                            if not allowed:
-                                logger.info("Login screen update loop guard: %s", loop_reason)
-                            else:
-                                logger.info("Newer version %s detected on login. Initiating background update pipeline.", server_ver)
+                    if server_ver and is_newer_version(server_ver, get_running_app_version()):
+                        allowed, loop_reason = UpdateStateManager().should_attempt_update(server_ver)
+                        if not allowed:
+                            logger.info("Login screen update loop guard: %s", loop_reason)
+                        else:
+                            logger.info("Newer version %s detected on login. Initiating silent background update pipeline.", server_ver)
 
-                                def on_progress(percent: int, down: int, total: int):
-                                    self.update_status_label.setText(f"Updating ({percent}%)...")
-                                    self.update_status_label.setVisible(True)
+                            def on_ready_to_install(installer_path: str):
+                                logger.info("Login screen update ready to install: %s", installer_path)
+                                from services.update_service import install_update_and_restart
+                                install_update_and_restart(installer_path, target_version=server_ver, exit_process=True)
 
-                                def on_completed(path: str, ver: str, force: bool):
-                                    self.update_status_label.setText(f"Restarting to install v{ver}...")
-                                    self.update_status_label.setVisible(True)
-
-                                UpdateService().start_pipeline(
-                                    api_url=api_url,
-                                    indo_code=indo_code,
-                                    api_key=api_key,
-                                    on_progress=on_progress,
-                                    on_download_completed=on_completed,
-                                )
+                            UpdateService().start_pipeline(
+                                api_url=api_url,
+                                indo_code=indo_code,
+                                api_key=api_key,
+                                on_ready_to_install=on_ready_to_install,
+                            )
                 except Exception as version_err:
-                    logger.warning("Check version API call failed: %s", version_err)
+                    logger.warning("Version check failed on login: %s", version_err)
 
                 # ----------------------------------------------
                 # Device Enrollment

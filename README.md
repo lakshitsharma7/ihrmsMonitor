@@ -15,7 +15,7 @@ A cross-platform enterprise desktop activity monitoring, timesheet management, a
 - **Leave Balance & Quotas**: Real-time retrieval of accrued leave types and remaining quotas.
 - **Task PMS & Timesheets**: Interactive timesheet management for Key Result Areas (KRAs) and assigned tasks.
 - **Single Sign-On HRMS Portal Bridge**: Instant browser navigation to the full HRMS Web Portal with automated credential passing.
-- **Authoritative Unattended Auto-Updates**: Seamless background update checks (`POST /punch/check_new_version`), silent Inno Setup installation, detached execution, and update loop prevention.
+- **Authoritative Unattended Auto-Updates**: Seamless background update checks (`POST /api/appcontroller/appcontroller`), silent Inno Setup installation, detached execution, and update loop prevention.
 
 ---
 
@@ -115,7 +115,7 @@ Workpulse connects dynamically to tenant-specific company endpoints resolved thr
 - **Leave Balance**: `POST /LeaveApply/view_balance`
 - **KRA / Tasks**: `POST /TaskPMS/get_kra`
 - **Timesheet Submission**: `POST /TaskPMS/fill_time_sheet`
-- **Version Check**: `POST /punch/check_new_version`
+- **Version Check**: `POST /api/appcontroller/appcontroller`
 - **Diagnostic Logging**: `POST /dashboard/post_front_end_error_log`
 
 For detailed request/response schemas and architectural workflows, see [docs/WORKPULSE_SYSTEM_DOCUMENTATION.md](file:///d:/New%20folder/ihrms_monitor/docs/WORKPULSE_SYSTEM_DOCUMENTATION.md).
@@ -124,7 +124,7 @@ For detailed request/response schemas and architectural workflows, see [docs/WOR
 
 ## 7. Auto-Update Mechanism
 
-1. **Source of Truth**: The live update API (`POST /punch/check_new_version`) dynamically provides the server version and download URL.
+1. **Source of Truth**: The live App Controller update API (`POST /api/appcontroller/appcontroller`) dynamically provides the server version and download URL (`data.apps.WINDOWS` / `data.apps.MAC`).
 2. **Semantic Precedence**: Updates trigger **only** when `server_version > installed_version` (evaluated numerically by major, minor, patch).
 3. **Loop Guard & Cooldown**: If an installation attempt fails (e.g. file lock), automatic retries for that version enter a 24-hour cooldown while keeping normal tracking operational.
 4. **Silent Detached Execution**: Windows installers run silently via detached VBScript/PowerShell runners without blocking or keeping open file locks.

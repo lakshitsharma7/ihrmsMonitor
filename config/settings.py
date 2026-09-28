@@ -76,7 +76,7 @@ def get_running_app_version() -> str:
                 if v:
                     return v
 
-    return "2.0.2"
+    return "1.0"
 
 
 class _DynamicAppVersion(str):
@@ -96,7 +96,7 @@ class _DynamicAppVersion(str):
 
 
 # Dynamically resolved application version (never requires manual updates)
-APP_VERSION = _DynamicAppVersion("2.0.2")
+APP_VERSION = _DynamicAppVersion("1.0")
 
 
 # How often (in seconds) the tracker worker polls for the active application.

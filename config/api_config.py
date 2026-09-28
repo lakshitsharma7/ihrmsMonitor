@@ -433,6 +433,40 @@ class ApiConfig:
         """Version URL configured in AppController (fallback to activity_tracker_link)."""
         return self._details.get("version_url") or self._details.get("activity_tracker_link")
 
+    def get_platform_update_info(self, platform_name: str | None = None) -> dict:
+        """
+        Extract platform-specific update metadata dictionary from verified AppController details.
+
+        Example structure from AppController data:
+            "apps": {
+                "WINDOWS": {"version_code": "1", "file_name": "https://indovisionservices.in/workpulse/Workpulse-Installer.exe", "force_to_update": "0"},
+                "MAC": {"version_code": "1", "file_name": "https://indovisionservices.in/workpulse/Workpulse.dmg", "force_to_update": "0"}
+            }
+        """
+        if platform_name is None:
+            platform_name = "MAC" if sys.platform == "darwin" else "WINDOWS"
+
+        details = self._details or {}
+        # 1. Look in details["apps"][platform_name]
+        apps = details.get("apps")
+        if isinstance(apps, dict) and platform_name in apps and isinstance(apps[platform_name], dict):
+            return apps[platform_name]
+
+        # 2. Look in details[platform_name]
+        if platform_name in details and isinstance(details[platform_name], dict):
+            return details[platform_name]
+
+        # 3. Look in details["data"]["apps"][platform_name] if details is the full payload
+        data = details.get("data")
+        if isinstance(data, dict):
+            data_apps = data.get("apps")
+            if isinstance(data_apps, dict) and platform_name in data_apps and isinstance(data_apps[platform_name], dict):
+                return data_apps[platform_name]
+            if platform_name in data and isinstance(data[platform_name], dict):
+                return data[platform_name]
+
+        return {}
+
     @property
     def punch_url(self) -> str | None:
         """Configurable punch endpoint URL from AppController, environment, or default endpoint."""
@@ -505,7 +539,7 @@ class ApiConfig:
         return (
             os.environ.get("IHRMS_CHECK_VERSION_API_URL")
             or self._details.get("check_version_url")
-            or self.endpoint("punch/check_new_version")
+            or APP_CONTROLLER_URL
         )
 
     @property

@@ -22,6 +22,14 @@ class TestVersionSystem(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        from config.api_config import ApiConfig
+        ApiConfig().reset()
+
+    def tearDown(self):
+        from config.api_config import ApiConfig
+        ApiConfig().reset()
+
     def test_get_running_app_version(self):
         """Verify get_running_app_version returns the configured APP_VERSION when not frozen."""
         v = get_running_app_version()
@@ -62,65 +70,88 @@ class TestVersionSystem(unittest.TestCase):
         self.assertFalse(is_newer_version("NA", "1.0.0"))
 
     def test_cache_busting_headers_in_update_check(self):
-        """Verify UpdateCheckWorker uses cache-busting headers and query parameters."""
+        """Verify UpdateCheckWorker uses cache-busting headers and query parameters on App Controller version check."""
         worker = UpdateCheckWorker(
-            api_url="https://mock.api/ihrms",
+            api_url="https://mock.api/hrms_api/ci4/api",
             indo_code="TEST_USER",
             api_key="TEST_KEY",
             auto_download=False,
         )
 
-        with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+        with patch("requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
+            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.5", "file_name": "https://mock.api/setup.exe"}}}}'
             mock_resp.json.return_value = {
-                "version": "1.0.1",
-                "download_url": "https://mock.api/setup.exe",
+                "status": 200,
+                "data": {
+                    "apps": {
+                        "WINDOWS": {
+                            "version_code": "2.0.5",
+                            "file_name": "https://mock.api/setup.exe",
+                        }
+                    }
+                },
             }
-            mock_get.return_value = mock_resp
+            mock_post.return_value = mock_resp
 
             with patch("config.api_config.ApiConfig") as mock_cfg_cls:
                 mock_cfg = MagicMock()
-                mock_cfg.version_url = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
-                mock_cfg.activity_tracker_version = None
-                mock_cfg.activity_tracker_link = None
+                mock_cfg.company_code = "IVSA1C1R092025"
+                mock_cfg.get_platform_update_info.return_value = {}
                 mock_cfg_cls.return_value = mock_cfg
 
                 # Run worker check
                 worker.run()
 
-                # Verify requests.get called with cache busting
-                mock_get.assert_called_once()
-                call_args, call_kwargs = mock_get.call_args
+                # Verify requests.post called with cache busting
+                mock_post.assert_called_once()
+                call_args, call_kwargs = mock_post.call_args
                 url_called = call_args[0]
                 self.assertIn("_t=", url_called)
                 self.assertEqual(call_kwargs.get("headers"), CACHE_BUST_HEADERS)
+                self.assertEqual(call_kwargs.get("data"), {
+                    "controller_id": "IVSA1C1R092025",
+                })
 
-    def test_central_version_url_fallback(self):
-        """Verify that when no custom company version URL is set, worker falls back to central update URL."""
+    def test_update_check_worker_queries_check_version_url(self):
+        """Verify that worker queries App Controller API directly using controller_id."""
         worker = UpdateCheckWorker(
-            api_url="https://mock.api/ihrms",
+            api_url="https://mock.api/hrms_api/ci4/api",
+            indo_code="TEST_USER",
+            api_key="TEST_KEY",
             auto_download=False,
         )
 
-        with patch("requests.get") as mock_get:
+        with patch("requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"version": "1.0.0"}
-            mock_get.return_value = mock_resp
+            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.0"}}}}'
+            mock_resp.json.return_value = {
+                "status": 200,
+                "data": {
+                    "apps": {
+                        "WINDOWS": {
+                            "version_code": "2.0.0",
+                            "file_name": "https://company.example.com/Workpulse-Installer.exe",
+                        }
+                    }
+                }
+            }
+            mock_post.return_value = mock_resp
 
             with patch("config.api_config.ApiConfig") as mock_cfg_cls:
                 mock_cfg = MagicMock()
-                mock_cfg.version_url = None
-                mock_cfg.activity_tracker_link = None
-                mock_cfg.activity_tracker_version = None
+                mock_cfg.company_code = "COMP123"
+                mock_cfg.get_platform_update_info.return_value = {}
                 mock_cfg_cls.return_value = mock_cfg
 
                 worker.run()
 
-                mock_get.assert_called_once()
-                url_called = mock_get.call_args[0][0]
-                self.assertTrue(url_called.startswith(DEFAULT_CENTRAL_VERSION_URL))
+                mock_post.assert_called_once()
+                url_called = mock_post.call_args[0][0]
+                self.assertIn("appcontroller", url_called)
+                self.assertEqual(mock_post.call_args[1].get("data"), {"controller_id": "COMP123"})
 
     def test_generate_version_info_parser(self):
         """Verify version parser converts strings to 4-tuples for Windows PE resources."""
@@ -140,8 +171,7 @@ class TestVersionSystem(unittest.TestCase):
 
     def test_version_check_prioritizes_punch_api_over_stale_appcontroller_tracker_version(self):
         """
-        Verify that when AppController returns stale activity_tracker_version ('1.00'),
-        the pipeline/worker correctly queries punch/check_new_version and adopts the latest released version (e.g. '1.0.2').
+        Verify that the pipeline worker queries App Controller API and adopts the latest released version.
         """
         from pathlib import Path
         import tempfile
@@ -154,39 +184,35 @@ class TestVersionSystem(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            fake_inst = tmp_path / "iHRMSMonitorSetup_v1.0.2.exe"
+            fake_inst = tmp_path / "WorkpulseSetup_v1.0.2.exe"
             with open(fake_inst, "wb") as f:
                 f.write(b"x" * (1024 * 200))
 
-            with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
-                # 1. External version URL returns empty body (as observed in production)
-                mock_url_resp = MagicMock()
-                mock_url_resp.status_code = 200
-                mock_url_resp.text = ""
-                mock_get.return_value = mock_url_resp
-
-                # 2. Company endpoint (/punch/check_new_version) returns released version 1.0.2
-                mock_punch_resp = MagicMock()
-                mock_punch_resp.status_code = 200
-                mock_punch_resp.text = '{"status": 1, "version_code": "1.0.2", "file_name": "iHRMSMonitorSetup_v1.0.2.exe"}'
-                mock_punch_resp.json.return_value = {
-                    "status": 1,
-                    "version_code": "1.0.2",
-                    "file_name": "iHRMSMonitorSetup_v1.0.2.exe",
-                    "download_url": "https://mock.api/setup_1.0.2.exe",
-                    "force_update": 0,
+            with patch("requests.post") as mock_post:
+                mock_ac_resp = MagicMock()
+                mock_ac_resp.status_code = 200
+                mock_ac_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "1.0.2", "file_name": "https://mock.api/Workpulse-Installer.exe"}}}}'
+                mock_ac_resp.json.return_value = {
+                    "status": 200,
+                    "data": {
+                        "apps": {
+                            "WINDOWS": {
+                                "version_code": "1.0.2",
+                                "file_name": "https://mock.api/Workpulse-Installer.exe",
+                                "force_to_update": "0",
+                            }
+                        }
+                    }
                 }
-                mock_post.return_value = mock_punch_resp
+                mock_post.return_value = mock_ac_resp
 
                 with patch("config.api_config.ApiConfig") as mock_cfg_cls:
                     mock_cfg = MagicMock()
-                    mock_cfg.version_url = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
-                    mock_cfg.activity_tracker_link = "https://indovisionservices.in/info/dev/v15/acitivity-tracker"
-                    # Stale version in AppController
-                    mock_cfg.activity_tracker_version = "1.00"
+                    mock_cfg.company_code = "COMP123"
+                    mock_cfg.get_platform_update_info.return_value = {}
                     mock_cfg_cls.return_value = mock_cfg
 
-                    with patch("services.update_service.get_running_app_version", return_value="1.0.0"), \
+                    with patch("services.update_service.get_running_app_version", return_value="1.0"), \
                          patch("services.update_service.get_updates_directory", return_value=tmp_path), \
                          patch("services.update_service.flush_pending_data_before_update", return_value=True), \
                          patch("services.update_service.install_update_and_restart", return_value=True):
@@ -196,7 +222,6 @@ class TestVersionSystem(unittest.TestCase):
 
                         worker.run()
 
-                        # Must have called punch/check_new_version and adopted 1.0.2 (NOT blocked by 1.00)
                         mock_post.assert_called_once()
                         self.assertIn("1.0.2", available_versions)
 

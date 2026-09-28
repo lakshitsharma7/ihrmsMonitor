@@ -1881,15 +1881,9 @@ class MainWindow(QMainWindow):
                 self._offline_update_pending = False
                 self._latest_version = version
                 self._is_force_update = force
-                self.dashboard_page.set_update_status(f"Pending (v{version} available)")
+                self.dashboard_page.set_update_status(f"Downloading v{version} in background...")
                 self.update_button.setVisible(True)
                 self.update_button.setText(f"🚀 Updating v{version}...")
-                if hasattr(self, "tray") and self.tray:
-                    self.tray.show_message(
-                        f"{APP_NAME} Update",
-                        f"New version v{version} is preparing to install.",
-                    )
-                self._show_update_dialog(version, force, None, worker=getattr(self, "_pipeline_worker", None))
 
             def on_completed(installer_path: str, version: str, force: bool):
                 logger.info("Pipeline update downloaded: %s", installer_path)
@@ -1905,11 +1899,18 @@ class MainWindow(QMainWindow):
                     "border-radius: 4px; padding: 5px 12px; margin-right: 6px;"
                 )
 
-                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    self._update_dialog._on_download_completed(installer_path, version, force)
-
             def on_error(phase: str, err_msg: str):
                 logger.warning("Pipeline update error (%s): %s", phase, err_msg)
+                try:
+                    from services.error_report_service import ErrorReportService
+                    ErrorReportService().report_error(
+                        error_type="UPDATE_PIPELINE_ERROR",
+                        error_message=f"Update failed ({phase}): {err_msg}",
+                        extra_context={"phase": phase, "target_version": self._latest_version},
+                    )
+                except Exception:
+                    pass
+
                 is_offline = any(term in err_msg.lower() for term in ("connect", "timeout", "network", "offline", "unreachable", "name resolution", "temporary failure"))
                 if is_offline:
                     self._offline_update_pending = True
@@ -1937,21 +1938,10 @@ class MainWindow(QMainWindow):
                 except Exception as track_err:
                     logger.debug("Could not verify tracking in update on_error: %s", track_err)
 
-                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    self._update_dialog._on_error_occurred(phase, err_msg)
-                elif manual:
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "Check for Updates", f"Update error ({phase}):\n{err_msg}")
-
             def on_ready_to_install(installer_path: str):
                 logger.info("Pipeline update ready to install received on Main Thread: %s (target_version=%s)", installer_path, self._latest_version)
                 self._latest_installer_path = installer_path
                 self._really_quit = True
-                if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-                    try:
-                        self._update_dialog.close()
-                    except Exception:
-                        pass
                 from services.update_service import install_update_and_restart
                 install_update_and_restart(installer_path, target_version=self._latest_version, exit_process=True)
 
@@ -1972,39 +1962,18 @@ class MainWindow(QMainWindow):
 
     def _show_update_dialog(
         self,
-        version: str,
-        is_force: bool,
+        version: str = "",
+        is_force: bool = False,
         installer_path: str | None = None,
         worker: object | None = None,
     ) -> None:
-        """Display the update dialog and attach pipeline worker."""
-        from ui.update_dialog import UpdateDialog
-
-        if getattr(self, "_update_dialog", None) and self._update_dialog.isVisible():
-            if worker:
-                self._update_dialog.attach_pipeline_worker(worker)
-            self._update_dialog.raise_()
-            self._update_dialog.activateWindow()
-            return
-
-        self._update_dialog = UpdateDialog(
-            version=version,
-            is_force=is_force,
-            installer_path=installer_path,
-            parent=self,
-            pipeline_worker=worker,
-        )
-        self._update_dialog.show()
+        """Silent update mode: No-op to avoid popup interruptions."""
+        logger.debug("Silent update mode active; suppressing update dialog popup.")
+        return
 
     def _on_update_button_clicked(self) -> None:
-        """Handle header update button click."""
-        version = self._latest_version or "Latest"
-        self._show_update_dialog(
-            version=version,
-            is_force=self._is_force_update,
-            installer_path=self._latest_installer_path,
-            worker=getattr(self, "_pipeline_worker", None),
-        )
+        """Handle header update button click: trigger manual silent re-check without popup."""
+        self._check_for_updates(manual=True)
 
     def _open_hrms_portal(self) -> None:
         """Open the iHRMS web portal in the user's default external browser with auto-login."""

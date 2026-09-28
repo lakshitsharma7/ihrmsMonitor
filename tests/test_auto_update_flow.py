@@ -13,6 +13,7 @@ from config.api_config import ApiConfig
 
 class TestAutoUpdateFlow(unittest.TestCase):
     def setUp(self):
+        ApiConfig().reset()
         try:
             from services.update_state import UpdateStateManager
             UpdateStateManager().clear_state()
@@ -20,6 +21,7 @@ class TestAutoUpdateFlow(unittest.TestCase):
             pass
 
     def tearDown(self):
+        ApiConfig().reset()
         try:
             from services.update_state import UpdateStateManager
             UpdateStateManager().clear_state()
@@ -82,12 +84,15 @@ class TestAutoUpdateFlow(unittest.TestCase):
 
         mock_v_resp = MagicMock()
         mock_v_resp.status_code = 200
+        mock_v_resp.text = '{"status": 1, "version_code": "9.9.9", "download_url": "https://test.api/setup.exe"}'
         mock_v_resp.json.return_value = {
-            "version": "9.9.9",
+            "status": 1,
+            "version_code": "9.9.9",
             "download_url": "https://test.api/setup.exe",
         }
 
-        with patch("requests.get", return_value=mock_v_resp), \
+        with patch("requests.post", return_value=mock_v_resp), \
+             patch("requests.get", return_value=mock_v_resp), \
              patch("database.repository.ActivityRepository.get_unsynced_closed_sessions", return_value=[]), \
              patch("database.repository.ActivityRepository.get_sessions_with_unuploaded_screenshots", return_value=[]), \
              patch("services.update_service.get_updates_directory") as mock_get_dir, \
@@ -117,13 +122,16 @@ class TestAutoUpdateFlow(unittest.TestCase):
 
         mock_v_resp = MagicMock()
         mock_v_resp.status_code = 200
+        mock_v_resp.text = '{"status": 1, "version_code": "9.9.9", "download_url": "https://test.api/setup.exe"}'
         mock_v_resp.json.return_value = {
-            "version": "9.9.9",
+            "status": 1,
+            "version_code": "9.9.9",
             "download_url": "https://test.api/setup.exe",
         }
 
         mock_session = MagicMock()
-        with patch("requests.get", return_value=mock_v_resp), \
+        with patch("requests.post", return_value=mock_v_resp), \
+             patch("requests.get", return_value=mock_v_resp), \
              patch("database.repository.ActivityRepository.get_unsynced_closed_sessions", return_value=[mock_session]), \
              patch("database.repository.ActivityRepository.get_sessions_with_unuploaded_screenshots", return_value=[]), \
              patch("services.sync_service.SyncService.sync_activity_now", return_value=False), \
@@ -230,8 +238,9 @@ class TestAutoUpdateFlow(unittest.TestCase):
                 # Mock server returning newer version 3.0.0
                 mock_v_resp = MagicMock()
                 mock_v_resp.status_code = 200
-                mock_v_resp.text = '{"version": "3.0.0", "file_name": "Setup.exe", "download_url": "https://test.api/Setup.exe"}'
-                mock_v_resp.json.return_value = {"version": "3.0.0", "file_name": "Setup.exe", "download_url": "https://test.api/Setup.exe"}
+                mock_v_resp.text = '{"status": 1, "version_code": "3.0.0", "file_name": "Setup.exe", "download_url": "https://test.api/Setup.exe"}'
+                mock_v_resp.json.return_value = {"status": 1, "version_code": "3.0.0", "file_name": "Setup.exe", "download_url": "https://test.api/Setup.exe"}
+                mock_post.return_value = mock_v_resp
                 mock_get.return_value = mock_v_resp
 
                 # Mock valid download stream (>100KB with MZ header)

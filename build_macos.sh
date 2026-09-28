@@ -49,11 +49,11 @@ if [ ! -f "${APP_BUNDLE}/Contents/Info.plist" ]; then
     exit 1
 fi
 
-# Verify version in Info.plist is 2.0.2
+# Verify version in Info.plist is 1.0
 PLIST_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true)"
 echo "Verified Info.plist version: ${PLIST_VER}"
-if [ "${PLIST_VER}" != "2.0.2" ]; then
-    echo "ERROR: Expected CFBundleShortVersionString to be 2.0.2, got: '${PLIST_VER}'" >&2
+if [ "${PLIST_VER}" != "1.0" ]; then
+    echo "ERROR: Expected CFBundleShortVersionString to be 1.0, got: '${PLIST_VER}'" >&2
     exit 1
 fi
 

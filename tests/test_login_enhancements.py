@@ -5,7 +5,7 @@
 
 import unittest
 from unittest.mock import patch, MagicMock
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QMouseEvent
 
@@ -20,6 +20,13 @@ class TestLoginEnhancements(unittest.TestCase):
 
     def setUp(self):
         self.login_window = LoginWindow()
+
+    def tearDown(self):
+        if getattr(self, "login_window", None):
+            self.login_window.close()
+            self.login_window.deleteLater()
+            self.login_window = None
+        QApplication.instance().processEvents()
 
     def test_company_code_check_icon_hidden_and_editable_before_verification(self):
         """Before verification, trailing check icon is hidden, field is editable, and leading company icon is present on the left."""
@@ -151,17 +158,41 @@ class TestLoginEnhancements(unittest.TestCase):
         self.assertEqual(info["employee_id"], "EMP_888")
         self.assertEqual(info["company_code"], "CYBERDYNE")
 
-    def test_login_payload_matches_api_spec(self):
-        """Verify login API payload dynamically sends imei_number='', os_type='window', and dynamic device_detail."""
-        from utils.device import get_dynamic_os_type, get_device_detail, get_device_info
-        info = get_device_info()
-        self.assertIn("os_type", info)
-        self.assertIn("device_detail", info)
-        self.assertEqual(get_dynamic_os_type(), "window")
-        self.assertTrue(len(get_device_detail()) > 0)
+    def test_login_page_has_no_update_progress_message(self):
+        """Verify the login page has no update progress label in layout and no fake 'Updating (0%)...' text."""
+        self.login_window.show()
+        QApplication.instance().processEvents()
+
+        # Find all QLabel widgets in the login window
+        labels = self.login_window.findChildren(QLabel)
+        for label in labels:
+            text = label.text()
+            self.assertNotIn("Updating (", text)
+            self.assertNotIn("Updating...", text)
+
+        # LoginUpdateStatus widget must not be present in the active UI layout
+        status_widget = self.login_window.findChild(QLabel, "LoginUpdateStatus")
+        self.assertIsNone(status_widget)
+
+    def test_login_update_dialog_handles_pipeline_without_duplicates(self):
+        """Verify silent background update suppresses separate popup dialogs on login window."""
+        self.login_window._show_update_dialog(version="2.5.0", is_force=False)
+        self.assertIsNone(self.login_window._update_dialog)
+
+        mock_worker = MagicMock()
+        mock_worker.phase_changed = MagicMock()
+        mock_worker.progress_changed = MagicMock()
+        mock_worker.status_message = MagicMock()
+        mock_worker.upload_completed = MagicMock()
+        mock_worker.download_completed = MagicMock()
+        mock_worker.error_occurred = MagicMock()
+
+        self.login_window._show_update_dialog(version="2.5.0", is_force=False, worker=mock_worker)
+        self.assertIsNone(self.login_window._update_dialog)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

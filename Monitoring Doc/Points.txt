@@ -61,7 +61,7 @@ Indovision Services
      * One-Click Single Sign-On HRMS Portal Bridge with secure temporary auto-login bridge.
 
 8. AUTHORITATIVE AUTO-UPDATE ENGINE & LOOP GUARD
-   - Target version resolved strictly from live API response (POST /punch/check_new_version).
+   - Target version resolved strictly from live App Controller API response (POST /api/appcontroller/appcontroller).
    - Semantic numerical version precedence (server_version > installed_version).
    - Stream download with PE binary / Inno Setup signature validation (> 100 KB, 'MZ' header).
    - Detached silent Inno Setup installation via hidden VBScript (wscript.exe) / PowerShell runners.

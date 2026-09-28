@@ -50,7 +50,7 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.check_version_url,
-            "https://default.company.com/hrms_api/ci4/api/punch/check_new_version",
+            "https://info.indovisionservices.in/dev/v15/hrms_api/v7/api/appcontroller/appcontroller",
         )
         self.assertEqual(
             self.api_cfg.report_error_url,
@@ -86,7 +86,7 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.check_version_url,
-            "https://new-server.internal.org/api/v2/punch/check_new_version",
+            "https://info.indovisionservices.in/dev/v15/hrms_api/v7/api/appcontroller/appcontroller",
         )
         self.assertEqual(
             self.api_cfg.report_error_url,

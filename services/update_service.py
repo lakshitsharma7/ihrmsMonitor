@@ -1,11 +1,10 @@
 """Automatic Update Service for iHRMS Monitor.
 
 Handles:
-1. Version checking against the existing backend API (POST /punch/check_new_version).
+1. Version checking against the App Controller API (POST /appcontroller/appcontroller).
 2. Background streaming download of newer versions with progress reporting.
-3. User notifications and optional/mandatory update flows.
-4. Safe, unattended Inno Setup installation and clean application restart.
-5. Preserving all local database records, credentials, settings, and tracking data.
+3. Safe, unattended Inno Setup installation and clean application restart.
+4. Preserving all local database records, credentials, settings, and tracking data.
 """
 
 from __future__ import annotations
@@ -48,15 +47,16 @@ logger = get_logger(__name__)
 # VERSION COMPARISON UTILITIES
 # ==============================================================
 
-def parse_version(version_str: str) -> tuple[int, ...]:
+def parse_version(version_str: str | None) -> tuple[int, ...]:
     """Parse a version string (e.g. '1.0.0', '2.0.1', '2.0.2', '2.1', 'v1.2.3') into a comparable tuple of integers."""
     if not version_str:
         return (0,)
     v = str(version_str).lstrip("vV").strip()
-    if v.upper() in ("NA", "NONE", "NULL", ""):
+    if not v or v.upper() in ("NA", "NONE", "NULL", "UNKNOWN"):
         return (0,)
     parts = re.split(r"[.\-_]", v)
     nums = []
+    has_digit = False
     for p in parts:
         match = re.match(r"^\d+", p)
         if match:
@@ -67,25 +67,54 @@ def parse_version(version_str: str) -> tuple[int, ...]:
                     nums.append(int(ch))
             else:
                 nums.append(int(val_str))
+            has_digit = True
         else:
             nums.append(0)
+    if not has_digit:
+        return (0,)
     return tuple(nums) if nums else (0,)
 
 
-def is_newer_version(server_version: str, current_version: str | None = None) -> bool:
-    """Return True if server_version is strictly newer than current_version."""
-    if not server_version or str(server_version).strip().upper() in ("NA", "NONE", "NULL", ""):
+def normalize_version(version_str: str | None) -> str:
+    """Dynamically normalize any version string (e.g. 'v2.0.2' -> '2.0.2', '2.1' -> '2.1.0', '3' -> '3.0.0')."""
+    if not version_str:
+        return "0.0.0"
+    v = str(version_str).lstrip("vV").strip()
+    if not v or v.upper() in ("NA", "NONE", "NULL", "UNKNOWN"):
+        return "0.0.0"
+    parsed = parse_version(v)
+    if not parsed or parsed == (0,):
+        return "0.0.0"
+    if len(parsed) == 1:
+        parsed = (parsed[0], 0, 0)
+    elif len(parsed) == 2:
+        parsed = (parsed[0], parsed[1], 0)
+    return ".".join(str(n) for n in parsed)
+
+
+def is_newer_version(server_version: str | None, current_version: str | None = None) -> bool:
+    """Return True if and only if server_version is strictly newer than current_version."""
+    if not server_version or str(server_version).strip().upper() in ("NA", "NONE", "NULL", "UNKNOWN", ""):
         return False
     if current_version is None:
         current_version = get_running_app_version()
+    if not current_version or str(current_version).strip().upper() in ("NA", "NONE", "NULL", "UNKNOWN", ""):
+        return False
     try:
         s_parts = parse_version(server_version)
         c_parts = parse_version(current_version)
+        if not s_parts or s_parts == (0,) or not c_parts or c_parts == (0,):
+            # If server_version or current_version contains no valid numbers
+            clean_s = str(server_version).lstrip("vV").strip()
+            clean_c = str(current_version).lstrip("vV").strip()
+            if not any(ch.isdigit() for ch in clean_s) or not any(ch.isdigit() for ch in clean_c):
+                return False
         max_len = max(len(s_parts), len(c_parts))
         s_norm = s_parts + (0,) * (max_len - len(s_parts))
         c_norm = c_parts + (0,) * (max_len - len(c_parts))
         return s_norm > c_norm
-    except Exception:
+    except Exception as exc:
+        logger.warning("Error comparing versions (%s vs %s): %s", server_version, current_version, exc)
         return False
 
 
@@ -346,6 +375,127 @@ def resolve_download_candidates(
     return unique_candidates
 
 
+
+# ==============================================================
+# APP CONTROLLER UPDATE INFO FETCHING
+# ==============================================================
+
+def fetch_app_controller_update_info(
+    company_code: str | None = None,
+    api_url: str = "",
+    indo_code: str | None = None,
+    api_key: str | None = None,
+    platform_name: str | None = None,
+) -> tuple[str, str, str, bool]:
+    """
+    Fetch platform-specific update information dynamically from the App Controller API:
+    POST https://info.indovisionservices.in/dev/v15/hrms_api/v7/api/appcontroller/appcontroller
+    data={'controller_id': <dynamic controller ID>}
+
+    Returns:
+        (server_version, file_name, download_url, force_update)
+    """
+    if platform_name is None:
+        platform_name = "MAC" if sys.platform == "darwin" else "WINDOWS"
+
+    from config.api_config import ApiConfig, APP_CONTROLLER_URL
+    api_cfg = ApiConfig()
+
+    # 1. Resolve dynamic controller_id / company_code
+    code = None
+    if isinstance(company_code, str) and company_code.strip():
+        code = company_code.strip()
+    elif isinstance(getattr(api_cfg, "company_code", None), str) and getattr(api_cfg, "company_code", "").strip():
+        code = getattr(api_cfg, "company_code", "").strip()
+
+    if not code:
+        try:
+            from services.session_service import SessionService
+            cur = SessionService().current_user
+            if cur and isinstance(getattr(cur, "company_code", None), str) and cur.company_code.strip():
+                code = cur.company_code.strip()
+        except Exception:
+            pass
+    if not code:
+        try:
+            from services.secure_session import SessionStore
+            sdata = SessionStore().load_session()
+            if sdata and isinstance(sdata.get("company_code"), str) and sdata.get("company_code").strip():
+                code = sdata.get("company_code").strip()
+        except Exception:
+            pass
+    if not code:
+        code = "DEFAULT"
+
+    # 2. Live query to App Controller API using dynamic controller_id
+    try:
+        cb_ac_url = f"{APP_CONTROLLER_URL}{'&' if '?' in APP_CONTROLLER_URL else '?'}_t={int(time.time())}"
+        resp = requests.post(
+            cb_ac_url,
+            data={"controller_id": code},
+            headers=CACHE_BUST_HEADERS,
+            timeout=API_TIMEOUT_SECONDS,
+        )
+        if resp.status_code == 200 and resp.text.strip():
+            data = resp.json()
+            apps = {}
+            if isinstance(data, dict):
+                data_obj = data.get("data")
+                if isinstance(data_obj, dict):
+                    apps = data_obj.get("apps", {})
+                    if not apps and platform_name in data_obj and isinstance(data_obj.get(platform_name), dict):
+                        apps = {platform_name: data_obj.get(platform_name)}
+                    if not apps and ("version_code" in data_obj or "version" in data_obj or "file_name" in data_obj):
+                        apps = {platform_name: data_obj}
+                if not apps and "apps" in data and isinstance(data.get("apps"), dict):
+                    apps = data.get("apps")
+                if not apps and platform_name in data and isinstance(data.get(platform_name), dict):
+                    apps = {platform_name: data.get(platform_name)}
+                if not apps and ("version_code" in data or "version" in data or "file_name" in data):
+                    apps = {platform_name: data}
+
+            plat_info = apps.get(platform_name, {}) if isinstance(apps, dict) else {}
+            if isinstance(plat_info, dict) and plat_info:
+                v_code = plat_info.get("version_code") or plat_info.get("version")
+                f_name = plat_info.get("file_name") or plat_info.get("installer")
+                if isinstance(v_code, (str, int)) or isinstance(f_name, (str, int)):
+                    server_version = str(v_code or "").strip()
+                    file_name = str(f_name or "").strip()
+                    dl_url = plat_info.get("download_url") or plat_info.get("url")
+                    download_url = file_name if file_name.startswith("http") else str(dl_url or "").strip()
+                    force_val = plat_info.get("force_to_update", plat_info.get("force_update", "0"))
+                    force_update = str(force_val).strip() in ("1", "true", "True") or force_val == 1
+                    if server_version or file_name:
+                        logger.info(
+                            "Live App Controller update info (%s): version=%s, file_name=%s, force=%s",
+                            platform_name, server_version, file_name, force_update
+                        )
+                        return server_version, file_name, download_url, force_update
+    except Exception as ac_err:
+        logger.warning("Live App Controller update query failed: %s", ac_err)
+
+    # 3. Fallback: Cached App Controller details in ApiConfig (offline resilience)
+    info = api_cfg.get_platform_update_info(platform_name) if hasattr(api_cfg, "get_platform_update_info") else {}
+    if isinstance(info, dict) and info:
+        v_code = info.get("version_code") or info.get("version")
+        f_name = info.get("file_name") or info.get("installer")
+        if isinstance(v_code, (str, int)) or isinstance(f_name, (str, int)):
+            server_version = str(v_code or "").strip()
+            file_name = str(f_name or "").strip()
+            dl_url = info.get("download_url") or info.get("url")
+            download_url = file_name if file_name.startswith("http") else str(dl_url or "").strip()
+            force_val = info.get("force_to_update", info.get("force_update", "0"))
+            force_update = str(force_val).strip() in ("1", "true", "True") or force_val == 1
+            if server_version or file_name:
+                logger.info(
+                    "Retrieved update info from cached App Controller details (%s): version=%s, file_name=%s, force=%s",
+                    platform_name, server_version, file_name, force_update
+                )
+                return server_version, file_name, download_url, force_update
+
+    return "", "", "", False
+
+
 # ==============================================================
 # UPDATE CHECK WORKER
 # ==============================================================
@@ -413,98 +563,11 @@ class UpdateCheckWorker(QThread):
             self.status_changed.emit("Checking for updates...")
             logger.info("Checking for updates (current version: %s)", installed_version)
 
-            server_version = ""
-            file_name = ""
-            download_url = ""
-            force_update = False
-
-            # ----------------------------------------------------------
-            # 1. AppController Version URL (External Manifest)
-            # ----------------------------------------------------------
-            try:
-                from config.api_config import ApiConfig
-                api_cfg = ApiConfig()
-                version_url = api_cfg.version_url or api_cfg.activity_tracker_link or DEFAULT_CENTRAL_VERSION_URL
-
-                if version_url:
-                    logger.info("Checking AppController version URL: %s", version_url)
-                    try:
-                        timestamp = int(time.time())
-                        cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
-                        v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                        if v_resp.status_code == 200 and v_resp.text.strip():
-                            try:
-                                v_data = v_resp.json()
-                                if isinstance(v_data, dict):
-                                    server_version = str(
-                                        v_data.get("version")
-                                        or v_data.get("version_code")
-                                        or ""
-                                    ).strip()
-                                    file_name = str(
-                                        v_data.get("file_name")
-                                        or v_data.get("installer")
-                                        or ""
-                                    ).strip()
-                                    download_url = str(
-                                        v_data.get("download_url")
-                                        or v_data.get("url")
-                                        or ""
-                                    ).strip()
-                                    force_update = str(v_data.get("force_update", "0")).strip() in ("1", "true", "True")
-                            except Exception:
-                                pass
-                    except Exception as v_err:
-                        logger.debug("AppController version URL check request failed: %s", v_err)
-
-                if not download_url and api_cfg.activity_tracker_link:
-                    atl = str(api_cfg.activity_tracker_link).strip()
-                    if atl.lower().endswith(".exe"):
-                        download_url = atl
-
-            except Exception as ac_err:
-                logger.debug("Error checking AppController version details: %s", ac_err)
-
-            # ----------------------------------------------------------
-            # 2. Company Endpoint (/punch/check_new_version)
-            # ----------------------------------------------------------
-            if not server_version or server_version.upper() == "NA":
-                try:
-                    from config.api_config import ApiConfig
-                    check_url = ApiConfig().check_version_url
-                except Exception:
-                    check_url = f"{self._api_url}/punch/check_new_version"
-                payload = {
-                    "indo_code": self._indo_code,
-                    "key": self._api_key,
-                    "os_type": "WINDOWS",
-                }
-
-                try:
-                    cb_check_url = f"{check_url}?_t={int(time.time())}"
-                    resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                    if resp.status_code == 200 and resp.text.strip():
-                        data = resp.json()
-                        logger.info("Version check response from punch/check_new_version: %s", data)
-                        if data.get("status") == 1:
-                            server_version = str(data.get("version_code", "")).strip()
-                            file_name = str(data.get("file_name", "")).strip()
-                            if data.get("download_url"):
-                                download_url = str(data.get("download_url")).strip()
-                            force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
-                except Exception as punch_err:
-                    logger.debug("Punch check_new_version failed: %s", punch_err)
-
-            # ----------------------------------------------------------
-            # 3. Direct AppController Fallback (activity_tracker_version)
-            # ----------------------------------------------------------
-            if not server_version or server_version.upper() == "NA":
-                try:
-                    if api_cfg.activity_tracker_version:
-                        server_version = str(api_cfg.activity_tracker_version).strip()
-                        logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
-                except Exception:
-                    pass
+            server_version, file_name, download_url, force_update = fetch_app_controller_update_info(
+                api_url=self._api_url,
+                indo_code=self._indo_code,
+                api_key=self._api_key,
+            )
 
             if not server_version or server_version.upper() == "NA":
                 logger.info("No newer version reported. Application is up to date.")
@@ -512,7 +575,14 @@ class UpdateCheckWorker(QThread):
                 return
 
             # Check if server version is strictly newer than current app version
-            if not is_newer_version(server_version, installed_version):
+            is_newer = is_newer_version(server_version, installed_version)
+            logger.info(
+                "Installed version: %s | Server version: %s | Update required: %s",
+                installed_version,
+                server_version,
+                is_newer,
+            )
+            if not is_newer:
                 logger.info(
                     "Current version (%s) is up to date with server version (%s).",
                     installed_version,
@@ -1788,100 +1858,27 @@ class UpdatePipelineWorker(QThread):
     def run(self) -> None:
         try:
             # --------------------------------------------------
-            # Phase 1: Version Check
+            # Phase 1: Version Check (App Controller Update API)
             # --------------------------------------------------
             installed_version = get_running_app_version()
             self.phase_changed.emit("checking", "Checking for updates...")
             self.status_message.emit("Checking for updates...")
             logger.info("Pipeline: Checking for updates (current version: %s)", installed_version)
 
-            server_version = ""
-            file_name = ""
-            download_url = ""
-            force_update = False
+            server_version, file_name, download_url, force_update = fetch_app_controller_update_info(
+                api_url=self._api_url,
+                indo_code=self._indo_code,
+                api_key=self._api_key,
+            )
 
-            # --------------------------------------------------
-            # 1. AppController Version URL (External Manifest)
-            # --------------------------------------------------
-            try:
-                from config.api_config import ApiConfig
-                api_cfg = ApiConfig()
-                version_url = api_cfg.version_url or api_cfg.activity_tracker_link or DEFAULT_CENTRAL_VERSION_URL
-                if version_url:
-                    try:
-                        timestamp = int(time.time())
-                        cb_url = f"{version_url}{'&' if '?' in version_url else '?'}_t={timestamp}"
-                        v_resp = requests.get(cb_url, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                        if v_resp.status_code == 200 and v_resp.text.strip():
-                            v_data = v_resp.json()
-                            if isinstance(v_data, dict):
-                                server_version = str(
-                                    v_data.get("version")
-                                    or v_data.get("version_code")
-                                    or ""
-                                ).strip()
-                                file_name = str(
-                                    v_data.get("file_name")
-                                    or v_data.get("installer")
-                                    or ""
-                                ).strip()
-                                download_url = str(
-                                    v_data.get("download_url")
-                                    or v_data.get("url")
-                                    or v_data.get("link")
-                                    or ""
-                                ).strip()
-                                force_update = bool(v_data.get("force", False))
-                    except Exception as ac_fetch_err:
-                        logger.debug("Pipeline AppController URL fetch failed: %s", ac_fetch_err)
-
-                if not download_url and api_cfg.activity_tracker_link:
-                    atl = str(api_cfg.activity_tracker_link).strip()
-                    if atl.lower().endswith(".exe"):
-                        download_url = atl
-            except Exception as ac_err:
-                logger.debug("Pipeline AppController check error: %s", ac_err)
-
-            # --------------------------------------------------
-            # 2. Company Endpoint (/punch/check_new_version)
-            # --------------------------------------------------
-            if not server_version or server_version.upper() == "NA":
-                try:
-                    from config.api_config import ApiConfig
-                    check_url = ApiConfig().check_version_url
-                except Exception:
-                    check_url = f"{self._api_url}/punch/check_new_version"
-                payload = {
-                    "indo_code": self._indo_code,
-                    "key": self._api_key,
-                    "os_type": "WINDOWS",
-                }
-                try:
-                    cb_check_url = f"{check_url}?_t={int(time.time())}"
-                    resp = requests.post(cb_check_url, data=payload, headers=CACHE_BUST_HEADERS, timeout=API_TIMEOUT_SECONDS)
-                    if resp.status_code == 200 and resp.text.strip():
-                        data = resp.json()
-                        if data.get("status") == 1:
-                            server_version = str(data.get("version_code", "")).strip()
-                            file_name = str(data.get("file_name", "")).strip()
-                            if data.get("download_url"):
-                                download_url = str(data.get("download_url")).strip()
-                            force_update = str(data.get("force_update", "0")).strip() in ("1", "true", "True")
-                except Exception as resp_err:
-                    logger.debug("Pipeline punch check error: %s", resp_err)
-
-            # --------------------------------------------------
-            # 3. Direct AppController Fallback (activity_tracker_version)
-            # --------------------------------------------------
-            if not server_version or server_version.upper() == "NA":
-                try:
-                    if api_cfg.activity_tracker_version:
-                        server_version = str(api_cfg.activity_tracker_version).strip()
-                        logger.info("Using activity_tracker_version configured in AppController: %s", server_version)
-                except Exception:
-                    pass
-
-            if not server_version or server_version.upper() == "NA" or not is_newer_version(server_version, installed_version):
+            is_newer = is_newer_version(server_version, installed_version)
+            logger.info(
+                "Installed version: %s | Server version: %s | Update required: %s",
+                installed_version,
+                server_version,
+                is_newer,
+            )
+            if not server_version or server_version.upper() == "NA" or not is_newer:
                 logger.info("Pipeline: Application is up to date (current: %s, server: %s)", installed_version, server_version)
                 try:
                     from services.device_registry_service import DeviceRegistryService
@@ -1993,6 +1990,8 @@ class UpdatePipelineWorker(QThread):
                         pass
 
             if not download_successful:
+                from config.api_config import ApiConfig
+                api_cfg = ApiConfig()
                 candidates = resolve_download_candidates(
                     api_url=self._api_url,
                     file_name=file_name,
