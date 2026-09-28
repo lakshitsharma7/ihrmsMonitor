@@ -67,7 +67,7 @@ class TestUninstallDetectionSystem(unittest.TestCase):
             device_id="DEV-ONLINE-01",
         )
 
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend", return_value=True) as mock_dispatch:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp", return_value=True) as mock_dispatch:
             success = dispatch_uninstall_report(ctx)
             self.assertTrue(success)
             mock_dispatch.assert_called_once()
@@ -94,13 +94,13 @@ class TestUninstallDetectionSystem(unittest.TestCase):
         self.assertTrue(is_uninstall_pending())
 
         # Attempt to dispatch while offline -> fails, file remains queued
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend", return_value=False) as mock_dispatch_fail:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp", return_value=False) as mock_dispatch_fail:
             delivered_offline = process_pending_uninstall_reports()
             self.assertFalse(delivered_offline)
             self.assertTrue(is_uninstall_pending())
 
         # 2. Later, internet connectivity is restored -> process pending delivers report
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend", return_value=True) as mock_dispatch_success:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp", return_value=True) as mock_dispatch_success:
             delivered_online = process_pending_uninstall_reports()
             self.assertTrue(delivered_online)
             # Queue file must be deleted to guarantee exactly one email
@@ -115,7 +115,7 @@ class TestUninstallDetectionSystem(unittest.TestCase):
         registry = DeviceRegistryService()
         offline = registry.check_offline_devices(threshold_seconds=1)
 
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend") as mock_dispatch:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp") as mock_dispatch:
             processed = process_pending_uninstall_reports()
             self.assertFalse(processed)
             mock_dispatch.assert_not_called()
@@ -124,7 +124,7 @@ class TestUninstallDetectionSystem(unittest.TestCase):
         """Scenario 4: App crash / kill -> NO uninstall email is generated."""
         self.assertFalse(is_uninstall_pending())
 
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend") as mock_dispatch:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp") as mock_dispatch:
             processed = process_pending_uninstall_reports()
             self.assertFalse(processed)
             mock_dispatch.assert_not_called()
@@ -133,7 +133,7 @@ class TestUninstallDetectionSystem(unittest.TestCase):
         """Scenario 5: Windows reboot / shutdown without uninstall -> NO uninstall email."""
         self.assertFalse(is_uninstall_pending())
 
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend") as mock_dispatch:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp") as mock_dispatch:
             processed = process_pending_uninstall_reports()
             self.assertFalse(processed)
             mock_dispatch.assert_not_called()
@@ -149,7 +149,7 @@ class TestUninstallDetectionSystem(unittest.TestCase):
 
         record_uninstall_event(ctx)
 
-        with patch("services.error_report_service.ErrorReportService._dispatch_via_backend", return_value=True) as mock_dispatch:
+        with patch("services.error_report_service.ErrorReportService._dispatch_via_smtp", return_value=True) as mock_dispatch:
             # First delivery succeeds
             first_run = process_pending_uninstall_reports()
             self.assertTrue(first_run)

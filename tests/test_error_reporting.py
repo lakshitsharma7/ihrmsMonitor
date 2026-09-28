@@ -122,10 +122,10 @@ class TestErrorReportService(unittest.TestCase):
             error_message="Mock error for dispatch testing",
         )
 
-        with patch.object(service, "_dispatch_via_backend", return_value=False) as mock_backend:
+        with patch.object(service, "_dispatch_via_smtp", return_value=False) as mock_smtp:
             result = service._dispatch_email(context)
             self.assertFalse(result)
-            self.assertTrue(mock_backend.called)
+            self.assertTrue(mock_smtp.called)
 
     def test_listener_notification_on_report_error(self):
         service = self.service
@@ -192,39 +192,40 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("Window handle invalid", page.tracking_status_label.text())
 
 
-    def test_dispatch_via_backend_handles_404_as_failure(self):
-        """Verify that HTTP 404 from backend is treated as failure (returns False) and not accepted."""
-        from config.api_config import ApiConfig
+    def test_dispatch_via_smtp_successful_transmission(self):
+        """Verify that _dispatch_via_smtp connects over TLS, logs in, and sends message."""
         service = self.service
         context = service._collect_context(
-            error_type="TEST_404_ERROR",
-            error_message="Testing 404 response handling",
+            error_type="TEST_SMTP_SUCCESS",
+            error_message="Testing SMTP transmission handling",
         )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
+        with patch("smtplib.SMTP") as mock_smtp_cls:
+            mock_server = MagicMock()
+            mock_smtp_cls.return_value.__enter__.return_value = mock_server
 
-        with patch.object(ApiConfig, "report_error_url", "https://example.com/tracking/report_error"), \
-             patch("requests.post", return_value=mock_resp):
-            result = service._dispatch_via_backend(context)
-            self.assertFalse(result, "HTTP 404 must return False and fall back to local logging.")
+            result = service._dispatch_via_smtp(context)
+            self.assertTrue(result, "SMTP send must return True on success.")
+            mock_server.starttls.assert_called_once()
+            mock_server.login.assert_called_once()
+            mock_server.send_message.assert_called_once()
 
-    def test_dispatch_via_backend_accepts_200_ok(self):
-        """Verify that HTTP 200 OK from backend returns True."""
-        from config.api_config import ApiConfig
+    def test_dispatch_via_smtp_handles_auth_failure_gracefully(self):
+        """Verify that SMTP authentication failure returns False and does not crash."""
+        import smtplib
         service = self.service
         context = service._collect_context(
-            error_type="TEST_200_ERROR",
-            error_message="Testing 200 OK response handling",
+            error_type="TEST_SMTP_AUTH_FAIL",
+            error_message="Testing auth failure handling",
         )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
+        with patch("smtplib.SMTP") as mock_smtp_cls:
+            mock_server = MagicMock()
+            mock_server.login.side_effect = smtplib.SMTPAuthenticationError(535, b"BadCredentials")
+            mock_smtp_cls.return_value.__enter__.return_value = mock_server
 
-        with patch.object(ApiConfig, "report_error_url", "https://example.com/tracking/report_error"), \
-             patch("requests.post", return_value=mock_resp):
-            result = service._dispatch_via_backend(context)
-            self.assertTrue(result, "HTTP 200 must return True.")
+            result = service._dispatch_via_smtp(context)
+            self.assertFalse(result, "Auth failure must return False.")
 
 
 if __name__ == "__main__":

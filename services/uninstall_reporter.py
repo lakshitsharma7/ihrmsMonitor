@@ -186,15 +186,15 @@ def dispatch_uninstall_report(context: Optional[Dict[str, Any]] = None) -> bool:
                 "operation": "Application Uninstallation",
             },
         )
-        delivered = svc._dispatch_via_backend(report_ctx)
+        delivered = svc._dispatch_via_smtp(report_ctx)
         if delivered:
-            logger.info("Uninstall report successfully dispatched to backend.")
+            logger.info("Uninstall report successfully dispatched via SMTP.")
             return True
         else:
-            logger.debug("Backend unreachable; uninstall report delivery deferred.")
+            logger.debug("SMTP server unreachable; uninstall report delivery deferred.")
             return False
     except Exception as err:
-        logger.warning("Failed to dispatch uninstall report: %s", err)
+        logger.warning("Failed to dispatch uninstall report via SMTP: %s", err)
         return False
 
 

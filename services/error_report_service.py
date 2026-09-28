@@ -1,39 +1,28 @@
-"""Error Reporting Service for iHRMS Monitor.
+"""SMTP-based Error & Support Reporting Service for Workpulse.
 
-Collects and securely dispatches error reports to the configured support email
-(support-hrms@indovisionservices.in) ONLY when an actual error occurs.
+Collects and securely dispatches error reports and notifications to the configured
+support email via direct SMTP.
 
-Delivery architecture
----------------------
-Error reports are delivered in two stages, in order:
+SMTP Delivery Architecture:
+---------------------------
+1. **Direct SMTP Delivery** (primary)
+   The report context is formatted into a standard RFC 2822 MIME email message
+   with structured diagnostic metadata and sanitized log tails.
+   The message is securely transmitted over TLS/STARTTLS to the configured SMTP
+   server (smtp.gmail.com:587).
 
-1. **Backend HTTP POST** (primary — no SMTP from EXE)
-   The report is serialised to JSON and POSTed to the existing iHRMS backend
-   at ``tracking/report_error``.  The backend server handles the final email
-   delivery, so the desktop EXE never opens an SMTP socket.  This is the same
-   HTTP mechanism used for activity sync and screenshot upload, which Seqrite
-   Endpoint Protection already permits.
-
-2. **Local log file** (fallback — backend unreachable)
-   If the backend POST fails (no network, server down, endpoint not yet
-   deployed), the full report is appended to ``error_reports.log`` in the
-   application data directory.  No SMTP connection is attempted from the EXE
-   under any circumstances.
-
-Why no direct SMTP?
-   Seqrite Endpoint Protection intercepts any process that opens a raw SMTP
-   socket and blocks it unless the EXE is whitelisted as a "Trusted Email
-   Client".  iHRMS Monitor is a monitoring tool, not a mail client, so it
-   should never be treated as one.  Removing smtplib calls from the EXE
-   eliminates the popup entirely without weakening security.
+2. **Local Log File Fallback** (offline resilience)
+   If the SMTP server is unreachable (offline, network timeout, authentication error),
+   the full diagnostic report is preserved locally in ``error_reports.log`` in the
+   application data directory.
 
 Features:
 1. Gathers logged-in user details, device/hostname, app version, error info,
    timestamp, and recent sanitized application logs.
 2. Sanitizes sensitive data (passwords, tokens, API keys) before reporting.
-3. Implements deduplication and cooldown to prevent spamming duplicate reports.
-4. Asynchronous delivery on a background daemon thread to never block or
-   impact performance.
+3. Implements deduplication and cooldown (1-hour window) to prevent duplicate reports.
+4. Asynchronous delivery on a background daemon thread (ErrorReportWorker) so it
+   NEVER blocks or impacts UI responsiveness, tracking, sync, or updates.
 5. Fails gracefully without interrupting the core application.
 """
 
@@ -45,11 +34,16 @@ import json
 import os
 import platform
 import re
+import smtplib
 import socket
+import ssl
 import sys
 import threading
 import time
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any
 
@@ -59,13 +53,18 @@ from utils.paths import get_log_file_path
 
 logger = get_logger(__name__)
 
-# Configured support email — kept for documentation and backend payload.
-# The desktop EXE no longer connects to any SMTP host directly.
+# ==============================================================
+# AUTHORITATIVE SMTP CONFIGURATION
+# ==============================================================
+
+DEFAULT_SMTP_HOST = "smtp.gmail.com"
+DEFAULT_SMTP_PORT = 587
+DEFAULT_SMTP_USER = "ivsdevmail@gmail.com"
+DEFAULT_SMTP_PASS = "kzxahgstrllmdgxj"
+DEFAULT_SMTP_TLS = True
+DEFAULT_SMTP_FROM = "ivsdevmail@gmail.com"
 DEFAULT_SUPPORT_EMAIL = "support-hrms@indovisionservices.in"
-DEFAULT_SMTP_HOST = "indovisionservices-in.mail.protection.outlook.com"   # backend reference only
-FALLBACK_SMTP_HOST = "mail.indovisionservices.in"                          # backend reference only
-DEFAULT_SMTP_PORT = 25                                                      # backend reference only
-DEFAULT_SMTP_FROM = "noreply-ihrms@indovisionservices.in"
+DEFAULT_SMTP_TIMEOUT_SECONDS = 12
 
 # Redaction patterns for sensitive information
 SENSITIVE_PATTERNS = [
@@ -90,7 +89,7 @@ def sanitize_text(text: str) -> str:
 
 
 class ErrorReportService:
-    """Centralized Error Reporting Service."""
+    """Centralized Error & Support Reporting Service using direct secure SMTP."""
 
     _instance: ErrorReportService | None = None
     _lock = threading.Lock()
@@ -103,11 +102,16 @@ class ErrorReportService:
             return cls._instance
 
     def _init_service(self) -> None:
-        """Initialize reporting configuration, listener list, and deduplication caches."""
+        """Initialize SMTP configuration, listener list, and deduplication caches."""
+        self._smtp_host = os.environ.get("SMTP_HOST", DEFAULT_SMTP_HOST).strip()
+        port_val = os.environ.get("SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip()
+        self._smtp_port = int(port_val) if port_val.isdigit() else DEFAULT_SMTP_PORT
+        self._smtp_user = os.environ.get("SMTP_USERNAME", os.environ.get("SMTP_USER", DEFAULT_SMTP_USER)).strip()
+        self._smtp_pass = os.environ.get("SMTP_PASSWORD", os.environ.get("SMTP_PASS", DEFAULT_SMTP_PASS)).strip()
+        tls_env = os.environ.get("SMTP_USE_TLS", os.environ.get("SMTP_TLS", "true")).strip().lower()
+        self._smtp_use_tls = tls_env in ("true", "1", "yes")
+        self._smtp_from = os.environ.get("SMTP_FROM", DEFAULT_SMTP_FROM).strip() or self._smtp_user
         self._support_email = os.environ.get("SUPPORT_EMAIL", DEFAULT_SUPPORT_EMAIL).strip()
-        # SMTP fields retained for documentation / backend payload metadata only.
-        # The EXE itself does NOT connect to any SMTP server.
-        self._smtp_from = os.environ.get("SMTP_FROM", DEFAULT_SMTP_FROM).strip()
 
         # UI listeners registered for immediate dashboard status updates
         self._listeners: list[Any] = []
@@ -395,91 +399,95 @@ class ErrorReportService:
         )
 
     # ==============================================================
-    # DELIVERY — BACKEND HTTP POST (NO SMTP FROM EXE)
+    # DELIVERY — DIRECT SECURE SMTP DISPATCH
     # ==============================================================
 
-    def _dispatch_via_backend(self, context: dict[str, Any]) -> bool:
+    def _dispatch_via_smtp(self, context: dict[str, Any]) -> bool:
         """
-        POST the error report to the iHRMS backend endpoint
-        ``tracking/report_error``.
+        Transmit the formatted error/support report to the support email address via direct SMTP.
 
-        The backend is responsible for forwarding the report to the configured
-        support email address.  The desktop EXE never opens an SMTP socket, so
-        Seqrite Endpoint Protection's "Trusted Email Client" check is never
-        triggered.
-
-        Returns True on success, False if the backend is unreachable or
-        the endpoint is not yet deployed.
+        Returns True on successful delivery, False on connection, auth, or network failure.
         """
-        try:
-            from config.api_config import ApiConfig
-            report_url = ApiConfig().report_error_url
-        except Exception:
-            logger.debug(
-                "ErrorReportService: no verified API base URL available; "
-                "skipping backend dispatch."
-            )
+        host = os.environ.get("SMTP_HOST", self._smtp_host).strip()
+        port_val = os.environ.get("SMTP_PORT", str(self._smtp_port)).strip()
+        port = int(port_val) if port_val.isdigit() else DEFAULT_SMTP_PORT
+        username = os.environ.get("SMTP_USERNAME", os.environ.get("SMTP_USER", self._smtp_user)).strip()
+        password = os.environ.get("SMTP_PASSWORD", os.environ.get("SMTP_PASS", self._smtp_pass)).strip()
+        tls_val = os.environ.get("SMTP_USE_TLS", os.environ.get("SMTP_TLS", str(self._smtp_use_tls))).strip().lower()
+        use_tls = tls_val in ("true", "1", "yes")
+        from_addr = os.environ.get("SMTP_FROM", self._smtp_from).strip() or username
+        to_addr = os.environ.get("SUPPORT_EMAIL", self._support_email).strip()
+
+        if not host or not to_addr:
+            logger.warning("SMTP configuration error: host or recipient not specified.")
             return False
 
-        # Build a compact form-data payload — consistent with other tracking
-        # endpoints that already use requests.post(data=...).
-        payload: dict[str, Any] = {
-            "support_email": self._support_email,
-            "from_address": self._smtp_from,
-            "app_name": context.get("app_name", APP_NAME),
-            "app_version": context.get("app_version", get_running_app_version()),
-            "error_type": context.get("error_type", ""),
-            "error_message": context.get("error_message", ""),
-            "timestamp_local": context.get("timestamp_local", ""),
-            "timestamp_utc": context.get("timestamp_utc", ""),
-            "calling_module": context.get("calling_module", ""),
-            "calling_function": context.get("calling_function", ""),
-            "endpoint": context.get("endpoint", ""),
-            "http_status": context.get("http_status", ""),
-            "response_error": context.get("response_error", ""),
-            "tracking_status": context.get("tracking_status", ""),
-            "sync_status": context.get("sync_status", ""),
-            "update_status": context.get("update_status", ""),
-            "user_details": json.dumps(context.get("user_details", {})),
-            "device_details": json.dumps(context.get("device_details", {})),
-            "traceback": context.get("traceback", ""),
-            "extra_context": context.get("extra_context", ""),
-            # Limit recent_logs to last 30 lines to avoid oversized payloads
-            "recent_logs": "\n".join(
-                context.get("recent_logs", "").splitlines()[-30:]
-            ),
-        }
+        app_name = context.get("app_name", APP_NAME)
+        app_version = context.get("app_version", get_running_app_version())
+        error_type = context.get("error_type", "ERROR_REPORT")
 
-        # Attach device token so the backend can authenticate the request
-        # using the same mechanism as the sync endpoints.
-        try:
-            from services.session_service import SessionService
-            device_token = SessionService().device_token
-            if device_token:
-                payload["device_token"] = device_token
-        except Exception:
-            pass
+        # Construct email subject
+        if context.get("subject"):
+            subject = str(context["subject"]).strip()
+        else:
+            msg_first_line = str(context.get("error_message") or "").strip().split("\n")[0]
+            if msg_first_line:
+                subject = f"[{app_name}] {error_type}: {msg_first_line[:65]}"
+            else:
+                subject = f"[{app_name} v{app_version}] {error_type}"
+
+        # Construct RFC 2822 MIME message
+        body_text = context.get("body_text") or self._build_report_text(context)
+        msg = MIMEMultipart()
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = to_addr
+        msg["Date"] = formatdate(localtime=True)
+        domain_part = host if "." in host else "workpulse.local"
+        msg["Message-ID"] = make_msgid(domain=domain_part)
+        msg["X-Priority"] = "2" if any(k in error_type.upper() for k in ("CRASH", "CRITICAL", "UNINSTALLED")) else "3"
+        msg["X-Mailer"] = f"{app_name}/{app_version}"
+
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+
+        masked_user = f"{username[:3]}***@{username.split('@')[-1]}" if "@" in username else "***"
+        logger.info(
+            "SMTP email send started: host=%s, port=%d, TLS=%s, user=%s, recipient=%s, subject=%s",
+            host, port, use_tls, masked_user, to_addr, subject
+        )
 
         try:
-            import requests as _requests
-            response = _requests.post(report_url, data=payload, timeout=12)
-            if 200 <= response.status_code < 300:
-                logger.info(
-                    "ErrorReportService: backend accepted error report "
-                    "(HTTP %d) at %s",
-                    response.status_code,
-                    report_url,
-                )
-                return True
+            ssl_ctx = ssl.create_default_context()
+            if port == 465 and not use_tls:
+                with smtplib.SMTP_SSL(host, port, timeout=DEFAULT_SMTP_TIMEOUT_SECONDS, context=ssl_ctx) as server:
+                    if username and password:
+                        server.login(username, password)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port, timeout=DEFAULT_SMTP_TIMEOUT_SECONDS) as server:
+                    server.ehlo()
+                    if use_tls:
+                        server.starttls(context=ssl_ctx)
+                        server.ehlo()
+                    if username and password:
+                        server.login(username, password)
+                    server.send_message(msg)
+
+            logger.info("SMTP email sent successfully to %s: %s", to_addr, subject)
+            return True
+
+        except smtplib.SMTPAuthenticationError as auth_err:
             logger.warning(
-                "ErrorReportService: backend returned HTTP %d for error report at %s",
-                response.status_code,
-                report_url,
+                "SMTP authentication failed for user %s: %s",
+                masked_user,
+                auth_err.smtp_error if hasattr(auth_err, "smtp_error") else auth_err,
             )
-        except Exception as http_err:
-            logger.debug(
-                "ErrorReportService: backend HTTP dispatch failed: %s", http_err
-            )
+        except smtplib.SMTPConnectError as conn_err:
+            logger.warning("SMTP connection failed to %s:%d: %s", host, port, conn_err)
+        except (socket.timeout, TimeoutError):
+            logger.warning("SMTP connection timed out connecting to %s:%d", host, port)
+        except Exception as smtp_err:
+            logger.warning("SMTP send failed to %s:%d: %s", host, port, smtp_err)
 
         return False
 
@@ -487,8 +495,7 @@ class ErrorReportService:
         """
         Append the full error report to a local ``error_reports.log`` file.
 
-        This is the last-resort fallback when the backend is unreachable.
-        No SMTP connection is opened under any circumstances.
+        This is the last-resort fallback when SMTP delivery fails or the network is offline.
         """
         try:
             log_dir = get_log_file_path().parent
@@ -509,24 +516,22 @@ class ErrorReportService:
 
     def _dispatch_report(self, context: dict[str, Any]) -> None:
         """
-        Deliver the error report without opening any SMTP socket.
+        Deliver the error report via SMTP with automatic local-file fallback.
 
         Delivery order:
-          1. HTTP POST to ``tracking/report_error`` on the iHRMS backend.
-             The backend emails the report; the EXE never touches SMTP.
-          2. If the backend is unreachable, append to local ``error_reports.log``.
-             The report is preserved for the next support session.
+          1. Direct SMTP transmission to ``SUPPORT_EMAIL``.
+          2. If SMTP delivery fails (offline, auth error, timeout), append to local ``error_reports.log``.
         """
-        delivered = self._dispatch_via_backend(context)
+        delivered = self._dispatch_via_smtp(context)
         if not delivered:
             logger.info(
-                "ErrorReportService: backend unavailable; "
+                "ErrorReportService: SMTP delivery unavailable; "
                 "falling back to local log file."
             )
             self._dispatch_to_local_log(context)
 
     # --------------------------------------------------------------
-    # Compatibility aliases
+    # Backward Compatibility Aliases
     # --------------------------------------------------------------
 
     def _build_email_body(self, context: dict[str, Any]) -> str:
@@ -534,8 +539,12 @@ class ErrorReportService:
         return self._build_report_text(context)
 
     def _dispatch_email(self, context: dict[str, Any]) -> bool:
-        """Alias for dispatching report via backend HTTP API."""
-        return self._dispatch_via_backend(context)
+        """Alias for dispatching report via SMTP."""
+        return self._dispatch_via_smtp(context)
+
+    def _dispatch_via_backend(self, context: dict[str, Any]) -> bool:
+        """Compatibility alias routing legacy backend dispatch calls to SMTP."""
+        return self._dispatch_via_smtp(context)
 
     # ==============================================================
     # PUBLIC API
@@ -549,13 +558,11 @@ class ErrorReportService:
         extra_context: dict[str, Any] | None = None,
     ) -> None:
         """
-        Record and dispatch an error report to support-hrms@indovisionservices.in.
+        Record and dispatch an error report to the support email address via SMTP.
 
-        Runs asynchronously on a background thread so it NEVER blocks caller
-        execution.  Deduplicates identical errors within a 1-hour window.
-
-        Delivery is via HTTP POST to the iHRMS backend (no SMTP from EXE),
-        with local-file fallback when the backend is unreachable.
+        Runs asynchronously on a background daemon thread so it NEVER blocks caller
+        execution, UI rendering, tracking, or network sync.
+        Deduplicates identical errors within a 1-hour window.
         """
         try:
             # Collect context synchronously to capture state at time of error
