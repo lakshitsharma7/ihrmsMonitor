@@ -1,39 +1,32 @@
 # Workpulse
 
-A cross-platform desktop activity tracker for **Windows** and **macOS**, built with **Python + PySide6**. One codebase, one GUI, one database schema, one set of business logic — only the thin OS-integration layer differs between platforms.
+A cross-platform enterprise desktop activity monitoring, timesheet management, and attendance companion for **Windows** and **macOS**, built with **Python + PySide6**. One codebase, one unified UI, one database schema, and seamless multi-tenant cloud synchronization.
 
 ---
 
 ## 1. Project Overview
 
-Workpulse runs quietly in the background, detects which application (and, where the OS permits, which window) currently has focus, and records how long you spend in each one. It shows a live dashboard with today's total active time, a per-application breakdown, and a chronological timeline, and it can start with your system and live in the tray/menu bar.
+**Workpulse** runs quietly in the system tray or menu bar to provide:
+- **Active Workspace Productivity Monitoring**: Captures active application, process ID, window title, and exact focus duration.
+- **Smart Idle Detection**: Halts active duration counting during periods of user inactivity (mouse/keyboard idle).
+- **Automated Cloud Synchronization**: Local-first SQLite queue with transactional batch uploads (`POST /tracking/save_activity_batch`).
+- **Screenshot Capture**: Periodic desktop screen captures with offline queuing and macOS Screen Recording permission management.
+- **Attendance & Punch Tracking**: Integration with company punch-in/out timestamps and monthly attendance records.
+- **Leave Balance & Quotas**: Real-time retrieval of accrued leave types and remaining quotas.
+- **Task PMS & Timesheets**: Interactive timesheet management for Key Result Areas (KRAs) and assigned tasks.
+- **Single Sign-On HRMS Portal Bridge**: Instant browser navigation to the full HRMS Web Portal with automated credential passing.
+- **Authoritative Unattended Auto-Updates**: Seamless background update checks (`POST /punch/check_new_version`), silent Inno Setup installation, detached execution, and update loop prevention.
 
-It deliberately does **not** do anything invasive — see [Privacy Considerations](#18-privacy-considerations).
+---
 
 ## 2. Supported Operating Systems
 
-- Windows 10 and later
-- macOS 12 (Monterey) and later
+- **Windows 10 / Windows 11 (64-bit)**
+- **macOS 12 (Monterey), macOS 13 (Ventura), macOS 14 (Sonoma), macOS 15 (Sequoia)**
 
-Running on any other OS shows a clear message ("This version of Workpulse supports Windows and macOS.") instead of crashing.
+---
 
-## 3. Features
-
-- Native PySide6 desktop GUI, identical on both platforms
-- Background tracking on a `QThread` — the GUI never blocks or freezes
-- Active application detection (name + PID), with window title where the OS allows it
-- Automatic session creation on application switch; in-place updates for window-title-only changes
-- Idle detection (default 5 minutes) that stops counting idle time as active usage
-- Dashboard: current app, today's total, per-application usage, activity timeline, manual refresh
-- System tray (Windows) / menu bar (macOS) via the same `QSystemTrayIcon` abstraction
-- "Start with system" via a user-level mechanism (Windows Run key / macOS LaunchAgent) — no admin/root required
-- Settings screen: idle threshold, start-with-system, track-window-titles — changes apply live, no restart needed
-- Close-button dialog: Stop Tracking / Continue in Background / Cancel
-- SQLite persistence via SQLAlchemy, same schema on both platforms
-- Structured logging to a rotating log file (never `print()`)
-- Packaging into a Windows `.exe` and a macOS `.app`
-
-## 4. Architecture
+## 3. Architecture
 
 ```
                  ActivityTracker (tracker/activity_tracker.py)
@@ -43,241 +36,137 @@ Running on any other OS shows a clear message ("This version of Workpulse suppor
                        │
              ┌─────────┴─────────┐
              ▼                   ▼
-     WindowsActivityProvider MacOSActivityProvider
+     WindowsActivityProvider   MacOSActivityProvider
              │                   │
-          pywin32              PyObjC
+       pywin32 / ctypes        PyObjC / Quartz
              │                   │
              └─────────┬─────────┘
                        ▼
-                Common ActiveApplication
+                Common ActiveSession
                        │
+             ┌─────────┴─────────┐
+             ▼                   ▼
+     Local SQLite DB       SyncService (REST API)
+             │                   │
+             └─────────┬─────────┘
                        ▼
-                 Repository / Database
-                       │
-                       ▼
-                PySide6 Dashboard / Tray
+               PySide6 Dashboard & Tray
 ```
 
-Layers, top to bottom:
+### Layer Responsibilities
 
-| Layer | Package | Responsibility |
+| Layer | Directory | Responsibility |
 |---|---|---|
-| GUI | `ui/` | Windows, widgets, styling — 100% platform-independent |
-| Tracker | `tracker/` | Session/idle state machine + `QThread` worker adapter |
-| Platform | `platform_support/` | **Only** place that branches on OS |
-| Services | `services/` | Dashboard calculations, settings read/write |
-| Database | `database/` | SQLAlchemy models, engine, repository (query layer) |
-| System | `system/` | Tray icon, start-with-system registration |
-| Config/Utils | `config/`, `utils/` | Constants, logging, cross-platform paths |
-
-## 5. Cross-Platform Architecture Explanation
-
-The rule enforced throughout this codebase: **no `if platform == "windows"` scattered through business logic.** Instead:
-
-- `platform_support/base.py` defines one abstract interface, `PlatformActivityProvider`, with `get_active_application()` and `get_idle_seconds()`.
-- `platform_support/windows/provider.py` and `platform_support/macos/provider.py` each implement it using `pywin32`/ctypes and `PyObjC`/Quartz respectively.
-- `platform_support/__init__.py` contains **the single factory function**, `create_activity_provider()`, that is the only place in the whole application allowed to check `sys.platform`.
-- Everything else — the tracker, the database, the dashboard, settings — talks only to the `PlatformActivityProvider` interface and never knows which OS it's running on.
-
-> **Why `platform_support/` and not `platform/`?** Python's standard library already has a module called `platform`. Because this project's own directory sits on `sys.path` when you run `python app.py`, naming our package `platform` would shadow the real standard-library module for *every* library in the process that imports it internally (e.g. `uuid`, `pytest`) — causing confusing crashes unrelated to our code. `platform_support/` avoids the collision while keeping the same internal structure the spec describes (`base.py`, `windows/`, `macos/`). The codebase also never imports the stdlib `platform` module itself — it uses `sys.platform` instead (see `utils/paths.py`).
-
-## 6. Windows Setup
-
-```powershell
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt -r requirements-windows.txt
-```
-
-## 7. macOS Setup
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip3 install -r requirements.txt -r requirements-macos.txt
-```
-
-## 8. Running From Source
-
-```bash
-python app.py      # Windows: python app.py  |  macOS: python3 app.py
-```
-
-On first run the app creates its database and log directory automatically (see below), shows the dashboard, and adds a tray/menu-bar icon.
-
-## 9. Database Structure
-
-SQLite via SQLAlchemy, same schema on both platforms.
-
-**`activity_sessions`**
-
-| Column | Type | Notes |
-|---|---|---|
-| id | int, PK | |
-| application_name | string | |
-| process_id | int, nullable | |
-| window_title | string, nullable | omitted where OS/permissions disallow it |
-| started_at | datetime | |
-| ended_at | datetime, nullable | null while the session is still open |
-| duration_seconds | int | finalized when the session closes |
-| created_at | datetime | row insert timestamp |
-
-**`settings`** (single row)
-
-| Column | Type |
-|---|---|
-| id | int, PK |
-| idle_threshold | int (seconds) |
-| start_with_system | bool |
-| tracking_enabled | bool |
-| track_window_titles | bool |
-
-Database file location:
-
-- Windows: `%LOCALAPPDATA%\Workpulse\data\activity_tracker.db`
-- macOS: `~/Library/Application Support/Workpulse/data/activity_tracker.db`
-
-Resolved once, centrally, by `utils/paths.get_database_path()` — no other module hardcodes an OS path.
-
-## 10. Activity Tracking Flow
-
-1. `TrackerWorker` (on a background `QThread`) polls `ActivityTracker.poll()` roughly once per second via a `QTimer`.
-2. `ActivityTracker` asks the injected `PlatformActivityProvider` for the current app and idle time.
-3. If the application changed since the last poll, the old session is closed (duration computed) and a new one is opened.
-4. If only the window title changed (same app), the *existing* open session's title is updated in place — no new row.
-5. Results are emitted back to the GUI thread as a `TrackerState` via a Qt signal; the GUI is never blocked and never runs the loop itself.
-
-## 11. Idle Detection
-
-- Default threshold: 5 minutes (`config/settings.DEFAULT_IDLE_THRESHOLD_SECONDS`), editable in Settings.
-- Windows: `GetLastInputInfo` (via `ctypes`) vs. `GetTickCount`.
-- macOS: `CGEventSourceSecondsSinceLastEventType` (Quartz) — requires no special permission.
-- When idle time crosses the threshold, the current session is closed immediately so idle time is never counted as active usage. When activity resumes, a fresh session opens on the next poll.
-
-## 12. macOS Permissions
-
-- **Application name / PID**: works out of the box via `NSWorkspace`, no permission needed.
-- **Window title**: requires the **Screen Recording** (or **Accessibility**, depending on macOS version) permission under *System Settings → Privacy & Security*. If not granted, `platform_support/macos/active_window.py` simply returns `window_title=None` — the app keeps tracking the application name/PID and logs the situation; it never crashes over a missing permission.
-- **Idle detection**: no special permission required.
-
-## 13. Windows Permissions
-
-- No administrator privileges are required for normal operation or for "start with system" (which uses the per-user `HKEY_CURRENT_USER\...\Run` registry key, not a system-wide location).
-- Some windows owned by elevated (admin) processes may not be inspectable by a non-elevated tracker process — this is standard Windows UIPI behavior, not a bug; the app falls back to whatever it can read.
-
-## 14. System Tray Behavior
-
-Implemented once, using `QSystemTrayIcon`, which natively maps to the Windows tray and the macOS menu bar:
-
-```
-Workpulse
-----------------
-Show Dashboard
-Start Tracking
-Stop Tracking
-Today's Activity
-Settings
-Exit
-```
-
-Closing the main window doesn't necessarily quit the app — see below.
-
-## 15. Building the Windows `.exe`
-
-**Must be run on Windows** (PyInstaller does not cross-compile):
-
-```powershell
-build_windows.bat
-```
-
-Equivalent to:
-
-```powershell
-pip install -r requirements.txt -r requirements-windows.txt
-pyinstaller --noconfirm --clean --windowed --name Workpulse app.py
-```
-
-Output: `dist\Workpulse\Workpulse.exe`
-
-## 16. Building the macOS `.app`
-
-**Must be run on macOS** (PyInstaller does not cross-compile):
-
-```bash
-./build_macos.sh
-```
-
-Equivalent to:
-
-```bash
-pip3 install -r requirements.txt -r requirements-macos.txt
-pyinstaller --noconfirm --clean --windowed --name Workpulse app.py
-```
-
-Output: `dist/Workpulse.app`
-
-On first launch, macOS will prompt for Screen Recording/Accessibility permission (see [macOS Permissions](#12-macos-permissions)).
-
-## 17. Troubleshooting
-
-| Symptom | Likely cause / fix |
-|---|---|
-| Window titles are always blank on macOS | Grant Screen Recording permission in System Settings → Privacy & Security, then restart the app. |
-| "This version of Workpulse supports Windows and macOS." on launch | You're running on an unsupported OS (e.g. Linux). |
-| Tray icon doesn't appear | Some minimal Linux/VM/CI environments have no system tray; this doesn't affect Windows/macOS. |
-| Database/log files not found | Check `%LOCALAPPDATA%\Workpulse` (Windows) or `~/Library/Application Support/Workpulse` (macOS). |
-| `pywin32`/`pyobjc` install errors | Make sure you installed the OS-specific requirements file for *your* OS only (`requirements-windows.txt` on Windows, `requirements-macos.txt` on macOS) — never both. |
-| App seems to "lose" a few seconds per switch | Expected: the poll interval is ~1s, so a session boundary can be off by up to one poll tick. Lower `POLL_INTERVAL_SECONDS` in `config/settings.py` if you need finer granularity. |
-
-## 18. Privacy Considerations
-
-Workpulse only ever records: application name, process ID, window title (where permitted), and timestamps/durations. It deliberately does **not** implement keylogging, password/credential capture, clipboard monitoring, screenshots, webcam/microphone recording, browser history extraction, or any hidden/background surveillance beyond what's visibly described above. The GUI always shows a clear tracking-status indicator.
+| **GUI** | `ui/` | Login, Dashboard, Attendance, Tasks, Leave, Update Dialog, System Tray |
+| **Tracker** | `tracker/` | Session state machine, window polling worker, idle tracking |
+| **Platform** | `platform_support/` | Abstract OS interface (`base.py`) + OS-specific implementations |
+| **Services** | `services/` | Sync, Authentication, Screenshots, Attendance, Tasks, Auto-Updates, Health |
+| **Database** | `database/` | SQLAlchemy models, engine, and repository access layer |
+| **Configuration** | `config/` | Dynamic API configuration (`ApiConfig`), app versioning, constants |
+| **System** | `system/` | Auto-start registration (Windows Run key / macOS LaunchAgent), Tray |
+| **Utils** | `utils/` | System health telemetry, device identifier, logger, security |
 
 ---
 
-## Development
+## 4. Environment Setup
 
-### Running tests
+### Windows
+```powershell
+python -m venv venv
+venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-Shared business logic (session/idle state machine, repository queries, dashboard/settings services, the platform factory) is fully unit-tested without any GUI or real OS API, using a fake `PlatformActivityProvider` and a throwaway SQLite file:
+### macOS
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip3 install --upgrade pip
+pip3 install -r requirements.txt -r requirements-macos.txt
+```
+
+---
+
+## 5. Running from Source
 
 ```bash
-pip install pytest
-pytest
+# Windows
+python app.py
+
+# macOS
+python3 app.py
 ```
 
-### Project layout
+---
 
+## 6. Endpoints & Integrations
+
+Workpulse connects dynamically to tenant-specific company endpoints resolved through AppController:
+
+- **Company Verification**: `POST /appcontroller/appcontroller`
+- **User Authentication**: `POST /login/login`
+- **Device Enrollment**: `POST /tracking/enroll_device`
+- **Sync Settings**: `POST /tracking/get_settings`
+- **Batch Activity Sync**: `POST /tracking/save_activity_batch`
+- **Screenshot Upload**: `POST /tracking/upload_screenshot`
+- **Punch Time**: `POST /punch/get_punch_time`
+- **Monthly Attendance**: `POST /attendance/get_attendance_record`
+- **Leave Balance**: `POST /LeaveApply/view_balance`
+- **KRA / Tasks**: `POST /TaskPMS/get_kra`
+- **Timesheet Submission**: `POST /TaskPMS/fill_time_sheet`
+- **Version Check**: `POST /punch/check_new_version`
+- **Diagnostic Logging**: `POST /dashboard/post_front_end_error_log`
+
+For detailed request/response schemas and architectural workflows, see [docs/WORKPULSE_SYSTEM_DOCUMENTATION.md](file:///d:/New%20folder/ihrms_monitor/docs/WORKPULSE_SYSTEM_DOCUMENTATION.md).
+
+---
+
+## 7. Auto-Update Mechanism
+
+1. **Source of Truth**: The live update API (`POST /punch/check_new_version`) dynamically provides the server version and download URL.
+2. **Semantic Precedence**: Updates trigger **only** when `server_version > installed_version` (evaluated numerically by major, minor, patch).
+3. **Loop Guard & Cooldown**: If an installation attempt fails (e.g. file lock), automatic retries for that version enter a 24-hour cooldown while keeping normal tracking operational.
+4. **Silent Detached Execution**: Windows installers run silently via detached VBScript/PowerShell runners without blocking or keeping open file locks.
+
+---
+
+## 8. Building & Packaging
+
+### Windows Executable & Inno Setup Installer
+```powershell
+# Build executable via PyInstaller
+pyinstaller Workpulse.spec --clean --noconfirm
+
+# Build installer via Inno Setup
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\WorkpulseSetup.iss
 ```
-activity_tracker/
-├── app.py                     # Entry point
-├── config/settings.py         # Constants & defaults
-├── ui/                        # PySide6 GUI (platform-independent)
-│   ├── main_window.py
-│   ├── dashboard.py
-│   ├── activity_table.py
-│   ├── settings.py
-│   └── styles.py
-├── tracker/                   # Core tracking logic (platform-independent)
-│   ├── activity_tracker.py    # Pure state machine (no Qt, no OS)
-│   ├── activity_session.py
-│   └── tracker_worker.py      # QThread adapter
-├── platform_support/          # THE ONLY place that branches on OS
-│   ├── base.py                # PlatformActivityProvider interface
-│   ├── windows/
-│   └── macos/
-├── database/                  # SQLAlchemy models, engine, repository
-├── services/                  # Dashboard + settings business logic
-├── system/                    # Tray icon, start-with-system
-├── utils/                     # Cross-platform paths, logging
-├── tests/                     # Unit tests for shared logic
-├── requirements*.txt
-├── build_windows.bat
-└── build_macos.sh
+Output: `dist\installer\WorkpulseSetup.exe`
+
+### macOS App & DMG
+```bash
+./build_macos.sh
+```
+Output: `dist/Workpulse.dmg` and `dist/Workpulse.app`
+
+---
+
+## 9. Automated Testing
+
+Workpulse includes a complete test suite of 295 unit and integration tests:
+
+```bash
+# Run all unit and integration tests
+python -m unittest discover tests
+
+# Run version and update logic tests specifically
+python -m unittest tests/test_auto_update_version_check.py
 ```
 
-### Known OS-specific limitations
+---
 
-- Window titles on macOS depend on a user-granted permission; on Windows they can be blocked by UIPI for elevated processes.
-- `pywin32` and `pyobjc-framework-*` cannot be installed on the "wrong" OS — the requirements files use PEP 508 environment markers (`sys_platform == "..."`) so a blanket `pip install -r requirements.txt -r requirements-windows.txt -r requirements-macos.txt` is harmless (the wrong-OS file's packages are simply skipped), but the provided per-OS install commands above are the intended path.
-- PyInstaller cannot cross-compile: build the `.exe` on Windows and the `.app` on macOS.
+## 10. Privacy & Security
+
+- **Strict HTTPS/TLS**: All communication with cloud endpoints enforces valid TLS certificates.
+- **Credential Protection**: Passwords, tokens, and authorization keys are scrubbed from log files.
+- **Non-Invasive Activity Tracking**: Workpulse captures active application names, window titles, durations, and system health metrics. It does not perform keylogging, clipboard extraction, or covert microphone/webcam recording.

@@ -1,69 +1,75 @@
 ================================================================================
-Workpulse - Windows Desktop Agent (v1.0.1)
+Workpulse - Cross-Platform Enterprise Desktop Agent (v2.0.2)
 Master Architectural Points & Feature Highlights
-Indovision Consultancy Services
+Indovision Services
 ================================================================================
 
-1. PYTHON / PYSIDE6 ARCHITECTURE
-   - Native Windows desktop application built with Python 3.10+ and PySide6 (Qt6).
-   - High performance, multithreaded design: Main UI Thread, Activity Monitor Thread,
-     Screen Capture Thread, Batch Sync Worker, and Update Service Worker.
-   - Resource-efficient: < 1.0% CPU overhead and < 75 MB RAM footprint.
+1. PYTHON / PYSIDE6 CROSS-PLATFORM ARCHITECTURE
+   - Native desktop application built on Python 3.12 and PySide6 (Qt 6).
+   - Fully cross-platform: Windows 10/11 x64 and macOS 12+ (Monterey through Sequoia).
+   - High-performance, multithreaded architecture: Main GUI Thread, QThread Polling Worker,
+     Screenshot Worker, Batch Sync Engine, and Auto-Update Worker.
+   - Resource-efficient: < 1.0% average CPU overhead and < 85 MB RAM memory footprint.
 
-2. MULTI-TENANT COMPANY VERIFICATION & LOGIN
-   - Dynamic company verification via POST /app_controller/company_verify.
-   - Automatically resolves, locks, and caches the tenant-specific Base URL.
-   - Visual verification badge (green checkmark) with instant company validation.
-   - Secure employee authentication via POST /auth/login returning scoped JWT tokens.
+2. DYNAMIC COMPANY BOOTSTRAP & SECURE AUTHENTICATION
+   - Multi-tenant company verification via POST /appcontroller/appcontroller.
+   - Dynamically resolves, locks, and caches tenant-specific Base URL, logo, and portal links.
+   - Employee authentication via POST /login/login returning scoped credentials.
+   - Session store in %LOCALAPPDATA%\Workpulse\data\session.json with complete multi-user isolation.
 
-3. HARDWARE DEVICE ENROLLMENT & TOKEN SCOPING
-   - Deterministic hardware UUID generated from Motherboard BIOS / Win32 identifiers.
-   - Workstation enrollment via POST /device/enroll returning a dedicated device_token.
-   - All subsequent tracking and screenshot payloads authenticated via device_token.
+3. HARDWARE DEVICE ENROLLMENT & SCOPED TOKENS
+   - Stable hardware identity generated from system motherboard / platform UUID.
+   - Workstation enrollment via POST /tracking/enroll_device returning dedicated device_token.
+   - All subsequent tracking, health telemetry, and screenshot payloads authenticated via device_token.
 
-4. WIN32 ACTIVITY & CONTEXT-AWARE IDLE TRACKING
-   - Real-time foreground application polling via Win32 GetForegroundWindow & GetWindowTextW.
-   - Context-aware idle engine: Preserves active application at the onset of idle.
-   - On resumption, commits exact idle metrics:
-     * application_name (active app when idle started)
-     * status: 'Idle'
-     * idle_start_time
-     * idle_end_time
-     * idle_duration_seconds
+4. REAL-TIME ACTIVITY & PLATFORM-SPECIFIC IDLE TRACKING
+   - Real-time active window polling via Win32 (GetForegroundWindow/GetWindowTextW) on Windows
+     and PyObjC (NSWorkspace/Quartz) on macOS.
+   - Smart Idle Engine: Preserves active application at the onset of user inactivity.
+   - Idle Detection: GetLastInputInfo on Windows; CGEventSourceSecondsSinceLastEventType on macOS.
+   - On resumption, commits exact active and idle metrics to local ACID SQLite storage.
 
-5. OFFLINE STORAGE & VERIFIED CLEANUP LIFECYCLE
-   - Local storage in current Windows user directory: %LOCALAPPDATA%\Workpulse\
-     * data\        -> SQLite database (ihrms_monitor.db) in WAL mode
-     * screenshots\ -> Pending screenshot PNG files
-     * logs\        -> Application diagnostic logs
-     * updates\     -> Staged update installers
-   - Zero data loss during offline periods or sudden shutdowns.
-   - Verified Cleanup: Local screenshot PNG files are deleted ONLY upon receiving
-     server HTTP 200 with {"response": "Success", "screenshot_id": ...}.
+5. LOCAL-FIRST OFFLINE QUEUE & VERIFIED SCREENSHOT CLEANUP
+   - Local storage in %LOCALAPPDATA%\Workpulse\ (Windows) / ~/Library/Application Support/Workpulse/ (macOS):
+     * data/        -> SQLite database (activity_tracker.db) with WAL mode & session.json
+     * screenshots/ -> Local JPEG compressed screen captures (Quality 75)
+     * logs/        -> Rotating diagnostic logs (activity_tracker.log)
+     * updates/     -> Staged update installers and hidden updater runners
+   - Zero data loss during network outages: Local SQLite queue holds pending activities and screenshots.
+   - Transactional Batch Sync via POST /tracking/save_activity_batch (up to 100 records / batch).
+   - Verified Cleanup: Screenshot files are purged locally ONLY after server HTTP 200 confirmation.
 
-6. DYNAMIC VERSIONING (SINGLE SOURCE OF TRUTH)
-   - Dynamic version extraction from running PE binary header via get_running_app_version().
-   - Single source of truth dynamically updates Login, Dashboard, Settings, and About dialogs.
-   - Eliminates hardcoded version strings across the codebase.
+6. DYNAMIC SYSTEM HEALTH TELEMETRY
+   - Background telemetry collector (utils/system_health.py) sampling every 60 seconds:
+     * CPU Usage (%) via psutil.cpu_percent
+     * RAM Usage (%) via psutil.virtual_memory
+     * Disk Usage (%) via psutil.disk_usage
+     * Battery Level (%) & Charging State
+     * Network Connectivity Status
+   - Floating point precision stored internally; cleanly integer-rounded in API payloads.
 
-7. BACKGROUND AUTO-UPDATE & DETACHED RESTART
-   - Periodic update checks via POST /device/check_update.
-   - Cryptographic SHA-256 checksum validation before staging.
-   - Generates and triggers detached silent_update.bat script with Inno Setup flags:
-     /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-   - Seamlessly restarts updated EXE without requiring user intervention.
+7. ENTERPRISE DASHBOARD & HRMS INTEGRATION
+   - Modern PySide6 Dashboard featuring:
+     * Start Time Card (system start / tracking initiation)
+     * Today Total Time Card (accumulated active work duration)
+     * Punch Time Card (first punch-in and last punch-out timestamps)
+     * Attendance Status Badge (Present, Absent, Half Day, Holiday)
+     * Real-time Sync & Update Status Indicators
+     * Interactive Monthly Attendance Calendar (POST /attendance/get_attendance_record)
+     * Dynamic Leave Quota Modal (POST /LeaveApply/view_balance)
+     * KRA & Timesheet PMS Table with Inline Editing & Submission (POST /TaskPMS/fill_time_sheet)
+     * One-Click Single Sign-On HRMS Portal Bridge with secure temporary auto-login bridge.
 
-8. REAL-TIME DASHBOARD "RECORDS UPLOADED" & STREAMLINED UI
-   - Live dynamic "Records Uploaded" counter in Tracking & Status box.
-   - Clean User/Device modal displaying authenticated employee profile and hardware binding.
-   - Wide, responsive activity timeline table.
+8. AUTHORITATIVE AUTO-UPDATE ENGINE & LOOP GUARD
+   - Target version resolved strictly from live API response (POST /punch/check_new_version).
+   - Semantic numerical version precedence (server_version > installed_version).
+   - Stream download with PE binary / Inno Setup signature validation (> 100 KB, 'MZ' header).
+   - Detached silent Inno Setup installation via hidden VBScript (wscript.exe) / PowerShell runners.
+   - Atomic state store with update loop guard: Max 2 failed attempts enters 24-hour cooldown.
 
-9. MULTI-USER & SHARED WORKSTATION SEGREGATION
-   - Full isolation of tracking logs and sync queries scoped strictly by employee_id.
-   - DPAPI encryption (CryptProtectData) ensures credentials and tokens are protected per user.
-   - Zero token leakage or inheritance across sequential employee logins.
-
-10. AUTOMATED QUALITY ASSURANCE
-    - 60 automated unit and integration tests passing across 9 comprehensive test suites.
-    - 100% test pass rate with complete coverage of auth, tracking, storage, sync, and update flows.
+9. AUTOMATED QUALITY ASSURANCE & MULTI-PLATFORM CI/CD
+   - 295 automated unit and integration tests passing across all functional domains.
+   - 100% test pass rate covering authentication, tracking, sync, attendance, health, and auto-updates.
+   - GitHub Actions CI/CD workflows (.github/workflows/release.yml, build-macos.yml) for automated
+     PyInstaller executable generation, Inno Setup installer packaging, and macOS DMG builds.
 ================================================================================
