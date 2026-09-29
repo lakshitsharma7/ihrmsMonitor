@@ -171,35 +171,42 @@ class ErrorReportService:
         exc: Exception | None = None,
         extra_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Collect all relevant diagnostic information."""
-        # 1. User details
-        user_details = {}
+        """Collect all relevant diagnostic information dynamically."""
+        # 1. User / Employee details
+        user_details = {
+            "full_name": "Not Available",
+            "employee_code": "Not Available",
+            "employee_id": "Not Available",
+            "username": "Not Available",
+            "company_code": "Not Available",
+            "role": "Not Available",
+        }
         try:
             from services.session_service import SessionService
             session = SessionService().current_user
             if session:
-                user_details = {
-                    "username": session.username,
-                    "full_name": session.full_name or "N/A",
-                    "employee_id": session.employee_id or "N/A",
-                    "company_code": session.company_code or "N/A",
-                    "role": session.role or "N/A",
-                }
+                user_details["full_name"] = getattr(session, "full_name", None) or "Not Available"
+                emp_code = getattr(session, "employee_code", None) or getattr(session, "employee_id", None) or "Not Available"
+                user_details["employee_code"] = emp_code
+                user_details["employee_id"] = getattr(session, "employee_id", None) or emp_code
+                user_details["username"] = getattr(session, "username", None) or "Not Available"
+                user_details["company_code"] = getattr(session, "company_code", None) or "Not Available"
+                user_details["role"] = getattr(session, "role", None) or "Not Available"
             else:
                 from services.secure_session import SessionStore
                 saved = SessionStore().load_session()
-                if saved:
-                    user_details = {
-                        "username": saved.get("username", "N/A"),
-                        "full_name": saved.get("full_name", "N/A"),
-                        "employee_id": saved.get("employee_id", "N/A"),
-                        "company_code": saved.get("company_code", "N/A"),
-                        "role": saved.get("user_type", "N/A"),
-                    }
+                if saved and isinstance(saved, dict):
+                    user_details["full_name"] = saved.get("full_name") or saved.get("name") or "Not Available"
+                    emp_code = saved.get("employee_code") or saved.get("employee_id") or "Not Available"
+                    user_details["employee_code"] = emp_code
+                    user_details["employee_id"] = saved.get("employee_id") or emp_code
+                    user_details["username"] = saved.get("username") or saved.get("email") or "Not Available"
+                    user_details["company_code"] = saved.get("company_code") or "Not Available"
+                    user_details["role"] = saved.get("user_type") or saved.get("role") or "Not Available"
         except Exception:
-            user_details = {"error": "Could not extract user details"}
+            pass
 
-        # 2. Device details
+        # 2. Host and Device details
         hostname = "Unknown"
         try:
             hostname = socket.gethostname()
@@ -219,15 +226,24 @@ class ErrorReportService:
             "os_version": platform.version(),
             "os_release": platform.release(),
             "architecture": platform.machine(),
+            "python_version": sys.version.split()[0],
         }
 
-        # 3. Stack trace
+        # 3. Dynamic System Health
+        system_health = {}
+        try:
+            from utils.system_health import get_system_health
+            system_health = get_system_health()
+        except Exception:
+            pass
+
+        # 4. Stack trace
         traceback_str = ""
         if exc is not None:
             import traceback
             traceback_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
-        # 4. Extract explicit API & HTTP diagnostics if provided
+        # 5. Extract explicit API & HTTP diagnostics if provided
         endpoint = "N/A"
         http_status = "N/A"
         response_error = "N/A"
@@ -251,7 +267,7 @@ class ErrorReportService:
             if extra_context.get("operation"):
                 operation = str(extra_context["operation"])
 
-        # 5. Extract module and function where error originated
+        # 6. Extract module and function where error originated
         calling_module = "N/A"
         calling_function = "N/A"
         try:
@@ -272,7 +288,7 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 6. Current application status (tracking, sync, update)
+        # 7. Current application status (tracking, sync, update)
         tracking_status = "Unknown"
         try:
             from services.secure_session import SessionStore
@@ -304,7 +320,7 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 7. Recent application log lines
+        # 8. Recent application log lines
         recent_logs = self._get_recent_logs(max_lines=60)
 
         now_utc = datetime.now(timezone.utc).isoformat()
@@ -327,8 +343,9 @@ class ErrorReportService:
             "traceback": sanitize_text(traceback_str),
             "timestamp_local": now_local,
             "timestamp_utc": now_utc,
-            "user_details": user_details,   
+            "user_details": user_details,
             "device_details": device_details,
+            "system_health": system_health,
             "recent_logs": sanitize_text(recent_logs),
             "extra_context": sanitize_text(str(extra_context or {})),
         }
@@ -351,52 +368,255 @@ class ErrorReportService:
     # ==============================================================
 
     def _build_report_text(self, context: dict[str, Any]) -> str:
-        """Construct a formatted plain-text report body."""
+        """Construct a structured plain-text report body with real-time system health."""
         user = context.get("user_details", {})
         device = context.get("device_details", {})
+        health = context.get("system_health", {})
 
+        emp_name = user.get("full_name") or "Not Available"
+        emp_code = user.get("employee_code") or user.get("employee_id") or "Not Available"
+        hostname = device.get("hostname") or "Unknown"
+
+        error_type = context.get("error_type", "ERROR_REPORT")
+        error_message = context.get("error_message", "N/A")
+        date_time_str = f"{context.get('timestamp_local', 'N/A')} (UTC: {context.get('timestamp_utc', 'N/A')})"
+        
+        module_str = context.get("calling_module", "N/A")
+        if context.get("calling_function") and context.get("calling_function") != "N/A":
+            module_str += f" ({context.get('calling_function')})"
+        
+        api_action = context.get("endpoint") or context.get("operation") or "N/A"
+        if api_action == "N/A" and context.get("operation") and context.get("operation") != "N/A":
+            api_action = context.get("operation")
+
+        # Dynamic System Health Metrics collected at error time
+        cpu_data = health.get("cpu", {})
+        ram_data = health.get("ram", {})
+        disk_data = health.get("disk", {})
+
+        cpu_usage_str = f"{cpu_data.get('usage_percent', health.get('cpu_usage_percent', 'N/A'))}%" if ('usage_percent' in cpu_data or 'cpu_usage_percent' in health) else "N/A"
+        cpu_cores_str = f"{cpu_data.get('cores', health.get('cpu_physical_cores', 'N/A'))} Physical, {cpu_data.get('logical_processors', health.get('cpu_logical_cores', 'N/A'))} Logical" if ('cores' in cpu_data or 'cpu_physical_cores' in health) else "N/A"
+
+        ram_usage_str = f"{ram_data.get('usage_percent', health.get('ram_usage_percent', 'N/A'))}%" if ('usage_percent' in ram_data or 'ram_usage_percent' in health) else "N/A"
+        ram_used_str = str(ram_data.get("used") or (f"{health.get('ram_used_mb')} MB" if health.get('ram_used_mb') else "N/A"))
+        ram_avail_str = str(ram_data.get("available") or (f"{health.get('ram_available_mb')} MB" if health.get('ram_available_mb') else "N/A"))
+        ram_total_str = str(ram_data.get("total") or (f"{health.get('ram_total_mb')} MB" if health.get('ram_total_mb') else "N/A"))
+        
+        disk_usage_str = f"{disk_data.get('usage_percent', health.get('disk_usage_percent', 'N/A'))}%" if ('usage_percent' in disk_data or 'disk_usage_percent' in health) else "N/A"
+        disk_used_str = str(disk_data.get("used") or (f"{health.get('disk_used_gb')} GB" if health.get('disk_used_gb') else "N/A"))
+        disk_free_str = str(disk_data.get("free") or (f"{health.get('disk_free_gb')} GB" if health.get('disk_free_gb') else "N/A"))
+        disk_total_str = str(disk_data.get("total") or (f"{health.get('disk_total_gb')} GB" if health.get('disk_total_gb') else "N/A"))
+
+        os_name = device.get("platform") or platform.system()
+        os_version = device.get("os_version") or platform.version()
+        architecture = device.get("architecture") or platform.machine()
+        python_version = device.get("python_version") or sys.version.split()[0]
         app_name = context.get("app_name", APP_NAME)
+        app_version = context.get("app_version", get_running_app_version())
+
         return (
-            f"==========================================================\n"
+            "==================================================\n"
+            "WORKPULSE ERROR REPORT\n"
             f"{app_name} - Critical Error Report\n"
-            f"==========================================================\n"
-            f"Application   : {context.get('app_name')} v{context.get('app_version')}\n"
-            f"Time (Local)  : {context.get('timestamp_local')}\n"
-            f"Time (UTC)    : {context.get('timestamp_utc')}\n"
-            f"Error Type    : {context.get('error_type')}\n"
-            f"Error Msg     : {context.get('error_message')}\n\n"
-            f"--- Module & Operation Diagnostics ---\n"
-            f"Module / File : {context.get('calling_module', 'N/A')}\n"
-            f"Function      : {context.get('calling_function', 'N/A')}\n"
-            f"Operation     : {context.get('operation', 'N/A')}\n"
-            f"Endpoint / URL: {context.get('endpoint', 'N/A')}\n"
+            "==================================================\n\n"
+            f"Employee Name : {emp_name}\n"
+            f"Employee Code : {emp_code}\n"
+            f"Host Name     : {hostname}\n\n"
+            "==================================================\n"
+            "ERROR DETAILS\n"
+            "==================================================\n\n"
+            f"Error Type    : {error_type}\n"
+            f"Error Message : {error_message}\n"
+            f"Module        : {module_str}\n"
+            f"API/Action    : {api_action}\n"
             f"HTTP Status   : {context.get('http_status', 'N/A')}\n"
-            f"Response Err  : {context.get('response_error', 'N/A')}\n\n"
-            f"--- Application State ---\n"
+            f"Response Err  : {context.get('response_error', 'N/A')}\n"
+            f"Date & Time   : {date_time_str}\n\n"
+            "==================================================\n"
+            "CURRENT SYSTEM HEALTH AT ERROR TIME\n"
+            "==================================================\n\n"
+            f"CPU Usage        : {cpu_usage_str}\n"
+            f"CPU Cores        : {cpu_cores_str}\n\n"
+            f"RAM Usage        : {ram_usage_str}\n"
+            f"RAM Used         : {ram_used_str}\n"
+            f"RAM Available    : {ram_avail_str}\n"
+            f"RAM Total        : {ram_total_str}\n\n"
+            f"Disk Usage       : {disk_usage_str}\n"
+            f"Disk Used        : {disk_used_str}\n"
+            f"Disk Free        : {disk_free_str}\n"
+            f"Disk Total       : {disk_total_str}\n\n"
+            f"Operating System : {os_name}\n"
+            f"OS Version       : {os_version}\n"
+            f"Architecture     : {architecture}\n"
+            f"Python Version   : {python_version}\n"
+            f"Workpulse Version: {app_version}\n\n"
+            "==================================================\n"
+            "ADDITIONAL DIAGNOSTICS\n"
+            "==================================================\n\n"
+            f"Application   : {app_name} v{app_version}\n"
+            f"Username      : {user.get('username', 'N/A')}\n"
+            f"Company Code  : {user.get('company_code', 'N/A')}\n"
+            f"Role          : {user.get('role', 'N/A')}\n"
+            f"OS User       : {device.get('os_user', 'N/A')}\n"
             f"Tracking State: {context.get('tracking_status', 'Unknown')}\n"
             f"Sync State    : {context.get('sync_status', 'Unknown')}\n"
             f"Update State  : {context.get('update_status', 'Unknown')}\n\n"
-            f"--- User / Employee Context ---\n"
-            f"Username      : {user.get('username', 'N/A')}\n"
-            f"Employee ID   : {user.get('employee_id', 'N/A')}\n"
-            f"Full Name     : {user.get('full_name', 'N/A')}\n"
-            f"Company Code  : {user.get('company_code', 'N/A')}\n"
-            f"Role          : {user.get('role', 'N/A')}\n\n"
-            f"--- Device / Host Context ---\n"
-            f"Hostname      : {device.get('hostname', 'N/A')}\n"
-            f"OS User       : {device.get('os_user', 'N/A')}\n"
-            f"Platform      : {device.get('platform', 'N/A')} {device.get('os_release', '')} ({device.get('os_version', '')})\n"
-            f"Architecture  : {device.get('architecture', 'N/A')}\n\n"
-            f"--- Traceback ---\n"
+            "--- Traceback ---\n"
             f"{context.get('traceback') or 'No traceback available.'}\n\n"
-            f"--- Extra Context ---\n"
+            "--- Extra Context ---\n"
             f"{context.get('extra_context')}\n\n"
-            f"--- Recent Application Logs (Tail) ---\n"
+            "--- Recent Application Logs (Tail) ---\n"
             f"{context.get('recent_logs')}\n\n"
-            f"==========================================================\n"
-            f"End of Error Report\n"
-            f"==========================================================\n"
+            "==================================================\n"
+            "End of Error Report\n"
+            "==================================================\n"
         )
+
+    def _build_report_html(self, context: dict[str, Any]) -> str:
+        """Construct a clean, professional HTML error report body."""
+        user = context.get("user_details", {})
+        device = context.get("device_details", {})
+        health = context.get("system_health", {})
+
+        emp_name = user.get("full_name") or "Not Available"
+        emp_code = user.get("employee_code") or user.get("employee_id") or "Not Available"
+        hostname = device.get("hostname") or "Unknown"
+
+        error_type = context.get("error_type", "ERROR_REPORT")
+        error_message = context.get("error_message", "N/A")
+        date_time_str = f"{context.get('timestamp_local', 'N/A')} (UTC: {context.get('timestamp_utc', 'N/A')})"
+        now_local = context.get('timestamp_local', 'N/A')
+
+        module_str = context.get("calling_module", "N/A")
+        if context.get("calling_function") and context.get("calling_function") != "N/A":
+            module_str += f" ({context.get('calling_function')})"
+
+        api_action = context.get("endpoint") or context.get("operation") or "N/A"
+        if api_action == "N/A" and context.get("operation") and context.get("operation") != "N/A":
+            api_action = context.get("operation")
+
+        cpu_data = health.get("cpu", {})
+        ram_data = health.get("ram", {})
+        disk_data = health.get("disk", {})
+
+        cpu_usage_str = f"{cpu_data.get('usage_percent', health.get('cpu_usage_percent', 'N/A'))}%" if ('usage_percent' in cpu_data or 'cpu_usage_percent' in health) else "N/A"
+        cpu_cores_str = f"{cpu_data.get('cores', health.get('cpu_physical_cores', 'N/A'))} Physical, {cpu_data.get('logical_processors', health.get('cpu_logical_cores', 'N/A'))} Logical" if ('cores' in cpu_data or 'cpu_physical_cores' in health) else "N/A"
+
+        ram_usage_str = f"{ram_data.get('usage_percent', health.get('ram_usage_percent', 'N/A'))}%" if ('usage_percent' in ram_data or 'ram_usage_percent' in health) else "N/A"
+        ram_used_str = str(ram_data.get("used") or (f"{health.get('ram_used_mb')} MB" if health.get('ram_used_mb') else "N/A"))
+        ram_avail_str = str(ram_data.get("available") or (f"{health.get('ram_available_mb')} MB" if health.get('ram_available_mb') else "N/A"))
+        ram_total_str = str(ram_data.get("total") or (f"{health.get('ram_total_mb')} MB" if health.get('ram_total_mb') else "N/A"))
+        
+        disk_usage_str = f"{disk_data.get('usage_percent', health.get('disk_usage_percent', 'N/A'))}%" if ('usage_percent' in disk_data or 'disk_usage_percent' in health) else "N/A"
+        disk_used_str = str(disk_data.get("used") or (f"{health.get('disk_used_gb')} GB" if health.get('disk_used_gb') else "N/A"))
+        disk_free_str = str(disk_data.get("free") or (f"{health.get('disk_free_gb')} GB" if health.get('disk_free_gb') else "N/A"))
+        disk_total_str = str(disk_data.get("total") or (f"{health.get('disk_total_gb')} GB" if health.get('disk_total_gb') else "N/A"))
+
+        os_name = device.get("platform") or platform.system()
+        os_version = device.get("os_version") or platform.version()
+        architecture = device.get("architecture") or platform.machine()
+        python_version = device.get("python_version") or sys.version.split()[0]
+        app_name = context.get("app_name", APP_NAME)
+        app_version = context.get("app_version", get_running_app_version())
+
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f8; color: #202124; margin: 0; padding: 20px; }}
+.container {{ max-width: 760px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #dadce0; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }}
+.header {{ background: #1F4E79; color: #ffffff; padding: 20px 24px; }}
+.header h1 {{ margin: 0; font-size: 20px; letter-spacing: 0.5px; font-weight: 600; }}
+.header p {{ margin: 4px 0 0 0; font-size: 13px; opacity: 0.85; }}
+.section {{ padding: 18px 24px; border-bottom: 1px solid #eeeeee; }}
+.section:last-child {{ border-bottom: none; }}
+.section-title {{ font-size: 14px; font-weight: 700; color: #1F4E79; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }}
+.badge {{ display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; background: #ea4335; color: #ffffff; }}
+table.meta-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+table.meta-table td {{ padding: 6px 0; vertical-align: top; }}
+table.meta-table td.label {{ width: 170px; color: #5f6368; font-weight: 600; }}
+table.meta-table td.val {{ color: #202124; font-family: inherit; }}
+pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; font-family: 'Consolas', 'Courier New', monospace; line-height: 1.4; }}
+.footer {{ background: #f8f9fa; padding: 12px 24px; font-size: 12px; color: #70757a; text-align: center; border-top: 1px solid #eeeeee; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>WORKPULSE ERROR REPORT</h1>
+    <p>Application Diagnostics & Automated Support Dispatch</p>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">Employee Information</div>
+    <table class="meta-table">
+      <tr><td class="label">Employee Name</td><td class="val"><strong>{emp_name}</strong></td></tr>
+      <tr><td class="label">Employee Code</td><td class="val"><strong>{emp_code}</strong></td></tr>
+      <tr><td class="label">Host Name</td><td class="val"><code>{hostname}</code></td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Error Details</div>
+    <table class="meta-table">
+      <tr><td class="label">Error Type</td><td class="val"><span class="badge">{error_type}</span></td></tr>
+      <tr><td class="label">Error Message</td><td class="val" style="color: #c5221f; font-weight: 600;">{error_message}</td></tr>
+      <tr><td class="label">Module</td><td class="val">{module_str}</td></tr>
+      <tr><td class="label">API / Action</td><td class="val"><code>{api_action}</code></td></tr>
+      <tr><td class="label">HTTP Status</td><td class="val">{context.get('http_status', 'N/A')}</td></tr>
+      <tr><td class="label">Response Error</td><td class="val">{context.get('response_error', 'N/A')}</td></tr>
+      <tr><td class="label">Date & Time</td><td class="val">{date_time_str}</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Current System Health at Error Time</div>
+    <table class="meta-table">
+      <tr><td class="label">CPU Usage</td><td class="val">{cpu_usage_str}</td></tr>
+      <tr><td class="label">CPU Cores</td><td class="val">{cpu_cores_str}</td></tr>
+      <tr><td class="label">RAM Usage</td><td class="val">{ram_usage_str}</td></tr>
+      <tr><td class="label">RAM Used</td><td class="val">{ram_used_str}</td></tr>
+      <tr><td class="label">RAM Available</td><td class="val">{ram_avail_str}</td></tr>
+      <tr><td class="label">RAM Total</td><td class="val">{ram_total_str}</td></tr>
+      <tr><td class="label">Disk Usage</td><td class="val">{disk_usage_str}</td></tr>
+      <tr><td class="label">Disk Used</td><td class="val">{disk_used_str}</td></tr>
+      <tr><td class="label">Disk Free</td><td class="val">{disk_free_str}</td></tr>
+      <tr><td class="label">Disk Total</td><td class="val">{disk_total_str}</td></tr>
+      <tr><td class="label">Operating System</td><td class="val">{os_name}</td></tr>
+      <tr><td class="label">OS Version</td><td class="val">{os_version}</td></tr>
+      <tr><td class="label">Architecture</td><td class="val">{architecture}</td></tr>
+      <tr><td class="label">Python Version</td><td class="val">{python_version}</td></tr>
+      <tr><td class="label">Workpulse Version</td><td class="val"><strong>v{app_version}</strong></td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Additional Diagnostics</div>
+    <table class="meta-table">
+      <tr><td class="label">Application</td><td class="val">{app_name} v{app_version}</td></tr>
+      <tr><td class="label">Username</td><td class="val">{user.get('username', 'N/A')}</td></tr>
+      <tr><td class="label">Company Code</td><td class="val">{user.get('company_code', 'N/A')}</td></tr>
+      <tr><td class="label">Role</td><td class="val">{user.get('role', 'N/A')}</td></tr>
+      <tr><td class="label">OS User</td><td class="val">{device.get('os_user', 'N/A')}</td></tr>
+      <tr><td class="label">Tracking State</td><td class="val">{context.get('tracking_status', 'Unknown')}</td></tr>
+      <tr><td class="label">Sync State</td><td class="val">{context.get('sync_status', 'Unknown')}</td></tr>
+      <tr><td class="label">Update State</td><td class="val">{context.get('update_status', 'Unknown')}</td></tr>
+    </table>
+    
+    <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Traceback:</div>
+    <pre class="code-block">{context.get('traceback') or 'No traceback available.'}</pre>
+
+    <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Recent Application Logs:</div>
+    <pre class="code-block">{context.get('recent_logs')}</pre>
+  </div>
+
+  <div class="footer">
+    Workpulse v{app_version} &bull; Confidential Support Diagnostic Report &bull; {now_local}
+  </div>
+</div>
+</body>
+</html>"""
 
     # ==============================================================
     # DELIVERY — DIRECT SECURE SMTP DISPATCH
@@ -436,9 +656,11 @@ class ErrorReportService:
             else:
                 subject = f"[{app_name} v{app_version}] {error_type}"
 
-        # Construct RFC 2822 MIME message
+        # Construct RFC 2822 MIME message (multipart/alternative with both plain-text and HTML)
         body_text = context.get("body_text") or self._build_report_text(context)
-        msg = MIMEMultipart()
+        body_html = self._build_report_html(context)
+
+        msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = from_addr
         msg["To"] = to_addr
@@ -449,6 +671,7 @@ class ErrorReportService:
         msg["X-Mailer"] = f"{app_name}/{app_version}"
 
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         masked_user = f"{username[:3]}***@{username.split('@')[-1]}" if "@" in username else "***"
         logger.info(
