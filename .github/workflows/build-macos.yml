@@ -133,17 +133,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/Workpulse.app/Contents/Info.plist
 
           echo "Verifying Workpulse.dmg..."
-          test -f dist/Workpulse.dmg
-          ls -lh dist/Workpulse.dmg
+          test -f dist/macOS/Workpulse.dmg
+          ls -lh dist/macOS/Workpulse.dmg
 
           echo "Mounting and verifying DMG payload..."
           MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
-          hdiutil attach dist/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
+          hdiutil attach dist/macOS/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
           test -d "${MOUNT_PT}/Workpulse.app"
           test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
           MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
           echo "Mounted DMG version: ${MOUNT_VER}"
-          test "${MOUNT_VER}" = "2.0.2"
+          test "${MOUNT_VER}" = "1.0"
           hdiutil detach "${MOUNT_PT}"
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
@@ -152,7 +152,7 @@ jobs:
             echo "Validating Developer ID signature & stapling..."
             codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
             spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
-            xcrun stapler validate dist/Workpulse.dmg || true
+            xcrun stapler validate dist/macOS/Workpulse.dmg || true
           fi
 
       - name: Prepare bundle for artifact upload
@@ -165,6 +165,6 @@ jobs:
         with:
           name: workpulse-macos-dist
           path: |
-            dist/Workpulse.dmg
+            dist/macOS/Workpulse.dmg
             dist/Workpulse.app.zip
           retention-days: 7

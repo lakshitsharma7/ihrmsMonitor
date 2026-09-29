@@ -166,6 +166,30 @@ def main() -> int:
             "Another instance of %s is already running. Exiting gracefully.",
             APP_NAME,
         )
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui
+                import win32con
+
+                found_hwnds = []
+
+                def _enum_windows_cb(hwnd, _):
+                    if win32gui.IsWindow(hwnd):
+                        title = win32gui.GetWindowText(hwnd)
+                        if "Workpulse" in title or "iHRMS Monitor" in title:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetForegroundWindow(hwnd)
+                            found_hwnds.append(hwnd)
+
+                win32gui.EnumWindows(_enum_windows_cb, None)
+                if not found_hwnds:
+                    QMessageBox.information(
+                        None,
+                        APP_NAME,
+                        f"{APP_NAME} is already running in the background or system tray.",
+                    )
+            except Exception:
+                pass
         return 0
     app._instance_lock = lock_file
 

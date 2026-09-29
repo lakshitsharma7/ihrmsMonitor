@@ -58,24 +58,23 @@ if not defined ISCC (
     goto :done_pyinstaller
 )
 
-set "APP_VER=2.0.2"
+set "APP_VER=1.0"
 if exist "VERSION" set /p APP_VER=<VERSION
 echo Using Inno Setup Compiler: "%ISCC%" for Version %APP_VER%
 set "ISS_FILE=Workpulse.iss"
 "%ISCC%" /DMyAppVersion="%APP_VER%" "!ISS_FILE!"
 if errorlevel 1 goto :error
 
-if not exist "dist\installer" mkdir "dist\installer"
-if exist "installer\WorkpulseSetup.exe" copy /y "installer\WorkpulseSetup.exe" "dist\installer\WorkpulseSetup.exe"
-if exist "installer\WorkpulseSetup.exe" copy /y "installer\WorkpulseSetup.exe" "dist\installer\iHRMSMonitorSetup.exe"
-if exist "installer\Workpulse-Installer.exe" copy /y "installer\Workpulse-Installer.exe" "dist\installer\WorkpulseSetup.exe"
-if exist "installer\Workpulse-Installer.exe" copy /y "installer\Workpulse-Installer.exe" "dist\installer\iHRMSMonitorSetup.exe"
+if not exist "dist\Windows" mkdir "dist\Windows"
+if exist "installer\WorkpulseSetup.exe" (
+    copy /y "installer\WorkpulseSetup.exe" "dist\Windows\WorkpulseSetup.exe"
+    del /f /q "installer\WorkpulseSetup.exe" 2>nul
+)
 
 echo.
 echo ===================================================
-echo Installer Build Complete:
-echo   1. installer\Workpulse-Installer.exe
-echo   2. dist\installer\WorkpulseSetup.exe
+echo Windows Build Complete:
+echo   Release Installer: dist\Windows\WorkpulseSetup.exe
 echo ===================================================
 goto :eof
 

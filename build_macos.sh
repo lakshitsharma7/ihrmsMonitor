@@ -9,13 +9,14 @@ cd "$SCRIPT_DIR"
 
 ENTITLEMENTS_FILE="entitlements.mac.plist"
 APP_BUNDLE="dist/Workpulse.app"
-DMG_FILE="dist/Workpulse.dmg"
+DMG_FILE="dist/macOS/Workpulse.dmg"
 DMG_STAGING="dist/dmg_staging"
 
 echo "==================================================="
 echo "[1/6] Preparing Environment & Cleaning Stale Builds"
 echo "==================================================="
-rm -rf build/ dist/ "${DMG_STAGING}"
+mkdir -p "dist/macOS"
+rm -rf build/ dist/Workpulse.app "${DMG_STAGING}" "${DMG_FILE}"
 python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 

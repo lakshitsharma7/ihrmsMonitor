@@ -127,22 +127,83 @@ a = Analysis(
         'ctypes.wintypes',
         'mss.windows',
         'tkinter',
+        'tcl',
+        'tk',
+        'wx',
         'matplotlib',
         'scipy',
+        'numpy',
+        'pandas',
         'torch',
         'transformers',
         'onnxruntime',
         'playwright',
         'sentence_transformers',
+        'sklearn',
         'IPython',
         'notebook',
         'jupyter',
+        'ipykernel',
+        'ipywidgets',
+        'PIL._avif',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineQuick',
+        'PySide6.QtQml',
+        'PySide6.QtQuick',
+        'PySide6.QtQuickWidgets',
+        'PySide6.QtQuick3D',
+        'PySide6.Qt3DCore',
+        'PySide6.Qt3DRender',
+        'PySide6.Qt3DInput',
+        'PySide6.Qt3DLogic',
+        'PySide6.Qt3DAnimation',
+        'PySide6.Qt3DExtras',
+        'PySide6.QtMultimedia',
+        'PySide6.QtMultimediaWidgets',
+        'PySide6.QtDesigner',
+        'PySide6.QtUiTools',
+        'PySide6.QtSql',
+        'PySide6.QtTest',
+        'PySide6.QtSensors',
+        'PySide6.QtSerialPort',
+        'PySide6.QtPositioning',
+        'PySide6.QtLocation',
+        'PySide6.QtBluetooth',
+        'PySide6.QtNfc',
+        'PySide6.QtSpatialAudio',
+        'PySide6.QtPdf',
+        'PySide6.QtPdfWidgets',
+        'PySide6.QtCharts',
+        'PySide6.QtDataVisualization',
+        'PySide6.QtVirtualKeyboard',
+        'PySide6.QtRemoteObjects',
+        'PySide6.QtScxml',
+        'PySide6.QtStateMachine',
+        'unittest',
+        'doctest',
+        'pdb',
+        'test',
     ],
     noarchive=False,
-    optimize=0,
+    optimize=2,
 )
 
 pyz = PYZ(a.pure)
+
+# Filter out genuinely unused Qt6 dynamic libraries and plugins
+excluded_bin_patterns = (
+    'Qt6Quick', 'Qt6Qml', 'Qt6Pdf', 'Qt6OpenGL', 'Qt6Sensors',
+    'Qt6SerialPort', 'Qt6Positioning', 'Qt6Location', 'Qt6Bluetooth',
+    'Qt6Nfc', 'Qt6SpatialAudio', 'Qt6Charts', 'Qt6DataVisualization',
+    'Qt6VirtualKeyboard', 'Qt6RemoteObjects', 'Qt6Scxml', 'Qt6Multimedia',
+    'Qt63D', 'QtQuick', 'QtQml', 'QtPdf', 'QtOpenGL'
+)
+
+filtered_binaries = [
+    b for b in a.binaries
+    if not any(pat.lower() in b[0].lower() for pat in excluded_bin_patterns)
+]
 
 exe = EXE(
     pyz,
@@ -165,7 +226,7 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
-    a.binaries,
+    filtered_binaries,
     a.datas,
     strip=False,
     upx=False,

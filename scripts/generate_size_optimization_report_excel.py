@@ -290,8 +290,12 @@ def build_size_report_workbook():
     print(f"Generated size optimization report: {root_file}")
 
     if doc_dir.exists():
-        shutil.copyfile(root_file, doc_file)
-        print(f"Copied size optimization report to Monitoring Doc: {doc_file}")
+        try:
+            shutil.copyfile(root_file, doc_file)
+            print(f"Copied size optimization report to Monitoring Doc: {doc_file}")
+        except PermissionError:
+            print(f"Notice: {doc_file} is currently open in Excel. Root copy updated successfully.")
 
 if __name__ == "__main__":
     build_size_report_workbook()
+
