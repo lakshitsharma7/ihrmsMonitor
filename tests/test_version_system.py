@@ -81,7 +81,7 @@ class TestVersionSystem(unittest.TestCase):
         with patch("requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.5", "file_name": "https://mock.api/setup.exe"}}}}'
+            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.5", "file_name": "https://mock.api/setup.exe"}, "MAC": {"version_code": "2.0.5", "file_name": "https://mock.api/Workpulse.dmg"}}}}'
             mock_resp.json.return_value = {
                 "status": 200,
                 "data": {
@@ -89,7 +89,11 @@ class TestVersionSystem(unittest.TestCase):
                         "WINDOWS": {
                             "version_code": "2.0.5",
                             "file_name": "https://mock.api/setup.exe",
-                        }
+                        },
+                        "MAC": {
+                            "version_code": "2.0.5",
+                            "file_name": "https://mock.api/Workpulse.dmg",
+                        },
                     }
                 },
             }
@@ -126,7 +130,7 @@ class TestVersionSystem(unittest.TestCase):
         with patch("requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.0"}}}}'
+            mock_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "2.0.0"}, "MAC": {"version_code": "2.0.0"}}}}'
             mock_resp.json.return_value = {
                 "status": 200,
                 "data": {
@@ -134,7 +138,11 @@ class TestVersionSystem(unittest.TestCase):
                         "WINDOWS": {
                             "version_code": "2.0.0",
                             "file_name": "https://company.example.com/Workpulse-Installer.exe",
-                        }
+                        },
+                        "MAC": {
+                            "version_code": "2.0.0",
+                            "file_name": "https://company.example.com/Workpulse.dmg",
+                        },
                     }
                 }
             }
@@ -191,7 +199,7 @@ class TestVersionSystem(unittest.TestCase):
             with patch("requests.post") as mock_post:
                 mock_ac_resp = MagicMock()
                 mock_ac_resp.status_code = 200
-                mock_ac_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "1.0.2", "file_name": "https://mock.api/Workpulse-Installer.exe"}}}}'
+                mock_ac_resp.text = '{"status": 200, "data": {"apps": {"WINDOWS": {"version_code": "1.0.2", "file_name": "https://mock.api/Workpulse-Installer.exe"}, "MAC": {"version_code": "1.0.2", "file_name": "https://mock.api/Workpulse.dmg"}}}}'
                 mock_ac_resp.json.return_value = {
                     "status": 200,
                     "data": {
@@ -200,7 +208,12 @@ class TestVersionSystem(unittest.TestCase):
                                 "version_code": "1.0.2",
                                 "file_name": "https://mock.api/Workpulse-Installer.exe",
                                 "force_to_update": "0",
-                            }
+                            },
+                            "MAC": {
+                                "version_code": "1.0.2",
+                                "file_name": "https://mock.api/Workpulse.dmg",
+                                "force_to_update": "0",
+                            },
                         }
                     }
                 }

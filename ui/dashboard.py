@@ -992,4 +992,4 @@ class DashboardPage(QWidget):
                 self.tracking_status_label.setText(f"Tracking: Error ({clean_msg})")
                 self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
         except Exception:
-            pass
+            pass

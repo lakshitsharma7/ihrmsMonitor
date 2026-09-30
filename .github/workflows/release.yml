@@ -137,12 +137,12 @@ jobs:
         run: |
           test -d dist/Workpulse.app
           test -f dist/Workpulse.app/Contents/MacOS/Workpulse
-          test -f dist/Workpulse.dmg
-          ls -lh dist/Workpulse.dmg
+          test -f dist/macOS/Workpulse.dmg
+          ls -lh dist/macOS/Workpulse.dmg
 
           echo "Mounting and verifying DMG payload..."
           MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
-          hdiutil attach dist/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
+          hdiutil attach dist/macOS/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
           test -d "${MOUNT_PT}/Workpulse.app"
           test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
           MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
@@ -156,14 +156,14 @@ jobs:
             echo "Validating Developer ID signature & stapling..."
             codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
             spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
-            xcrun stapler validate dist/Workpulse.dmg || true
+            xcrun stapler validate dist/macOS/Workpulse.dmg || true
           fi
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-release-assets
-          path: dist/Workpulse.dmg
+          path: dist/macOS/Workpulse.dmg
           retention-days: 5
 
   publish-release:

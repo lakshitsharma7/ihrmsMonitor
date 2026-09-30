@@ -2,17 +2,19 @@
 
 Provides dynamic, real-time detection of network/Internet reachability:
 - macOS: SystemConfiguration / Network framework reachability check with socket fallback.
-- Windows/Linux: Multi-target fast concurrent socket probe (API host + high-availability DNS/HTTP endpoints).
+- Windows/Linux: Fast concurrent multi-target socket probe (API host + high-availability DNS/HTTP endpoints).
 - Signals / callbacks on connectivity state change (Online <-> Offline).
+- Immediate reporting on API success/failure.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import socket
 import sys
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from utils.logger import get_logger
@@ -41,7 +43,7 @@ class NetworkReachabilityMonitor:
         self._listeners: List[Callable[[bool], None]] = []
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
-        self._check_interval: float = 3.0
+        self._check_interval: float = 2.0
 
     @property
     def is_online(self) -> bool:
