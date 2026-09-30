@@ -249,6 +249,11 @@ class SyncService:
                     data={"device_token": device_token},
                     timeout=5,
                 )
+                try:
+                    from services.network_monitor import NetworkReachabilityMonitor
+                    NetworkReachabilityMonitor().report_online()
+                except Exception:
+                    pass
                 logger.info("get_settings HTTP response: %d", response.status_code)
                 if (response.status_code == 401 or "Device not recognized" in response.text or "revoked" in response.text) and not re_enrolled:
                     logger.warning("get_settings device token rejected (HTTP 401). Triggering automatic re-enrollment...")
@@ -266,6 +271,12 @@ class SyncService:
             except requests.RequestException as req_exc:
                 http_code = getattr(getattr(req_exc, "response", None), "status_code", None)
                 resp_text = getattr(getattr(req_exc, "response", None), "text", "") or ""
+                if http_code is None:
+                    try:
+                        from services.network_monitor import NetworkReachabilityMonitor
+                        NetworkReachabilityMonitor().report_api_failure()
+                    except Exception:
+                        pass
                 if (http_code == 401 or "Device not recognized" in resp_text or "revoked" in resp_text) and not re_enrolled:
                     logger.warning("get_settings exception indicates 401 / token rejection. Attempting re-enrollment...")
                     new_token = self.re_enroll_device()
@@ -1063,6 +1074,12 @@ class SyncService:
                     attempt,
                 )
 
+                try:
+                    from services.network_monitor import NetworkReachabilityMonitor
+                    NetworkReachabilityMonitor().report_online()
+                except Exception:
+                    pass
+
                 is_auth_rejection = (
                     response.status_code == 401
                     or "Device not recognized" in response.text
@@ -1130,6 +1147,13 @@ class SyncService:
                     attempt,
                     retries,
                 )
+
+                if http_code is None or isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+                    try:
+                        from services.network_monitor import NetworkReachabilityMonitor
+                        NetworkReachabilityMonitor().report_api_failure()
+                    except Exception:
+                        pass
 
                 is_auth_rejection = (
                     http_code == 401
@@ -1916,6 +1940,11 @@ class SyncService:
                 data=data,
                 timeout=60,
             )
+            try:
+                from services.network_monitor import NetworkReachabilityMonitor
+                NetworkReachabilityMonitor().report_online()
+            except Exception:
+                pass
 
             logger.info(
                 "Screenshot upload HTTP response code: %d, Response body: %s",
@@ -2034,9 +2063,15 @@ class SyncService:
                 "Screenshot upload failed: %s",
                 exc,
             )
+            http_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if http_code is None or isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+                try:
+                    from services.network_monitor import NetworkReachabilityMonitor
+                    NetworkReachabilityMonitor().report_api_failure()
+                except Exception:
+                    pass
             try:
                 from services.error_report_service import ErrorReportService
-                http_code = getattr(getattr(exc, "response", None), "status_code", None)
                 resp_text = getattr(getattr(exc, "response", None), "text", None)
                 if local_session_id is not None and (http_code == 404 or (resp_text and "not found for this device" in resp_text)):
                     db_session = get_session()

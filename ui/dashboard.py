@@ -132,18 +132,14 @@ class DashboardPage(QWidget):
         self._date_timer.start()
 
         # Dynamic network connectivity detector
-        self._is_network_online = True
-        self._network_timer = QTimer(self)
-        self._network_timer.setInterval(3000)
-        self._network_timer.timeout.connect(self._check_network_connectivity)
-        self._network_timer.start()
-
         try:
             from services.network_monitor import NetworkReachabilityMonitor
-            NetworkReachabilityMonitor().register_listener(self._on_reachability_changed)
-            NetworkReachabilityMonitor().start_monitoring(interval=3.0)
+            monitor = NetworkReachabilityMonitor()
+            self._is_network_online = monitor.is_online
+            monitor.register_listener(self._on_reachability_changed)
+            monitor.start_monitoring(interval=2.0)
         except Exception:
-            pass
+            self._is_network_online = True
 
         try:
             att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
@@ -398,9 +394,13 @@ class DashboardPage(QWidget):
         is_initially_active = getattr(self, "_is_tracking", False)
 
         # Network status indicator (Row 0, Col 0): ● Online or ● Offline
-        self.network_status_label = QLabel("● Online")
+        initial_online = getattr(self, "_is_network_online", True)
+        self.network_status_label = QLabel("● Online" if initial_online else "● Offline")
         self.network_status_label.setObjectName("NetworkStatusLabel")
-        self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+        if initial_online:
+            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+        else:
+            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
 
         # Retain tracking_status_label for error reporting and backward compatibility
         self.tracking_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")

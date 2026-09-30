@@ -50,22 +50,65 @@ class NetworkReachabilityMonitor:
         """Return the last known network reachability state."""
         return self._is_online
 
-    def register_listener(self, callback: Callable[[bool], None]) -> None:
-        """Register a callback to be notified whenever connectivity state changes."""
-        if callback not in self._listeners:
-            self._listeners.append(callback)
+    def report_online(self) -> None:
+        """Explicitly notify monitor that a network/API operation succeeded."""
+        if not self._is_online:
+            logger.info("Network connectivity confirmed active (reported Online)")
+            self._is_online = True
+            self._notify_listeners(True)
+
+    def report_offline(self) -> None:
+        """Explicitly notify monitor that a network/API operation failed due to connectivity."""
+        if self._is_online:
+            logger.info("Network connectivity lost (reported Offline)")
+            self._is_online = False
+            self._notify_listeners(False)
+
+    def report_api_failure(self) -> None:
+        """Called when an API request fails; quickly confirms reachability before marking offline."""
+        if "unittest" in sys.modules or "pytest" in sys.modules:
+            return
+        def _check():
             try:
-                callback(self._is_online)
+                is_reachable = self.check_reachability(timeout=1.0)
+                if not is_reachable:
+                    self.report_offline()
+                else:
+                    self.report_online()
             except Exception:
                 pass
+        threading.Thread(target=_check, daemon=True).start()
+
+    def register_listener(self, callback: Callable[[bool], None]) -> None:
+        """Register a callback to be notified whenever connectivity state changes."""
+        with self._lock:
+            if callback not in self._listeners:
+                self._listeners.append(callback)
+                try:
+                    callback(self._is_online)
+                except Exception:
+                    pass
 
     def unregister_listener(self, callback: Callable[[bool], None]) -> None:
         """Remove a registered callback."""
-        if callback in self._listeners:
-            self._listeners.remove(callback)
+        with self._lock:
+            if callback in self._listeners:
+                self._listeners.remove(callback)
 
-    def check_reachability(self, timeout: float = 1.5) -> bool:
-        """Perform an immediate reachability check against configured endpoints."""
+    @staticmethod
+    def _probe_socket_target(host: str, port: int, timeout: float) -> bool:
+        """Attempt a direct TCP socket connection to a single (host, port)."""
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
+    def check_reachability(self, timeout: float = 1.2) -> bool:
+        """
+        Perform a fast, concurrent reachability check against configured endpoints.
+        Returns True if usable internet/network connectivity is confirmed, False otherwise.
+        """
         # 1. macOS native reachability if available
         if sys.platform == "darwin":
             try:
@@ -75,33 +118,61 @@ class NetworkReachabilityMonitor:
             except Exception:
                 pass
 
-        # 2. Probe API host if configured
+        # 2. Collect target endpoints
+        targets: List[Tuple[str, int]] = []
+
+        # Target A: Configured backend API endpoint
         try:
             from config.api_config import ApiConfig
-            base_url = ApiConfig.base_url
+            base_url = None
+            try:
+                base_url = ApiConfig().base_url
+            except Exception:
+                pass
+            if not base_url:
+                try:
+                    from services.secure_session import SessionStore
+                    sess = SessionStore().load_session()
+                    if sess and sess.get("base_url"):
+                        base_url = sess.get("base_url")
+                except Exception:
+                    pass
+
             if base_url:
                 parsed = urlparse(base_url)
-                host = parsed.hostname
-                port = parsed.port or (443 if parsed.scheme == "https" else 80)
-                if host:
-                    with socket.create_connection((host, port), timeout=timeout):
-                        return True
+                api_host = parsed.hostname
+                api_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if api_host:
+                    targets.append((api_host, api_port))
         except Exception:
             pass
 
-        # 3. Probe fast public DNS and HTTP endpoints (Google, Cloudflare, OpenDNS)
-        probes = [
+        # Target B: Fast public DNS and HTTP endpoints (Google, Cloudflare, OpenDNS)
+        public_probes = [
             ("8.8.8.8", 53),
             ("1.1.1.1", 53),
             ("208.67.222.222", 53),
             ("1.1.1.1", 80),
+            ("8.8.4.4", 53),
         ]
-        for ip, port in probes:
-            try:
-                with socket.create_connection((ip, port), timeout=timeout):
-                    return True
-            except Exception:
-                continue
+        targets.extend(public_probes)
+
+        # 3. Fast concurrent socket probing (first success returns True immediately)
+        max_workers = min(len(targets), 6)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(self._probe_socket_target, host, port, timeout)
+                    for host, port in targets
+                ]
+                for future in concurrent.futures.as_completed(futures, timeout=timeout + 0.4):
+                    try:
+                        if future.result():
+                            return True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         return False
 
@@ -126,7 +197,7 @@ class NetworkReachabilityMonitor:
             pass
         return None
 
-    def start_monitoring(self, interval: float = 3.0) -> None:
+    def start_monitoring(self, interval: float = 2.0) -> None:
         """Start background polling monitor if not already running."""
         if "unittest" in sys.modules or "pytest" in sys.modules:
             return
@@ -147,7 +218,7 @@ class NetworkReachabilityMonitor:
         """Background thread loop polling network reachability."""
         while self._running:
             try:
-                current_state = self.check_reachability(timeout=1.5)
+                current_state = self.check_reachability(timeout=1.2)
                 if current_state != self._is_online:
                     self._is_online = current_state
                     self._notify_listeners(current_state)
