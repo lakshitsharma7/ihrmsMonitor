@@ -1,0 +1,36 @@
+{
+  "employee_id": "EMP001",
+  "username": "john.doe",
+  "full_name": "John Doe",
+  "device_detail": "Windows Desktop (Node: WORKSTATION-01)",
+  "sync_timestamp": "2026-08-24T10:29:08Z",
+  "activities": [
+    {
+      "local_session_id": 42,
+      "application_name": "chrome.exe",
+      "window_title": "HRMS Dashboard - Google Chrome",
+      "start_time": "2026-08-24T10:04:13Z",
+      "end_time": "2026-08-24T10:08:45Z",
+      "duration": 272,
+      "tracking_status": "completed"
+    },
+    {
+      "local_session_id": 43,
+      "application_name": "pycharm64.exe",
+      "window_title": "main_window.py [ihrms_monitor] - PyCharm",
+      "start_time": "2026-08-24T10:08:45Z",
+      "end_time": "2026-08-24T10:20:12Z",
+      "duration": 687,
+      "tracking_status": "completed"
+    },
+    {
+      "local_session_id": 44,
+      "application_name": "teams.exe",
+      "window_title": "General Chat | Microsoft Teams",
+      "start_time": "2026-08-24T10:20:12Z",
+      "end_time": null,
+      "duration": 536,
+      "tracking_status": "active"
+    }
+  ]
+}

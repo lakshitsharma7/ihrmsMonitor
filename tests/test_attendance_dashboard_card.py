@@ -78,7 +78,55 @@ class TestAttendanceDashboardCard(unittest.TestCase):
         dashboard.refresh(async_mode=False)
 
         self.assertEqual(dashboard.punch_time_label.text(), "Punch Time: 09:45 AM")
+        self.assertEqual(dashboard.attendance_punch_val_label.text(), "🟢 09:45 AM")
+        self.assertEqual(dashboard.attendance_status_badge.text(), "● Punched In")
+
+    def test_dashboard_attendance_card_ui_structure_and_states(self):
+        """Verify modern 2-column attendance card UI elements and status badge."""
+        mock_svc = MagicMock(spec=ActivityService)
+        mock_svc.get_today_total_seconds.return_value = 0
+        mock_svc.get_uploaded_records_count.return_value = 0
+        mock_svc.get_today_total_idle_seconds.return_value = 0
+        mock_svc.get_today_timeline.return_value = []
+
+        dashboard = DashboardPage(activity_service=mock_svc)
+        self.assertTrue(hasattr(dashboard, "attendance_header_title"))
+        self.assertTrue(hasattr(dashboard, "attendance_header_subtitle"))
+        self.assertTrue(hasattr(dashboard, "attendance_start_val_label"))
+        self.assertTrue(hasattr(dashboard, "attendance_punch_val_label"))
+        self.assertTrue(hasattr(dashboard, "attendance_status_badge"))
+
+        self.assertIn("Attendance", dashboard.attendance_header_title.text())
+        self.assertEqual(dashboard.attendance_header_subtitle.text(), "Today's Attendance")
+
+        # Initial unpunched state
+        dashboard._update_attendance_ui({
+            "tracking_started_at": "2026-09-30 14:53:00",
+            "punch_in": None,
+            "punch_out": None,
+        })
+        self.assertEqual(dashboard.attendance_start_val_label.text(), "🖥 02:53 PM")
+        self.assertEqual(dashboard.attendance_punch_val_label.text(), "Not Punched")
+        self.assertEqual(dashboard.attendance_status_badge.text(), "● Not Punched")
+
+        # Punched In state
+        dashboard._update_attendance_ui({
+            "tracking_started_at": "2026-09-30 14:53:00",
+            "punch_in": "2026-09-30 14:55:00",
+            "punch_out": None,
+        })
+        self.assertEqual(dashboard.attendance_punch_val_label.text(), "🟢 02:55 PM")
+        self.assertEqual(dashboard.attendance_status_badge.text(), "● Punched In")
+
+        # Punched Out state
+        dashboard._update_attendance_ui({
+            "tracking_started_at": "2026-09-30 14:53:00",
+            "punch_in": "2026-09-30 14:55:00",
+            "punch_out": "2026-09-30 18:30:00",
+        })
+        self.assertEqual(dashboard.attendance_status_badge.text(), "● Punched Out")
 
 
 if __name__ == "__main__":
     unittest.main()
+

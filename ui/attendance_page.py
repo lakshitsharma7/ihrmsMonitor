@@ -459,22 +459,12 @@ class AttendancePage(QWidget):
         )
         nav_toolbar.addWidget(self.year_combo)
 
-        nav_toolbar.addStretch(1)
-
-        self.next_month_btn = QPushButton("Next Month ▶")
-        self.next_month_btn.setObjectName("SecondaryButton")
-        self.next_month_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.next_month_btn.setMinimumHeight(32)
-        self.next_month_btn.clicked.connect(self._on_next_month)
-        nav_toolbar.addWidget(self.next_month_btn)
-
         # Populate year and month combos dynamically (only past and current)
         self._populate_year_combo()
         self._populate_month_combo()
 
         self.month_combo.currentIndexChanged.connect(self._on_month_year_changed)
         self.year_combo.currentIndexChanged.connect(self._on_year_changed)
-        self._update_nav_buttons_state()
 
         calendar_layout.addLayout(nav_toolbar)
 
@@ -564,23 +554,6 @@ class AttendancePage(QWidget):
         elif available_months:
             self.month_combo.setCurrentIndex(len(available_months) - 1)
         self.month_combo.blockSignals(False)
-        self._update_nav_buttons_state()
-
-    def _update_nav_buttons_state(self) -> None:
-        """Enable or disable navigation buttons based on current date bounds."""
-        if not hasattr(self, "next_month_btn"):
-            return
-        now = datetime.now()
-        try:
-            cur_y = int(self.year_combo.currentText())
-        except ValueError:
-            cur_y = now.year
-
-        sel_month_name = self.month_combo.currentText()
-        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else now.month
-
-        is_at_future_or_current = (cur_y > now.year) or (cur_y == now.year and sel_month_num >= now.month)
-        self.next_month_btn.setEnabled(not is_at_future_or_current)
 
     def _on_year_changed(self) -> None:
         """Handle year selection change and update available months."""
@@ -596,7 +569,6 @@ class AttendancePage(QWidget):
         m_text = self.month_combo.currentText()
         y_text = self.year_combo.currentText()
         self.month_year_display.setText(f"{m_text} {y_text}")
-        self._update_nav_buttons_state()
         self.refresh()
 
     def _on_prev_month(self) -> None:
@@ -620,41 +592,6 @@ class AttendancePage(QWidget):
             self._on_month_year_changed()
         else:
             new_m_name = MONTH_NAMES[sel_month_num - 2]
-            self.month_combo.setCurrentText(new_m_name)
-
-    def _on_next_month(self) -> None:
-        """Navigate to next month, preventing navigation into future months/years."""
-        now = datetime.now()
-        sel_month_name = self.month_combo.currentText()
-        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else 1
-        try:
-            cur_y = int(self.year_combo.currentText())
-        except ValueError:
-            cur_y = now.year
-
-        if (cur_y > now.year) or (cur_y == now.year and sel_month_num >= now.month):
-            self._update_nav_buttons_state()
-            return
-
-        if sel_month_num == 12:
-            new_y = cur_y + 1
-            if new_y > now.year:
-                self._update_nav_buttons_state()
-                return
-            new_m_name = MONTH_NAMES[0]
-            if self.year_combo.findText(str(new_y)) == -1:
-                self.year_combo.addItem(str(new_y))
-            self.year_combo.blockSignals(True)
-            self.year_combo.setCurrentText(str(new_y))
-            self.year_combo.blockSignals(False)
-            self._populate_month_combo(target_year=new_y, desired_month=new_m_name)
-            self._on_month_year_changed()
-        else:
-            new_m_num = sel_month_num + 1
-            if cur_y == now.year and new_m_num > now.month:
-                self._update_nav_buttons_state()
-                return
-            new_m_name = MONTH_NAMES[new_m_num - 1]
             self.month_combo.setCurrentText(new_m_name)
 
     def _on_today(self) -> None:

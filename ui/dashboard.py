@@ -156,15 +156,44 @@ class DashboardPage(QWidget):
         start_formatted = _format_time_ampm(start_val)
         if start_formatted:
             self.start_time_label.setText(f"Start Time: {start_formatted}")
+            if hasattr(self, "attendance_start_val_label"):
+                self.attendance_start_val_label.setText(f"🖥 {start_formatted}")
         else:
             self.start_time_label.setText("Start Time: --:-- --")
+            if hasattr(self, "attendance_start_val_label"):
+                self.attendance_start_val_label.setText("🖥 --:-- --")
 
         punch_val = attendance.get("punch_in")
         punch_formatted = _format_time_ampm(punch_val)
+        punch_out_val = attendance.get("punch_out")
+        punch_out_formatted = _format_time_ampm(punch_out_val)
+
         if punch_formatted:
             self.punch_time_label.setText(f"Punch Time: {punch_formatted}")
+            if hasattr(self, "attendance_punch_val_label"):
+                self.attendance_punch_val_label.setText(f"🟢 {punch_formatted}")
+                self.attendance_punch_val_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
+            if hasattr(self, "attendance_status_badge"):
+                if punch_out_formatted:
+                    self.attendance_status_badge.setText("● Punched Out")
+                    self.attendance_status_badge.setStyleSheet(
+                        "background-color: #eff6ff; color: #1d4ed8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #bfdbfe;"
+                    )
+                else:
+                    self.attendance_status_badge.setText("● Punched In")
+                    self.attendance_status_badge.setStyleSheet(
+                        "background-color: #ecfdf5; color: #047857; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #a7f3d0;"
+                    )
         else:
             self.punch_time_label.setText("Punch Time: Not Punched")
+            if hasattr(self, "attendance_punch_val_label"):
+                self.attendance_punch_val_label.setText("Not Punched")
+                self.attendance_punch_val_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748b;")
+            if hasattr(self, "attendance_status_badge"):
+                self.attendance_status_badge.setText("● Not Punched")
+                self.attendance_status_badge.setStyleSheet(
+                    "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #cbd5e1;"
+                )
 
     def _save_persisted_today_seconds(self, seconds: int, cal_date) -> None:
         """Persist accumulated active seconds using ActivityService and SessionStore."""
@@ -354,26 +383,115 @@ class DashboardPage(QWidget):
         top_row.addWidget(today_group, stretch=1)
 
         # --------------------------------------------------------------
-        # 2. Attendance (Start Time & Punch Time)
+        # 2. Attendance (Modern Header, 2-Column Info & Status Badge)
         # --------------------------------------------------------------
-        attendance_group = QGroupBox("Attendance")
+        attendance_group = QGroupBox()
+        attendance_group.setObjectName("AttendanceCard")
         attendance_layout = QVBoxLayout(attendance_group)
         attendance_layout.setContentsMargins(14, 12, 14, 12)
-        attendance_layout.setSpacing(8)
+        attendance_layout.setSpacing(6)
 
+        # 1. Header (Icon + Title and Subtitle)
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(1)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        title_row.setContentsMargins(0, 0, 0, 0)
+
+        self.attendance_header_title = QLabel("📅  Attendance")
+        self.attendance_header_title.setObjectName("AttendanceCardTitle")
+        self.attendance_header_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #1e293b;")
+        title_row.addWidget(self.attendance_header_title)
+        title_row.addStretch(1)
+
+        self.attendance_header_subtitle = QLabel("Today's Attendance")
+        self.attendance_header_subtitle.setObjectName("AttendanceCardSubtitle")
+        self.attendance_header_subtitle.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b;")
+
+        header_layout.addLayout(title_row)
+        header_layout.addWidget(self.attendance_header_subtitle)
+        attendance_layout.addLayout(header_layout)
+        attendance_layout.addSpacing(2)
+
+        # 2. Attendance Information (2-Column Layout)
+        info_columns = QHBoxLayout()
+        info_columns.setSpacing(12)
+        info_columns.setContentsMargins(0, 0, 0, 0)
+
+        # Left Column: SYSTEM START
+        left_col = QVBoxLayout()
+        left_col.setSpacing(2)
+        left_col.setContentsMargins(0, 0, 0, 0)
+        start_heading = QLabel("SYSTEM START")
+        start_heading.setObjectName("AttendanceFieldHeading")
+        start_heading.setStyleSheet("font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;")
+
+        self.attendance_start_val_label = QLabel("🖥 --:-- --")
+        self.attendance_start_val_label.setObjectName("AttendanceStartVal")
+        self.attendance_start_val_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
+        left_col.addWidget(start_heading)
+        left_col.addWidget(self.attendance_start_val_label)
+        info_columns.addLayout(left_col, 1)
+
+        # Right Column: PUNCH IN
+        right_col = QVBoxLayout()
+        right_col.setSpacing(2)
+        right_col.setContentsMargins(0, 0, 0, 0)
+        punch_heading = QLabel("PUNCH IN")
+        punch_heading.setObjectName("AttendanceFieldHeading")
+        punch_heading.setStyleSheet("font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;")
+
+        self.attendance_punch_val_label = QLabel("Not Punched")
+        self.attendance_punch_val_label.setObjectName("AttendancePunchVal")
+        self.attendance_punch_val_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748b;")
+        right_col.addWidget(punch_heading)
+        right_col.addWidget(self.attendance_punch_val_label)
+        info_columns.addLayout(right_col, 1)
+
+        attendance_layout.addLayout(info_columns)
+
+        # 3. Subtle Horizontal Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setStyleSheet("color: #e2e8f0; background-color: #e2e8f0; max-height: 1px; border: none; margin: 2px 0px;")
+        attendance_layout.addWidget(divider)
+
+        # 4. Status Section
+        status_layout = QVBoxLayout()
+        status_layout.setSpacing(3)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+
+        status_heading = QLabel("Attendance Status")
+        status_heading.setObjectName("AttendanceStatusHeading")
+        status_heading.setStyleSheet("font-size: 10px; font-weight: 600; color: #64748b;")
+        status_layout.addWidget(status_heading)
+
+        status_pill_row = QHBoxLayout()
+        status_pill_row.setContentsMargins(0, 0, 0, 0)
+
+        self.attendance_status_badge = QLabel("● Not Punched")
+        self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
+        self.attendance_status_badge.setStyleSheet(
+            "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #cbd5e1;"
+        )
+        status_pill_row.addWidget(self.attendance_status_badge)
+        status_pill_row.addStretch(1)
+        status_layout.addLayout(status_pill_row)
+
+        attendance_layout.addLayout(status_layout)
+
+        # Retain backward-compatible labels for test suite and existing references
         self.start_time_label = QLabel("Start Time: --:-- --")
         self.start_time_label.setObjectName("StatusLabel")
-
+        self.start_time_label.setVisible(False)
         self.punch_time_label = QLabel("Punch Time: Not Punched")
         self.punch_time_label.setObjectName("StatusLabel")
+        self.punch_time_label.setVisible(False)
 
-        attendance_layout.addStretch(1)
-        attendance_layout.addWidget(self.start_time_label)
-        attendance_layout.addSpacing(8)
-        attendance_layout.addWidget(self.punch_time_label)
-        attendance_layout.addStretch(1)
-
-        attendance_group.setMinimumHeight(135)
+        attendance_group.setMinimumHeight(140)
         attendance_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
