@@ -179,6 +179,7 @@ class NetworkReachabilityMonitor:
     def _check_macos_reachability(self) -> Optional[bool]:
         """Check reachability on macOS via SystemConfiguration if available."""
         try:
+            # pyrefly: ignore [missing-import]
             from SystemConfiguration import (
                 SCNetworkReachabilityCreateWithName,
                 SCNetworkReachabilityGetFlags,

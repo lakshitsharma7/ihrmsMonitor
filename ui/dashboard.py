@@ -177,12 +177,12 @@ class DashboardPage(QWidget):
                 if punch_out_formatted:
                     self.attendance_status_badge.setText("● Punched Out")
                     self.attendance_status_badge.setStyleSheet(
-                        "background-color: #eff6ff; color: #1d4ed8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #bfdbfe;"
+                        "background-color: #eff6ff; color: #1d4ed8; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #bfdbfe;"
                     )
                 else:
                     self.attendance_status_badge.setText("● Punched In")
                     self.attendance_status_badge.setStyleSheet(
-                        "background-color: #ecfdf5; color: #047857; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #a7f3d0;"
+                        "background-color: #ecfdf5; color: #047857; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #a7f3d0;"
                     )
         else:
             self.punch_time_label.setText("Punch Time: Not Punched")
@@ -192,7 +192,7 @@ class DashboardPage(QWidget):
             if hasattr(self, "attendance_status_badge"):
                 self.attendance_status_badge.setText("● Not Punched")
                 self.attendance_status_badge.setStyleSheet(
-                    "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #cbd5e1;"
+                    "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #cbd5e1;"
                 )
 
     def _save_persisted_today_seconds(self, seconds: int, cal_date) -> None:
@@ -383,17 +383,17 @@ class DashboardPage(QWidget):
         top_row.addWidget(today_group, stretch=1)
 
         # --------------------------------------------------------------
-        # 2. Attendance (Modern Header, 2-Column Info & Status Badge)
+        # 2. Attendance (Compact Modern Header, 2-Column Info & Status Row)
         # --------------------------------------------------------------
         attendance_group = QGroupBox()
         attendance_group.setObjectName("AttendanceCard")
         attendance_layout = QVBoxLayout(attendance_group)
-        attendance_layout.setContentsMargins(14, 12, 14, 12)
-        attendance_layout.setSpacing(6)
+        attendance_layout.setContentsMargins(12, 10, 12, 10)
+        attendance_layout.setSpacing(5)
 
         # 1. Header (Icon + Title and Subtitle)
         header_layout = QVBoxLayout()
-        header_layout.setSpacing(1)
+        header_layout.setSpacing(0)
         header_layout.setContentsMargins(0, 0, 0, 0)
 
         title_row = QHBoxLayout()
@@ -402,27 +402,27 @@ class DashboardPage(QWidget):
 
         self.attendance_header_title = QLabel("📅  Attendance")
         self.attendance_header_title.setObjectName("AttendanceCardTitle")
-        self.attendance_header_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #1e293b;")
+        self.attendance_header_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #1e293b;")
         title_row.addWidget(self.attendance_header_title)
         title_row.addStretch(1)
 
         self.attendance_header_subtitle = QLabel("Today's Attendance")
         self.attendance_header_subtitle.setObjectName("AttendanceCardSubtitle")
-        self.attendance_header_subtitle.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b;")
+        self.attendance_header_subtitle.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b; margin-top: 1px;")
 
         header_layout.addLayout(title_row)
         header_layout.addWidget(self.attendance_header_subtitle)
         attendance_layout.addLayout(header_layout)
         attendance_layout.addSpacing(2)
 
-        # 2. Attendance Information (2-Column Layout)
+        # 2. Attendance Information (Compact 2-Column Layout)
         info_columns = QHBoxLayout()
-        info_columns.setSpacing(12)
+        info_columns.setSpacing(10)
         info_columns.setContentsMargins(0, 0, 0, 0)
 
         # Left Column: SYSTEM START
         left_col = QVBoxLayout()
-        left_col.setSpacing(2)
+        left_col.setSpacing(1)
         left_col.setContentsMargins(0, 0, 0, 0)
         start_heading = QLabel("SYSTEM START")
         start_heading.setObjectName("AttendanceFieldHeading")
@@ -437,7 +437,7 @@ class DashboardPage(QWidget):
 
         # Right Column: PUNCH IN
         right_col = QVBoxLayout()
-        right_col.setSpacing(2)
+        right_col.setSpacing(1)
         right_col.setContentsMargins(0, 0, 0, 0)
         punch_heading = QLabel("PUNCH IN")
         punch_heading.setObjectName("AttendanceFieldHeading")
@@ -451,37 +451,27 @@ class DashboardPage(QWidget):
         info_columns.addLayout(right_col, 1)
 
         attendance_layout.addLayout(info_columns)
+        attendance_layout.addSpacing(2)
 
-        # 3. Subtle Horizontal Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setFrameShadow(QFrame.Shadow.Plain)
-        divider.setStyleSheet("color: #e2e8f0; background-color: #e2e8f0; max-height: 1px; border: none; margin: 2px 0px;")
-        attendance_layout.addWidget(divider)
-
-        # 4. Status Section
-        status_layout = QVBoxLayout()
-        status_layout.setSpacing(3)
-        status_layout.setContentsMargins(0, 0, 0, 0)
+        # 3. Status Row (Single Compact Row)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        status_row.setContentsMargins(0, 0, 0, 0)
 
         status_heading = QLabel("Attendance Status")
         status_heading.setObjectName("AttendanceStatusHeading")
-        status_heading.setStyleSheet("font-size: 10px; font-weight: 600; color: #64748b;")
-        status_layout.addWidget(status_heading)
-
-        status_pill_row = QHBoxLayout()
-        status_pill_row.setContentsMargins(0, 0, 0, 0)
+        status_heading.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b;")
+        status_row.addWidget(status_heading)
 
         self.attendance_status_badge = QLabel("● Not Punched")
         self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
         self.attendance_status_badge.setStyleSheet(
-            "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 8px; border: 1px solid #cbd5e1;"
+            "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #cbd5e1;"
         )
-        status_pill_row.addWidget(self.attendance_status_badge)
-        status_pill_row.addStretch(1)
-        status_layout.addLayout(status_pill_row)
+        status_row.addWidget(self.attendance_status_badge)
+        status_row.addStretch(1)
 
-        attendance_layout.addLayout(status_layout)
+        attendance_layout.addLayout(status_row)
 
         # Retain backward-compatible labels for test suite and existing references
         self.start_time_label = QLabel("Start Time: --:-- --")
@@ -491,7 +481,6 @@ class DashboardPage(QWidget):
         self.punch_time_label.setObjectName("StatusLabel")
         self.punch_time_label.setVisible(False)
 
-        attendance_group.setMinimumHeight(140)
         attendance_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,

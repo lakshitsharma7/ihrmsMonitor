@@ -1,5 +1,6 @@
 """Dashboard calculations and activity data service."""
 
+from PIL.Image import logger
 from __future__ import annotations
 
 from dataclasses import dataclass
