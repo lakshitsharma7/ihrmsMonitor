@@ -117,7 +117,7 @@ if ($null -eq $payload) {
 }
 
 # 2. Test Connection and Deliver to Backend
-$targetUrl = "$defaultBaseUrl/tracking/report_error"
+$targetUrl = "$defaultBaseUrl/workpulse/report_error"
 $delivered = $false
 
 $errorMsg = "$appName UNINSTALLED by user '$($payload.username)' (Employee ID: $($payload.employee_id), Company: $($payload.company_code)) on device '$($payload.hostname)' ($($payload.device_id)) running $($payload.os)."

@@ -1,4 +1,4 @@
-"""Platform-independent activity tracking state machine."""
+"""Platform-independent activity workpulse state machine."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _default_clock() -> datetime:
 class TrackerState:
     """Current tracker state consumed by the UI."""
 
-    is_tracking: bool
+    is_workpulse: bool
     is_idle: bool
     current_application: str | None
     current_window_title: str | None
@@ -56,11 +56,11 @@ class TrackerState:
 
 class ActivityTracker:
     """
-    Core activity-tracking state machine.
+    Core activity-workpulse state machine.
 
     Behaviour:
 
-    1. Create a session when tracking starts.
+    1. Create a session when workpulse starts.
     2. Keep the same session while the same application/process
        remains active.
     3. Create a new session when the application changes.
@@ -102,7 +102,7 @@ class ActivityTracker:
 
         self._sync_service = sync_service
 
-        self._is_tracking = False
+        self._is_workpulse = False
 
         self._is_idle = False
 
@@ -179,7 +179,7 @@ class ActivityTracker:
         self,
         enabled: bool,
     ) -> None:
-        """Enable or disable window-title tracking."""
+        """Enable or disable window-title workpulse."""
 
         self._track_window_titles = enabled
 
@@ -195,10 +195,10 @@ class ActivityTracker:
         self._capture_on_switch = capture_on_switch
 
     @property
-    def is_tracking(self) -> bool:
-        """Return whether tracking is currently active."""
+    def is_workpulse(self) -> bool:
+        """Return whether workpulse is currently active."""
 
-        return self._is_tracking
+        return self._is_workpulse
 
     @property
     def is_idle(self) -> bool:
@@ -212,13 +212,13 @@ class ActivityTracker:
 
     def start(self) -> None:
         """
-        Start activity tracking.
+        Start activity workpulse.
 
         Any stale open database session from a previous
         application run is closed first.
         """
 
-        if self._is_tracking:
+        if self._is_workpulse:
             return
 
         try:
@@ -228,7 +228,7 @@ class ActivityTracker:
 
             self._close_stale_database_session()
 
-            self._is_tracking = True
+            self._is_workpulse = True
 
             self._is_idle = False
 
@@ -241,12 +241,12 @@ class ActivityTracker:
 
             self._last_screenshot_time = self._clock()
 
-            # Record system and tracking start time
+            # Record system and workpulse start time
             try:
                 from services.attendance_service import AttendanceService
-                AttendanceService().record_tracking_start()
+                AttendanceService().record_workpulse_start()
             except Exception as att_err:
-                logger.debug("Could not record tracking start time in AttendanceService: %s", att_err)
+                logger.debug("Could not record workpulse start time in AttendanceService: %s", att_err)
 
             logger.info(
                 "Activity tracker started"
@@ -263,7 +263,7 @@ class ActivityTracker:
             threading.Thread(target=self._sync_activity, name="StartupActivitySync", daemon=True).start()
 
         except Exception as exc:
-            self._is_tracking = False
+            self._is_workpulse = False
             logger.exception("Failed to start activity tracker")
             try:
                 from services.error_report_service import ErrorReportService
@@ -281,9 +281,9 @@ class ActivityTracker:
     # ==========================================================
 
     def stop(self) -> None:
-        """Stop tracking and close the current session."""
+        """Stop workpulse and close the current session."""
 
-        if not self._is_tracking:
+        if not self._is_workpulse:
             return
 
         try:
@@ -315,7 +315,7 @@ class ActivityTracker:
 
             self._close_current_session()
 
-            self._is_tracking = False
+            self._is_workpulse = False
 
             self._is_idle = False
 
@@ -349,12 +349,12 @@ class ActivityTracker:
 
     def poll(self) -> TrackerState:
         """
-        Perform one tracking tick.
+        Perform one workpulse tick.
 
         The worker should normally call this once per second.
         """
 
-        if not self._is_tracking:
+        if not self._is_workpulse:
             return self._state()
 
         try:
@@ -561,7 +561,7 @@ class ActivityTracker:
 
         now = self._clock()
 
-        # Check calendar date rollover: if the day changed while tracking,
+        # Check calendar date rollover: if the day changed while workpulse,
         # close the session at local midnight and open a new session for today.
         if self._current is not None:
             now_local = now.astimezone()
@@ -1055,7 +1055,7 @@ class ActivityTracker:
             close_at = self._last_poll_time or resume_time
             self._close_current_session_at(close_at)
 
-        # Reset all stale idle tracking states
+        # Reset all stale idle workpulse states
         self._is_idle = False
         self._idle_start_time = None
         self._last_active_session_id = None
@@ -1078,8 +1078,8 @@ class ActivityTracker:
             except Exception as reset_err:
                 logger.debug("Provider reset_after_resume failed: %s", reset_err)
 
-        # Immediately check active application so tracking resumes
-        if self._is_tracking:
+        # Immediately check active application so workpulse resumes
+        if self._is_workpulse:
             self._poll_active_application()
 
     # ==========================================================
@@ -1445,7 +1445,7 @@ class ActivityTracker:
             app_name = self._current.application_name if self._current else None
 
         return TrackerState(
-            is_tracking=self._is_tracking,
+            is_workpulse=self._is_workpulse,
 
             is_idle=self._is_idle,
 

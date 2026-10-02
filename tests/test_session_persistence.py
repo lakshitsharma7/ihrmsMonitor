@@ -32,7 +32,7 @@ class TestSessionPersistence(unittest.TestCase):
             user_type="User",
             employee_id="101",
             device_info={"os": "Windows", "hostname": "WORKSTATION"},
-            tracking_permitted=True,
+            workpulse_permitted=True,
             base_url="https://hrms.indovision.in/api",
             company_id="42",
         )
@@ -50,7 +50,7 @@ class TestSessionPersistence(unittest.TestCase):
         self.assertEqual(loaded["employee_id"], "101")
         self.assertEqual(loaded["base_url"], "https://hrms.indovision.in/api")
         self.assertEqual(loaded["company_id"], "42")
-        self.assertTrue(loaded["tracking_permitted"])
+        self.assertTrue(loaded["workpulse_permitted"])
 
     def test_clear_session_removes_all_keys(self):
         """Explicit logout/clear removes all persisted keys."""
@@ -64,7 +64,7 @@ class TestSessionPersistence(unittest.TestCase):
             user_type="User",
             employee_id="101",
             device_info={},
-            tracking_permitted=True,
+            workpulse_permitted=True,
             base_url="https://hrms.indovision.in/api",
             company_id="42",
         )
@@ -120,7 +120,7 @@ class TestSessionPersistence(unittest.TestCase):
             user_type="User",
             employee_id="101",
             device_info={},
-            tracking_permitted=True,
+            workpulse_permitted=True,
             base_url="https://hrms.indovision.in/api",
             company_id="42",
         )
@@ -142,7 +142,7 @@ class TestSessionPersistence(unittest.TestCase):
             role=loaded["user_type"],
             full_name=loaded.get("full_name"),
             user_type=loaded["user_type"],
-            tracking_permitted=loaded.get("tracking_permitted", True),
+            workpulse_permitted=loaded.get("workpulse_permitted", True),
             indo_code=loaded["indo_code"],
             api_key=loaded["api_key"],
             employee_id=loaded.get("employee_id"),

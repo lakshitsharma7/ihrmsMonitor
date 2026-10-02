@@ -51,13 +51,13 @@ class SessionStore:
     _KEY_EMPLOYEE_ID = "session/employee_id"
     _KEY_DEVICE_INFO = "session/device_info"
     _KEY_TIMESTAMP = "session/timestamp"
-    _KEY_TRACKING_PERMITTED = "session/tracking_permitted"
+    _KEY_TRACKING_PERMITTED = "session/workpulse_permitted"
     _KEY_ALLOW_USER_DEVICE = "session/allow_user_device"
     _KEY_ALLOW_LOGOUT = "session/allow_logout"
     _KEY_ENCRYPTED_CHECKSUM = "session/checksum"
-    _KEY_TRACKING_MANUALLY_STOPPED = "session/tracking_manually_stopped"
-    _KEY_TRACKING_ACTIVE = "session/tracking_active"
-    _KEY_TRACKING_PAUSED = "session/tracking_paused"
+    _KEY_TRACKING_MANUALLY_STOPPED = "session/workpulse_manually_stopped"
+    _KEY_TRACKING_ACTIVE = "session/workpulse_active"
+    _KEY_TRACKING_PAUSED = "session/workpulse_paused"
 
     def __init__(self) -> None:
         """Initialize session store with QSettings."""
@@ -129,12 +129,12 @@ class SessionStore:
         user_type: str,
         employee_id: str | None,
         device_info: Dict[str, str],
-        tracking_permitted: bool,
+        workpulse_permitted: bool,
         base_url: str | None = None,
         company_id: str | None = None,
         allow_user_device: bool = True,
         allow_logout: bool = True,
-        tracking_manually_stopped: bool | None = None,
+        workpulse_manually_stopped: bool | None = None,
     ) -> bool:
         """Save session data securely.
         
@@ -148,12 +148,12 @@ class SessionStore:
             user_type: User type/role from login API
             employee_id: Employee ID
             device_info: Device information dict
-            tracking_permitted: Whether user can be tracked
+            workpulse_permitted: Whether user can be tracked
             base_url: Resolved API backend URL
             company_id: Resolved company ID
             allow_user_device: Whether User/Device control is enabled
             allow_logout: Whether Logout control is enabled
-            tracking_manually_stopped: Whether user manually stopped tracking
+            workpulse_manually_stopped: Whether user manually stopped workpulse
             
         Returns:
             True if session was saved successfully
@@ -170,13 +170,13 @@ class SessionStore:
             self.settings.setValue(self._KEY_FULL_NAME, full_name or "")
             self.settings.setValue(self._KEY_USER_TYPE, user_type)
             self.settings.setValue(self._KEY_EMPLOYEE_ID, employee_id or "")
-            self.settings.setValue(self._KEY_TRACKING_PERMITTED, tracking_permitted)
+            self.settings.setValue(self._KEY_TRACKING_PERMITTED, workpulse_permitted)
             self.settings.setValue(self._KEY_ALLOW_USER_DEVICE, allow_user_device)
             self.settings.setValue(self._KEY_ALLOW_LOGOUT, allow_logout)
 
-            if tracking_manually_stopped is not None:
-                self.set_tracking_manually_stopped(tracking_manually_stopped)
-            self.set_tracking_active(True)
+            if workpulse_manually_stopped is not None:
+                self.set_workpulse_manually_stopped(workpulse_manually_stopped)
+            self.set_workpulse_active(True)
 
             # Store device info as JSON
             device_info_json = json.dumps(device_info)
@@ -239,7 +239,7 @@ class SessionStore:
             - user_type
             - employee_id
             - device_info
-            - tracking_permitted
+            - workpulse_permitted
         """
         try:
             company_code = self.settings.value(self._KEY_COMPANY_CODE)
@@ -283,10 +283,10 @@ class SessionStore:
             full_name = self.settings.value(self._KEY_FULL_NAME) or None
             user_type = self.settings.value(self._KEY_USER_TYPE) or "User"
             employee_id = self.settings.value(self._KEY_EMPLOYEE_ID) or None
-            tracking_permitted_raw = self.settings.value(self._KEY_TRACKING_PERMITTED, True)
-            tracking_permitted = (
-                tracking_permitted_raw is True
-                or str(tracking_permitted_raw).lower() in ("true", "1")
+            workpulse_permitted_raw = self.settings.value(self._KEY_TRACKING_PERMITTED, True)
+            workpulse_permitted = (
+                workpulse_permitted_raw is True
+                or str(workpulse_permitted_raw).lower() in ("true", "1")
             )
             allow_user_device_raw = self.settings.value(self._KEY_ALLOW_USER_DEVICE, True)
             allow_user_device = (
@@ -317,11 +317,11 @@ class SessionStore:
                 "user_type": user_type,
                 "employee_id": employee_id,
                 "device_info": device_info,
-                "tracking_permitted": tracking_permitted,
+                "workpulse_permitted": workpulse_permitted,
                 "allow_user_device": allow_user_device,
                 "allow_logout": allow_logout,
-                "tracking_manually_stopped": self.is_tracking_manually_stopped(),
-                "tracking_active": self.is_tracking_active(),
+                "workpulse_manually_stopped": self.is_workpulse_manually_stopped(),
+                "workpulse_active": self.is_workpulse_active(),
             }
 
             logger.info(
@@ -362,31 +362,31 @@ class SessionStore:
         except Exception:
             logger.exception("Failed to clear session")
 
-    def is_tracking_manually_stopped(self) -> bool:
-        """Check if user manually stopped tracking."""
+    def is_workpulse_manually_stopped(self) -> bool:
+        """Check if user manually stopped workpulse."""
         raw = self.settings.value(self._KEY_TRACKING_MANUALLY_STOPPED, False)
         return raw is True or str(raw).lower() in ("true", "1")
 
-    def set_tracking_manually_stopped(self, stopped: bool) -> None:
-        """Record whether user manually stopped tracking."""
+    def set_workpulse_manually_stopped(self, stopped: bool) -> None:
+        """Record whether user manually stopped workpulse."""
         self.settings.setValue(self._KEY_TRACKING_MANUALLY_STOPPED, bool(stopped))
 
-    def is_tracking_active(self) -> bool:
-        """Check if tracking was actively running."""
+    def is_workpulse_active(self) -> bool:
+        """Check if workpulse was actively running."""
         raw = self.settings.value(self._KEY_TRACKING_ACTIVE, False)
         return raw is True or str(raw).lower() in ("true", "1")
 
-    def set_tracking_active(self, active: bool) -> None:
-        """Record whether tracking is actively running."""
+    def set_workpulse_active(self, active: bool) -> None:
+        """Record whether workpulse is actively running."""
         self.settings.setValue(self._KEY_TRACKING_ACTIVE, bool(active))
 
-    def is_tracking_paused(self) -> bool:
-        """Check if user paused tracking status."""
+    def is_workpulse_paused(self) -> bool:
+        """Check if user paused workpulse status."""
         raw = self.settings.value(self._KEY_TRACKING_PAUSED, False)
         return raw is True or str(raw).lower() in ("true", "1")
 
-    def set_tracking_paused(self, paused: bool) -> None:
-        """Record whether user paused tracking status."""
+    def set_workpulse_paused(self, paused: bool) -> None:
+        """Record whether user paused workpulse status."""
         self.settings.setValue(self._KEY_TRACKING_PAUSED, bool(paused))
 
     def validate_session(self) -> bool:

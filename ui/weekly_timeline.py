@@ -42,7 +42,7 @@ class WeeklyBarChart(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self._week_data: list[dict] = []
         self._hover_idx: int | None = None
-        self.setMouseTracking(True)
+        self.setMouseWorkPulse(True)
 
     def set_data(self, week_data: list[dict]) -> None:
         """Update chart data and trigger repaint."""
@@ -231,7 +231,7 @@ class WeeklyBarChart(QWidget):
 
 
 class WeeklyTimelinePage(QWidget):
-    """Full-page view dedicated to weekly tracking timeline and day-by-day analysis."""
+    """Full-page view dedicated to weekly workpulse timeline and day-by-day analysis."""
 
     back_requested = Signal()
     weekly_data_refreshed = Signal(list)

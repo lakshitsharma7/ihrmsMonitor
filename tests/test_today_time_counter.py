@@ -1,11 +1,11 @@
 """Tests verifying the Today's Time dashboard counter.
 
 Requirements:
-- Continuously accumulate during active tracking.
+- Continuously accumulate during active workpulse.
 - Represent complete total tracked time for the current calendar day.
 - Do NOT reset on dashboard refresh.
 - Do NOT reset on API sync.
-- Do NOT reset on tracking stop/start.
+- Do NOT reset on workpulse stop/start.
 - Do NOT reset on app restart.
 - Do NOT reset on idle -> active transition.
 - Do NOT reset on session changes (application switch).
@@ -45,13 +45,13 @@ class TestTodayTimeCounter(unittest.TestCase):
         self.assertGreaterEqual(dashboard._cached_today_total_seconds, 100)
         self.assertEqual(dashboard.today_total_label.text(), ActivityService.format_duration(dashboard._cached_today_total_seconds))
 
-    def test_02_continuous_live_accumulation_during_active_tracking(self):
+    def test_02_continuous_live_accumulation_during_active_workpulse(self):
         """Counter continuously increments by 1s on each active non-idle tick."""
         dashboard = DashboardPage(self.mock_service)
         initial_seconds = dashboard._cached_today_total_seconds
 
         state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Chrome.exe",
             current_window_title="Tab",
@@ -70,7 +70,7 @@ class TestTodayTimeCounter(unittest.TestCase):
 
         # Active for 3 seconds
         active_state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Chrome.exe",
             current_window_title="Tab",
@@ -82,7 +82,7 @@ class TestTodayTimeCounter(unittest.TestCase):
 
         # User goes idle for 4 ticks
         idle_state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=True,
             current_application=None,
             current_window_title=None,
@@ -105,7 +105,7 @@ class TestTodayTimeCounter(unittest.TestCase):
         initial_seconds = dashboard._cached_today_total_seconds
 
         state_app1 = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="AppOne.exe",
             current_window_title="Window 1",
@@ -116,7 +116,7 @@ class TestTodayTimeCounter(unittest.TestCase):
 
         # Switch to AppTwo
         state_app2 = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="AppTwo.exe",
             current_window_title="Window 2",
@@ -157,20 +157,20 @@ class TestTodayTimeCounter(unittest.TestCase):
         self.assertEqual(dashboard._cached_today_total_seconds, 520)
         self.assertEqual(dashboard.today_total_label.text(), ActivityService.format_duration(520))
 
-    def test_06_no_reset_on_tracking_stop_and_start(self):
-        """Stopping tracking preserves the displayed counter; restarting continues accumulation."""
+    def test_06_no_reset_on_workpulse_stop_and_start(self):
+        """Stopping workpulse preserves the displayed counter; restarting continues accumulation."""
         dashboard = DashboardPage(self.mock_service)
         dashboard._cached_today_total_seconds = 300
         dashboard.today_total_label.setText(ActivityService.format_duration(300))
 
-        # User stops tracking
-        dashboard.set_tracking_active(False)
+        # User stops workpulse
+        dashboard.set_workpulse_active(False)
         self.assertEqual(dashboard._cached_today_total_seconds, 300)
         self.assertEqual(dashboard.today_total_label.text(), ActivityService.format_duration(300))
 
         # Inactive state ticks do not increment
         inactive_state = TrackerState(
-            is_tracking=False,
+            is_workpulse=False,
             is_idle=False,
             current_application=None,
             current_window_title=None,
@@ -179,10 +179,10 @@ class TestTodayTimeCounter(unittest.TestCase):
         dashboard.update_tracker_state(inactive_state)
         self.assertEqual(dashboard._cached_today_total_seconds, 300)
 
-        # User starts tracking again
-        dashboard.set_tracking_active(True)
+        # User starts workpulse again
+        dashboard.set_workpulse_active(True)
         active_state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Notepad.exe",
             current_window_title="Notes",
@@ -216,9 +216,9 @@ class TestTodayTimeCounter(unittest.TestCase):
         dashboard._cached_today_total_seconds = 600
         dashboard._cached_calendar_date = date(2026, 9, 8)
 
-        # While date remains 2026-09-08, tracking continues
+        # While date remains 2026-09-08, workpulse continues
         state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Work.exe",
             current_window_title="Doc",
@@ -247,7 +247,7 @@ class TestTodayTimeCounter(unittest.TestCase):
         today_date = dashboard._cached_calendar_date
 
         state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Editor.exe",
             current_window_title="Code",
@@ -258,39 +258,39 @@ class TestTodayTimeCounter(unittest.TestCase):
         dashboard.update_tracker_state(state)
         self.mock_service.save_daily_active_seconds.assert_called_with(today_date, start_sec + 1)
 
-    def test_10_online_status_and_toggle_tracking_button(self):
-        """Single button toggles Paused/Resume status without stopping tracking, and network status is independent."""
+    def test_10_online_status_and_toggle_workpulse_button(self):
+        """Single button toggles Paused/Resume status without stopping workpulse, and network status is independent."""
         dashboard = DashboardPage(self.mock_service)
 
         # Initial active state -> button shows "Paused", network status shows "● Online"
-        dashboard.set_tracking_active(True)
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        dashboard.set_workpulse_active(True)
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertFalse(dashboard.is_paused())
 
         # Clicking "Paused" while active toggles to paused state, button changes to "Resume"
         pause_mock = MagicMock()
         dashboard.pause_state_changed.connect(pause_mock)
-        dashboard.tracking_toggle_button.click()
+        dashboard.workpulse_toggle_button.click()
         pause_mock.assert_called_once_with(True)
         self.assertTrue(dashboard.is_paused())
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Resume")
-        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Resume")
+        self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Paused")
 
         # Clicking "Resume" while paused toggles back to active state, button changes to "Paused"
-        dashboard.tracking_toggle_button.click()
+        dashboard.workpulse_toggle_button.click()
         self.assertFalse(dashboard.is_paused())
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
-        self.assertEqual(dashboard.tracking_status_label.text(), "Online: Active")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Active")
 
-        # Network status is completely independent from tracking state
+        # Network status is completely independent from workpulse state
         dashboard.set_network_status(False)
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
 
         dashboard.set_network_status(True)
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
 
     def test_11_cross_midnight_stale_fetch_is_discarded(self):
         """A background refresh result tagged with yesterday's date must NOT update today's counter.

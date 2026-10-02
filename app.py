@@ -252,7 +252,7 @@ def main() -> int:
                 role=saved_session.get("user_type", "User"),
                 full_name=saved_session.get("full_name"),
                 user_type=saved_session.get("user_type", "User"),
-                tracking_permitted=saved_session.get("tracking_permitted", True),
+                workpulse_permitted=saved_session.get("workpulse_permitted", True),
                 allow_user_device=saved_session.get("allow_user_device", True),
                 allow_logout=saved_session.get("allow_logout", True),
                 indo_code=saved_session["indo_code"],

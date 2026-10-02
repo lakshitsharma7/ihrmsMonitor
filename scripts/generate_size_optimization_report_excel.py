@@ -242,7 +242,7 @@ def build_size_report_workbook():
 
     test_groups = [
         ("Login & Authentication", "tests/test_login_enhancements.py, test_device_verification.py", 28, 28, 0, "PASS", "Company code, login form, credential validation passed"),
-        ("Activity & Idle Tracking", "tests/test_application_tracking_and_timeline.py, test_idle_*.py", 42, 42, 0, "PASS", "Active window, keyboard/mouse idle detection passed"),
+        ("Activity & Idle WorkPulse", "tests/test_application_workpulse_and_timeline.py, test_idle_*.py", 42, 42, 0, "PASS", "Active window, keyboard/mouse idle detection passed"),
         ("Sync & Offline Resiliency", "tests/test_sync_and_idle_configuration.py, test_laptop_health_sync_e2e.py", 36, 36, 0, "PASS", "SQLite buffering, batch upload, reconnect passed"),
         ("Attendance & Punch Flow", "tests/test_attendance_and_system_start.py, test_attendance_*.py", 24, 24, 0, "PASS", "Punch-in/out, daily attendance cards passed"),
         ("Leave Balance & KRA Tasks", "tests/test_leave_balance_api_and_ui.py, test_task_service_and_ui.py", 32, 32, 0, "PASS", "Dynamic leave cards, timesheet submit passed"),

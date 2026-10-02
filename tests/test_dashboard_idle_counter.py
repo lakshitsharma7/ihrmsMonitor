@@ -139,7 +139,7 @@ class TestDashboardIdleCounter(unittest.TestCase):
 
         # Active state
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="TestApp.exe",
             current_window_title="Test Window",
@@ -150,7 +150,7 @@ class TestDashboardIdleCounter(unittest.TestCase):
         # Second by second idle updates
         for s in (1, 2, 3, 4, 5):
             page.update_tracker_state(TrackerState(
-                is_tracking=True,
+                is_workpulse=True,
                 is_idle=False,
                 current_application="TestApp.exe",
                 current_window_title="Test Window",
@@ -160,7 +160,7 @@ class TestDashboardIdleCounter(unittest.TestCase):
 
         # 65 seconds idle (1m 5s)
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=True,
             current_application="TestApp.exe",
             current_window_title="Test Window",
@@ -170,7 +170,7 @@ class TestDashboardIdleCounter(unittest.TestCase):
 
         # Returned to active - preserves 65s on label
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="TestApp.exe",
             current_window_title="Test Window",

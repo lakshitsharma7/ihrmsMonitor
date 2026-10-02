@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QFont
@@ -27,8 +28,7 @@ logger = get_logger(__name__)
 
 # Selling points shown on the dark hero panel: (icon name, text).
 HERO_BULLETS = (
-    ("monitor", "Automatic app & window tracking"),
-    ("chart", "Live productivity and idle insights"),
+    ("chart", "Manage attendance, KRA and productivity"),
     ("shield", "Secure, role-based access"),
 )
 
@@ -289,8 +289,8 @@ class LoginWindow(QMainWindow):
         self._set_default_brand_logo()
         panel_layout.addWidget(self.brand_logo_label)
 
-        panel_layout.addSpacing(12)
-        caption = QLabel("Sign in to continue")
+        panel_layout.addSpacing(20)
+        caption = QLabel("Enter Company code & Sign in to continue")
         caption.setObjectName("LoginCaption")
         panel_layout.addWidget(caption)
 
@@ -299,7 +299,7 @@ class LoginWindow(QMainWindow):
         # ── Company Code ──────────────────────────────────────────
         self.company_code_input = QLineEdit()
         self.company_code_input.setObjectName("CompanyCodeInput")
-        self.company_code_input.setPlaceholderText("Company Code")
+        self.company_code_input.setPlaceholderText("Enter Company Code")
         self.company_code_input.setMinimumHeight(42)
         # Prevent autofill
         self.company_code_input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
@@ -1066,7 +1066,7 @@ class LoginWindow(QMainWindow):
                 )
                 user_type = res_json.get("user_type") or "User"
                 role_lower = str(user_type).strip().lower()
-                tracking_permitted = role_lower not in ("admin", "administrator", "superadmin")
+                workpulse_permitted = role_lower not in ("admin", "administrator", "superadmin")
 
 
                 # Save mapping of Employee ID <-> Username and company code to local settings
@@ -1143,17 +1143,17 @@ class LoginWindow(QMainWindow):
                         allow_user_device = perm
                         break
 
-                # Dynamic tracking permission from backend candidates
+                # Dynamic workpulse permission from backend candidates
                 for c in candidates:
                     perm = _extract_permission(c, [
-                        "tracking_enabled",
-                        "tracking_permitted",
-                        "allow_tracking",
-                        "is_tracking_enabled",
-                        "enable_tracking",
+                        "workpulse_enabled",
+                        "workpulse_permitted",
+                        "allow_workpulse",
+                        "is_workpulse_enabled",
+                        "enable_workpulse",
                     ])
                     if perm is not None:
-                        tracking_permitted = perm
+                        workpulse_permitted = perm
                         break
 
                 employee_id = emp_code
@@ -1162,7 +1162,7 @@ class LoginWindow(QMainWindow):
                     role=user_type,
                     full_name=full_name,
                     user_type=user_type,
-                    tracking_permitted=tracking_permitted,
+                    workpulse_permitted=workpulse_permitted,
                     allow_user_device=allow_user_device,
                     allow_logout=allow_logout,
                     indo_code=indo_code,
@@ -1191,17 +1191,17 @@ class LoginWindow(QMainWindow):
                         user_type=user_type,
                         employee_id=str(employee_id) if employee_id is not None else None,
                         device_info=device_info,
-                        tracking_permitted=tracking_permitted,
+                        workpulse_permitted=workpulse_permitted,
                         base_url=api_config.base_url,
                         company_id=api_config.company_id,
                         allow_user_device=allow_user_device,
                         allow_logout=allow_logout,
-                        tracking_manually_stopped=False,
+                        workpulse_manually_stopped=False,
                     )
                 except Exception as save_err:
                     logger.warning("Could not persist session: %s", save_err)
 
-                # Query tracking/get_settings immediately so server-side DB permissions are adopted
+                # Query workpulse/get_settings immediately so server-side DB permissions are adopted
                 try:
                     from services.sync_service import SyncService
                     SyncService().fetch_settings()

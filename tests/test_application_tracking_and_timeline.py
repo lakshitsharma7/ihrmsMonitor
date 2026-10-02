@@ -33,7 +33,7 @@ from ui.dashboard import DashboardPage
 from ui.weekly_timeline import WeeklyTimelinePage
 
 
-class TestApplicationTrackingAndTimeline(unittest.TestCase):
+class TestApplicationWorkPulseAndTimeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)

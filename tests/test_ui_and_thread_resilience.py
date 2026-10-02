@@ -131,7 +131,7 @@ class TestUIAndThreadResilience(unittest.TestCase):
 
         # Simulate 1-second tick state update
         state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="VS Code",
             current_window_title="main.py",

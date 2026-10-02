@@ -1,4 +1,4 @@
-"""Unit tests for system health metrics in application activity tracking."""
+"""Unit tests for system health metrics in application activity workpulse."""
 
 import unittest
 from datetime import datetime, timezone, timedelta

@@ -75,9 +75,9 @@ class DashboardPage(QWidget):
     weekly_timeline_requested = attendance_requested
     data_refreshed = Signal(dict)
     error_reported = Signal(str, str)
-    tracking_start_requested = Signal()
-    tracking_stop_requested = Signal()
-    tracking_toggle_requested = Signal()
+    workpulse_start_requested = Signal()
+    workpulse_stop_requested = Signal()
+    workpulse_toggle_requested = Signal()
     pause_state_changed = Signal(bool)
 
     def __init__(
@@ -93,13 +93,13 @@ class DashboardPage(QWidget):
         self._cached_uploaded_count = 0
         self._cached_calendar_date = datetime.now().astimezone().date()
 
-        self._is_tracking = False
+        self._is_workpulse = False
         self._is_paused = False
         try:
             from services.secure_session import SessionStore
             store = SessionStore()
-            self._is_tracking = store.is_tracking_active() and not store.is_tracking_manually_stopped()
-            self._is_paused = store.is_tracking_paused()
+            self._is_workpulse = store.is_workpulse_active() and not store.is_workpulse_manually_stopped()
+            self._is_paused = store.is_workpulse_paused()
         except Exception:
             pass
 
@@ -125,7 +125,7 @@ class DashboardPage(QWidget):
 
         self._build_ui()
 
-        # Autonomous timer to detect midnight/calendar date rollover even if tracking is stopped
+        # Autonomous timer to detect midnight/calendar date rollover even if workpulse is stopped
         self._date_timer = QTimer(self)
         self._date_timer.setInterval(10000)
         self._date_timer.timeout.connect(self._check_date_rollover)
@@ -152,7 +152,7 @@ class DashboardPage(QWidget):
         if not isinstance(attendance, dict):
             return
 
-        start_val = attendance.get("tracking_started_at") or attendance.get("system_started_at")
+        start_val = attendance.get("workpulse_started_at") or attendance.get("system_started_at")
         start_formatted = _format_time_ampm(start_val)
         if start_formatted:
             self.start_time_label.setText(f"Start Time: {start_formatted}")
@@ -263,7 +263,7 @@ class DashboardPage(QWidget):
                 pass
 
     def is_paused(self) -> bool:
-        """Return True if tracking status is currently Paused."""
+        """Return True if workpulse status is currently Paused."""
         return self._is_paused
 
     def set_paused(self, paused: bool) -> None:
@@ -271,26 +271,26 @@ class DashboardPage(QWidget):
         self._is_paused = bool(paused)
         try:
             from services.secure_session import SessionStore
-            SessionStore().set_tracking_paused(self._is_paused)
+            SessionStore().set_workpulse_paused(self._is_paused)
         except Exception:
             pass
-        self._apply_toggle_button_style(self._is_tracking)
+        self._apply_toggle_button_style(self._is_workpulse)
         if self._is_paused:
-            self.tracking_status_label.setText("Online: Paused")
-        elif self._is_tracking:
-            self.tracking_status_label.setText("Online: Active")
+            self.workpulse_status_label.setText("Online: Paused")
+        elif self._is_workpulse:
+            self.workpulse_status_label.setText("Online: Active")
         else:
-            self.tracking_status_label.setText("Online: Inactive")
+            self.workpulse_status_label.setText("Online: Inactive")
         self.pause_state_changed.emit(self._is_paused)
 
-    def _on_tracking_toggle_clicked(self) -> None:
+    def _on_workpulse_toggle_clicked(self) -> None:
         """Handle user clicking Paused / Resume button on Dashboard.
 
-        Clicking Paused does NOT stop tracking, log collection, screenshots,
-        or backend sync. It only changes the displayed tracking status to Paused
+        Clicking Paused does NOT stop workpulse, log collection, screenshots,
+        or backend sync. It only changes the displayed workpulse status to Paused
         and toggles the button text to Resume.
         """
-        self.tracking_toggle_requested.emit()
+        self.workpulse_toggle_requested.emit()
         self.set_paused(not self._is_paused)
 
     def _build_ui(self) -> None:
@@ -318,7 +318,7 @@ class DashboardPage(QWidget):
         page_layout.addWidget(scroll)
 
         # ==============================================================
-        # 1. Top Row: [ Today's Time ] [ Attendance ] [ Tracking & Sync Status ]
+        # 1. Top Row: [ Today's Time ] [ Attendance ] [ WorkPulse & Sync Status ]
         # ==============================================================
         top_row = QHBoxLayout()
         top_row.setSpacing(12)
@@ -341,7 +341,7 @@ class DashboardPage(QWidget):
         self.active_time_val_label.setObjectName("TimeValueLabel")
         self.active_time_val_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
 
-        # Retain today_idle_val_label internally for background tracking and test compatibility
+        # Retain today_idle_val_label internally for background workpulse and test compatibility
         self.today_idle_val_label = QLabel(
             format_hh_mm_ss(self._cached_today_idle)
         )
@@ -490,7 +490,7 @@ class DashboardPage(QWidget):
         # --------------------------------------------------------------
         # 3. Online & Sync Status
         # Contains: Online Status, Idle Time, Version, Records Uploaded,
-        # Status, Last Successful Sync, and Start/Stop Tracking button
+        # Status, Last Successful Sync, and Start/Stop WorkPulse button
         # --------------------------------------------------------------
         status_group = QGroupBox("Online && Sync Status")
         status_grid = QGridLayout(status_group)
@@ -498,7 +498,7 @@ class DashboardPage(QWidget):
         status_grid.setHorizontalSpacing(18)
         status_grid.setVerticalSpacing(8)
 
-        is_initially_active = getattr(self, "_is_tracking", False)
+        is_initially_active = getattr(self, "_is_workpulse", False)
 
         # Network status indicator (Row 0, Col 0): ● Online or ● Offline
         initial_online = getattr(self, "_is_network_online", True)
@@ -509,10 +509,10 @@ class DashboardPage(QWidget):
         else:
             self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
 
-        # Retain tracking_status_label for error reporting and backward compatibility
-        self.tracking_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")
-        self.tracking_status_label.setObjectName("TrackingStatusLabel")
-        self.tracking_status_label.setVisible(False)
+        # Retain workpulse_status_label for error reporting and backward compatibility
+        self.workpulse_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")
+        self.workpulse_status_label.setObjectName("WorkPulseStatusLabel")
+        self.workpulse_status_label.setVisible(False)
 
         self.idle_time_label = QLabel("Idle Time: 0 seconds")
         self.idle_time_label.setObjectName("StatusLabel")
@@ -543,25 +543,25 @@ class DashboardPage(QWidget):
         self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}")
         self.last_sync_label.setObjectName("StatusLabel")
 
-        self.current_app_label = QLabel("Not tracking")
+        self.current_app_label = QLabel("Not workpulse")
         self.current_app_label.setVisible(False)
         self.current_window_label = QLabel("")
         self.current_window_label.setVisible(False)
 
-        # Single tracking button on Dashboard: [ Paused ] when running, [ Resume ] when paused
+        # Single workpulse button on Dashboard: [ Paused ] when running, [ Resume ] when paused
         initial_btn_text = "Paused" if is_initially_active else "Resume"
-        self.tracking_toggle_button = QPushButton(initial_btn_text)
-        self.tracking_toggle_button.setObjectName("TrackingToggleButton")
-        self.tracking_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.tracking_toggle_button.clicked.connect(self._on_tracking_toggle_clicked)
-        self.start_tracking_button = self.tracking_toggle_button
-        self.stop_tracking_button = self.tracking_toggle_button
+        self.workpulse_toggle_button = QPushButton(initial_btn_text)
+        self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
+        self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.workpulse_toggle_button.clicked.connect(self._on_workpulse_toggle_clicked)
+        self.start_workpulse_button = self.workpulse_toggle_button
+        self.stop_workpulse_button = self.workpulse_toggle_button
         self._apply_toggle_button_style(is_initially_active)
 
         # Layout: Row 0 – Network Status | Idle Time
         #         Row 1 – Version        | Records Uploaded
         #         Row 2 – Last Sync      (full width)
-        #         Row 3 – Single Tracking Button (full width)
+        #         Row 3 – Single WorkPulse Button (full width)
         status_grid.addWidget(self.network_status_label, 0, 0)
         status_grid.addWidget(self.idle_time_label, 0, 1)
 
@@ -570,7 +570,7 @@ class DashboardPage(QWidget):
 
         status_grid.addWidget(self.last_sync_label, 2, 0, 1, 2)
 
-        status_grid.addWidget(self.tracking_toggle_button, 3, 0, 1, 2)
+        status_grid.addWidget(self.workpulse_toggle_button, 3, 0, 1, 2)
 
         status_group.setMinimumHeight(140)
         status_group.setSizePolicy(
@@ -602,37 +602,37 @@ class DashboardPage(QWidget):
         self.timeline_table.setVisible(False)
 
     def _apply_toggle_button_style(self, is_active: bool) -> None:
-        """Apply dynamic color and styling to single Paused/Resume tracking button."""
+        """Apply dynamic color and styling to single Paused/Resume workpulse button."""
         if self._is_paused:
-            self.tracking_toggle_button.setText("Resume")
-            self.tracking_toggle_button.setStyleSheet(
-                "QPushButton#TrackingToggleButton {"
+            self.workpulse_toggle_button.setText("Resume")
+            self.workpulse_toggle_button.setStyleSheet(
+                "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
                 "    background-color: #0284c7; color: #ffffff; border: none;"
                 "}"
-                "QPushButton#TrackingToggleButton:hover {"
+                "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #0369a1;"
                 "}"
             )
         elif is_active:
-            self.tracking_toggle_button.setText("Paused")
-            self.tracking_toggle_button.setStyleSheet(
-                "QPushButton#TrackingToggleButton {"
+            self.workpulse_toggle_button.setText("Paused")
+            self.workpulse_toggle_button.setStyleSheet(
+                "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
                 "    background-color: #ef4444; color: #ffffff; border: none;"
                 "}"
-                "QPushButton#TrackingToggleButton:hover {"
+                "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #dc2626;"
                 "}"
             )
         else:
-            self.tracking_toggle_button.setText("Resume")
-            self.tracking_toggle_button.setStyleSheet(
-                "QPushButton#TrackingToggleButton {"
+            self.workpulse_toggle_button.setText("Resume")
+            self.workpulse_toggle_button.setStyleSheet(
+                "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
                 "    background-color: #0284c7; color: #ffffff; border: none;"
                 "}"
-                "QPushButton#TrackingToggleButton:hover {"
+                "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #0369a1;"
                 "}"
             )
@@ -698,9 +698,9 @@ class DashboardPage(QWidget):
     ) -> None:
         """Update the Current Application section, Online status, and Active Time."""
 
-        if not state.is_tracking:
+        if not state.is_workpulse:
             self.current_app_label.setText(
-                "Not tracking"
+                "Not workpulse"
             )
 
             self.current_window_label.setText(
@@ -735,13 +735,13 @@ class DashboardPage(QWidget):
             )
 
         # Update Online status and dynamic toggle button
-        self._is_tracking = bool(state.is_tracking)
+        self._is_workpulse = bool(state.is_workpulse)
         if self._is_paused:
-            self.tracking_status_label.setText("Online: Paused")
+            self.workpulse_status_label.setText("Online: Paused")
         else:
-            tracking_text = "Active" if state.is_tracking else "Inactive"
-            self.tracking_status_label.setText(f"Online: {tracking_text}")
-        self._apply_toggle_button_style(state.is_tracking)
+            workpulse_text = "Active" if state.is_workpulse else "Inactive"
+            self.workpulse_status_label.setText(f"Online: {workpulse_text}")
+        self._apply_toggle_button_style(state.is_workpulse)
 
         # Update idle time label in real time second by second
         idle_s = max(0, int(getattr(state, "idle_seconds", 0) or 0))
@@ -769,35 +769,35 @@ class DashboardPage(QWidget):
         self._check_date_rollover()
 
         # Continuous accumulation throughout the day:
-        # If tracking is active and user is not idle, accumulate active tracked time
-        if state.is_tracking and not state.is_idle:
+        # If workpulse is active and user is not idle, accumulate active tracked time
+        if state.is_workpulse and not state.is_idle:
             self._cached_today_total_seconds += 1
             self.active_time_val_label.setText(format_hh_mm_ss(self._cached_today_total_seconds))
             self.today_total_label.setText(ActivityService.format_duration(self._cached_today_total_seconds))
-            # On every active tracking interval, update the saved value
+            # On every active workpulse interval, update the saved value
             self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
 
     def set_records_uploaded(self, count: int) -> None:
         """Update the dynamic Records Uploaded count on the dashboard."""
         self.records_uploaded_label.setText(f"Records Uploaded: {count}")
 
-    def set_tracking_active(self, active: bool) -> None:
-        """Explicitly update the online tracking status label, button, and app indicators."""
-        self._is_tracking = bool(active)
+    def set_workpulse_active(self, active: bool) -> None:
+        """Explicitly update the online workpulse status label, button, and app indicators."""
+        self._is_workpulse = bool(active)
         if not active:
             self._is_paused = False
             try:
                 from services.secure_session import SessionStore
-                SessionStore().set_tracking_paused(False)
+                SessionStore().set_workpulse_paused(False)
             except Exception:
                 pass
         if self._is_paused:
-            self.tracking_status_label.setText("Online: Paused")
+            self.workpulse_status_label.setText("Online: Paused")
         else:
-            self.tracking_status_label.setText(f"Online: {'Active' if active else 'Inactive'}")
+            self.workpulse_status_label.setText(f"Online: {'Active' if active else 'Inactive'}")
         self._apply_toggle_button_style(active)
         if not active:
-            self.current_app_label.setText("Not tracking")
+            self.current_app_label.setText("Not workpulse")
             self.current_window_label.setText("")
             # Save accumulated active time immediately upon stopping
             self._save_persisted_today_seconds(self._cached_today_total_seconds, self._cached_calendar_date)
@@ -1096,7 +1096,7 @@ class DashboardPage(QWidget):
                     self.set_update_status(f"Update Error ({clean_msg})" if clean_msg else "Update Error")
             elif any(k in err_upper for k in ("TRACK", "IDLE", "PROVIDER", "PROCESS", "WINDOW")):
                 clean_msg = self._clean_status_text(error_message)
-                self.tracking_status_label.setText(f"Tracking: Error ({clean_msg})")
-                self.tracking_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
+                self.workpulse_status_label.setText(f"WorkPulse: Error ({clean_msg})")
+                self.workpulse_status_label.setStyleSheet("color: #ef4444; font-weight: 500;")
         except Exception:
             pass

@@ -13,7 +13,7 @@ class AppSettings:
 
     idle_threshold: int
     start_with_system: bool
-    tracking_enabled: bool
+    workpulse_enabled: bool
     track_window_titles: bool
     screenshot_interval_type: str
     screenshot_custom_interval: int
@@ -33,7 +33,7 @@ class SettingsService:
             return AppSettings(
                 idle_threshold=record.idle_threshold,
                 start_with_system=record.start_with_system,
-                tracking_enabled=record.tracking_enabled,
+                workpulse_enabled=record.workpulse_enabled,
                 track_window_titles=record.track_window_titles,
                 screenshot_interval_type=record.screenshot_interval_type,
                 screenshot_custom_interval=record.screenshot_custom_interval,
@@ -53,7 +53,7 @@ class SettingsService:
             return AppSettings(
                 idle_threshold=record.idle_threshold,
                 start_with_system=record.start_with_system,
-                tracking_enabled=record.tracking_enabled,
+                workpulse_enabled=record.workpulse_enabled,
                 track_window_titles=record.track_window_titles,
                 screenshot_interval_type=record.screenshot_interval_type,
                 screenshot_custom_interval=record.screenshot_custom_interval,

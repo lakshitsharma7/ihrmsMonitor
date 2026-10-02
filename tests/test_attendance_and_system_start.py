@@ -1,4 +1,4 @@
-"""Unit tests for daily system start tracking and dynamic punch integration."""
+"""Unit tests for daily system start workpulse and dynamic punch integration."""
 
 import os
 import unittest
@@ -20,27 +20,27 @@ class TestAttendanceAndSystemStart(unittest.TestCase):
     def tearDown(self):
         self.service.clear_state()
 
-    def test_01_system_and_tracking_start_captured_automatically(self):
-        """Verify system_started_at and tracking_started_at are recorded for today."""
-        res = self.service.record_tracking_start()
+    def test_01_system_and_workpulse_start_captured_automatically(self):
+        """Verify system_started_at and workpulse_started_at are recorded for today."""
+        res = self.service.record_workpulse_start()
         self.assertEqual(res["date"], self.today_str)
         self.assertIsNotNone(res["system_started_at"])
-        self.assertIsNotNone(res["tracking_started_at"])
+        self.assertIsNotNone(res["workpulse_started_at"])
         self.assertIsNone(res["punch_in"])
         self.assertIsNone(res["punch_out"])
 
-    def test_02_multiple_restarts_preserve_initial_tracking_start_time(self):
-        """Verify subsequent calls on the same day do not overwrite initial tracking_started_at."""
+    def test_02_multiple_restarts_preserve_initial_workpulse_start_time(self):
+        """Verify subsequent calls on the same day do not overwrite initial workpulse_started_at."""
         first_time = datetime(2026, 9, 11, 8, 47, 15)
-        self.service.record_tracking_start(timestamp=first_time)
+        self.service.record_workpulse_start(timestamp=first_time)
         first_res = self.service.get_daily_attendance(date_str="2026-09-11")
-        self.assertEqual(first_res["tracking_started_at"], "2026-09-11 08:47:15")
+        self.assertEqual(first_res["workpulse_started_at"], "2026-09-11 08:47:15")
 
         # Simulate app restart 2 hours later
         second_time = datetime(2026, 9, 11, 10, 47, 15)
-        self.service.record_tracking_start(timestamp=second_time)
+        self.service.record_workpulse_start(timestamp=second_time)
         second_res = self.service.get_daily_attendance(date_str="2026-09-11")
-        self.assertEqual(second_res["tracking_started_at"], "2026-09-11 08:47:15")
+        self.assertEqual(second_res["workpulse_started_at"], "2026-09-11 08:47:15")
 
     def test_03_punch_in_and_out_recording(self):
         """Verify Punch-In and Punch-Out timestamps can be recorded and retrieved."""
@@ -79,7 +79,7 @@ class TestAttendanceAndSystemStart(unittest.TestCase):
 
         # Root payload check
         self.assertIn("system_started_at", payload)
-        self.assertIn("tracking_started_at", payload)
+        self.assertIn("workpulse_started_at", payload)
         self.assertIn("punch_in", payload)
         self.assertIn("punch_out", payload)
 
@@ -88,7 +88,7 @@ class TestAttendanceAndSystemStart(unittest.TestCase):
         self.assertEqual(len(payload["activities"]), 1)
         activity = payload["activities"][0]
         self.assertIn("system_started_at", activity)
-        self.assertIn("tracking_started_at", activity)
+        self.assertIn("workpulse_started_at", activity)
         self.assertIn("punch_in", activity)
         self.assertIn("punch_out", activity)
         self.assertIn("system_health", activity)

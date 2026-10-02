@@ -91,6 +91,12 @@ def init_database(db_path: Path | str | None = None) -> None:
                 conn.execute(text("ALTER TABLE settings ADD COLUMN screenshot_custom_interval INTEGER NOT NULL DEFAULT 180"))
             if "capture_on_switch" not in settings_col_names:
                 conn.execute(text("ALTER TABLE settings ADD COLUMN capture_on_switch BOOLEAN NOT NULL DEFAULT 1"))
+            # tracking_enabled was renamed to workpulse_enabled; keep the user's existing value
+            if "workpulse_enabled" not in settings_col_names:
+                if "tracking_enabled" in settings_col_names:
+                    conn.execute(text("ALTER TABLE settings RENAME COLUMN tracking_enabled TO workpulse_enabled"))
+                else:
+                    conn.execute(text("ALTER TABLE settings ADD COLUMN workpulse_enabled BOOLEAN NOT NULL DEFAULT 0"))
 
             # Sanitize legacy corrupted sessions where duration exceeds 2 hours
             # caused by older builds extending sessions across offline/shutdown time
@@ -204,7 +210,7 @@ def _create_default_settings_if_needed() -> None:
             record = Settings(
                 idle_threshold=DEFAULT_IDLE_THRESHOLD_SECONDS,
                 start_with_system=DEFAULT_START_WITH_SYSTEM,
-                tracking_enabled=DEFAULT_TRACKING_ENABLED,
+                workpulse_enabled=DEFAULT_TRACKING_ENABLED,
                 track_window_titles=DEFAULT_TRACK_WINDOW_TITLES,
                 screenshot_interval_type="3_min",
                 screenshot_custom_interval=180,

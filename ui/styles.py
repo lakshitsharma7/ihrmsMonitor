@@ -40,22 +40,22 @@ QMainWindow {
     font-weight: 600;
 }
 
-#StatusBadge[tracking="true"] {
+#StatusBadge[workpulse="true"] {
     background-color: #e6f4ea;
     color: #137333;
 }
 
-#StatusBadge[tracking="false"] {
+#StatusBadge[workpulse="false"] {
     background-color: #fce8e6;
     color: #a50e0e;
 }
 
-#StatusBadge[tracking="idle"] {
+#StatusBadge[workpulse="idle"] {
     background-color: #fef7e0;
     color: #b06000;
 }
 
-#StatusBadge[tracking="paused"] {
+#StatusBadge[workpulse="paused"] {
     background-color: #fef7e0;
     color: #b06000;
 }

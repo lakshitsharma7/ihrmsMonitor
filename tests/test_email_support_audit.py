@@ -103,8 +103,8 @@ class TestEmailSupportAudit(unittest.TestCase):
             self.assertEqual(called_ctx["error_type"], "UPDATE_DOWNLOAD_ERROR")
             self.assertIn("https://updates.com/setup.exe", called_ctx["error_message"])
 
-    def test_flow_d_tracking_error_reporting(self):
-        """Test Flow D: Activity tracking hook or session failure reporting."""
+    def test_flow_d_workpulse_error_reporting(self):
+        """Test Flow D: Activity workpulse hook or session failure reporting."""
         with patch.object(self.service, "_dispatch_via_smtp", return_value=True) as mock_dispatch:
             self.service.report_error(
                 error_type="TRACKER_HOOK_ERROR",
@@ -123,7 +123,7 @@ class TestEmailSupportAudit(unittest.TestCase):
             self.service.report_error(
                 error_type="SYNC_BATCH_ERROR",
                 error_message="Server returned 500 Internal Server Error during activity batch upload",
-                extra_context={"endpoint": "tracking/save_activity_batch", "http_status": 500},
+                extra_context={"endpoint": "workpulse/save_activity_batch", "http_status": 500},
             )
             import time
             time.sleep(0.1)

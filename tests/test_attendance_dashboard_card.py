@@ -45,8 +45,8 @@ class TestAttendanceDashboardCard(unittest.TestCase):
         mock_svc.get_today_total_idle_seconds.return_value = 0
         mock_svc.get_today_timeline.return_value = []
 
-        # Record daily tracking start
-        AttendanceService().record_tracking_start()
+        # Record daily workpulse start
+        AttendanceService().record_workpulse_start()
 
         dashboard = DashboardPage(activity_service=mock_svc)
         self.assertTrue(hasattr(dashboard, "start_time_label"))
@@ -68,10 +68,10 @@ class TestAttendanceDashboardCard(unittest.TestCase):
         mock_svc.get_today_total_idle_seconds.return_value = 0
         mock_svc.get_today_timeline.return_value = []
 
-        # Record daily tracking start and punch in
+        # Record daily workpulse start and punch in
         from datetime import datetime
         today_str = datetime.now().strftime("%Y-%m-%d")
-        AttendanceService().record_tracking_start()
+        AttendanceService().record_workpulse_start()
         AttendanceService().record_punch_in(f"{today_str} 09:45:00", date_str=today_str)
 
         dashboard = DashboardPage(activity_service=mock_svc)
@@ -101,7 +101,7 @@ class TestAttendanceDashboardCard(unittest.TestCase):
 
         # Initial unpunched state
         dashboard._update_attendance_ui({
-            "tracking_started_at": "2026-09-30 14:53:00",
+            "workpulse_started_at": "2026-09-30 14:53:00",
             "punch_in": None,
             "punch_out": None,
         })
@@ -111,7 +111,7 @@ class TestAttendanceDashboardCard(unittest.TestCase):
 
         # Punched In state
         dashboard._update_attendance_ui({
-            "tracking_started_at": "2026-09-30 14:53:00",
+            "workpulse_started_at": "2026-09-30 14:53:00",
             "punch_in": "2026-09-30 14:55:00",
             "punch_out": None,
         })
@@ -120,7 +120,7 @@ class TestAttendanceDashboardCard(unittest.TestCase):
 
         # Punched Out state
         dashboard._update_attendance_ui({
-            "tracking_started_at": "2026-09-30 14:53:00",
+            "workpulse_started_at": "2026-09-30 14:53:00",
             "punch_in": "2026-09-30 14:55:00",
             "punch_out": "2026-09-30 18:30:00",
         })

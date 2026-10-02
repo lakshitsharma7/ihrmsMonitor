@@ -23,14 +23,14 @@ class TrackerWorker(QObject):
 
     Signals:
         state_changed: emitted after every poll with the latest TrackerState.
-        tracking_started: emitted once tracking actually begins.
-        tracking_stopped: emitted once tracking has fully stopped and any
+        workpulse_started: emitted once workpulse actually begins.
+        workpulse_stopped: emitted once workpulse has fully stopped and any
             open session has been closed.
     """
 
     state_changed = Signal(object)  # TrackerState
-    tracking_started = Signal()
-    tracking_stopped = Signal()
+    workpulse_started = Signal()
+    workpulse_stopped = Signal()
 
     def __init__(self, tracker: ActivityTracker, poll_interval_seconds: float = POLL_INTERVAL_SECONDS) -> None:
         super().__init__()
@@ -47,55 +47,55 @@ class TrackerWorker(QObject):
             self._timer = QTimer(self)
             self._timer.setInterval(self._poll_interval_ms)
             self._timer.timeout.connect(self._on_tick)
-        if self._tracker.is_tracking and not self._timer.isActive():
+        if self._tracker.is_workpulse and not self._timer.isActive():
             self._timer.start()
 
     @Slot()
-    def start_tracking(self) -> None:
+    def start_workpulse(self) -> None:
         try:
-            if self._timer is not None and self._timer.isActive() and self._tracker.is_tracking:
-                logger.debug("TrackerWorker: tracking timer is already active, ignoring duplicate start")
+            if self._timer is not None and self._timer.isActive() and self._tracker.is_workpulse:
+                logger.debug("TrackerWorker: workpulse timer is already active, ignoring duplicate start")
                 return
             if self._timer is None:
                 self.setup()
             self._tracker.start()
             if self._timer is not None and not self._timer.isActive():
                 self._timer.start()
-            logger.info("TrackerWorker: tracking started")
-            self.tracking_started.emit()
+            logger.info("TrackerWorker: workpulse started")
+            self.workpulse_started.emit()
             # Immediately execute an initial poll so the GUI receives active state instantly
             self._on_tick()
         except Exception as exc:  # noqa: BLE001
-            logger.exception("TrackerWorker failed to start tracking")
+            logger.exception("TrackerWorker failed to start workpulse")
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(
                     error_type="TRACKING_START_ERROR",
-                    error_message=f"TrackerWorker failed to start tracking: {exc}",
+                    error_message=f"TrackerWorker failed to start workpulse: {exc}",
                     exc=exc,
                 )
             except Exception:
                 pass
 
     @Slot()
-    def stop_tracking(self) -> None:
+    def stop_workpulse(self) -> None:
         try:
-            if not self._tracker.is_tracking and (self._timer is None or not self._timer.isActive()):
-                logger.debug("TrackerWorker: tracking is already stopped, ignoring duplicate stop")
+            if not self._tracker.is_workpulse and (self._timer is None or not self._timer.isActive()):
+                logger.debug("TrackerWorker: workpulse is already stopped, ignoring duplicate stop")
                 return
             if self._timer is not None:
                 self._timer.stop()
             self._tracker.stop()
-            logger.info("TrackerWorker: tracking stopped")
-            self.tracking_stopped.emit()
+            logger.info("TrackerWorker: workpulse stopped")
+            self.workpulse_stopped.emit()
             self.state_changed.emit(self._tracker.poll())
         except Exception as exc:  # noqa: BLE001
-            logger.exception("TrackerWorker failed to stop tracking cleanly")
+            logger.exception("TrackerWorker failed to stop workpulse cleanly")
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(
                     error_type="TRACKING_STOP_ERROR",
-                    error_message=f"TrackerWorker failed to stop tracking cleanly: {exc}",
+                    error_message=f"TrackerWorker failed to stop workpulse cleanly: {exc}",
                     exc=exc,
                 )
             except Exception:
@@ -103,14 +103,14 @@ class TrackerWorker(QObject):
 
     @Slot()
     def cleanup(self) -> None:
-        """Stop tracking timer and tracker instance before thread exit."""
+        """Stop workpulse timer and tracker instance before thread exit."""
         try:
             if self._timer is not None:
                 self._timer.stop()
                 self._timer = None
-            if self._tracker.is_tracking:
+            if self._tracker.is_workpulse:
                 self._tracker.stop()
-                logger.info("TrackerWorker: tracking stopped on cleanup")
+                logger.info("TrackerWorker: workpulse stopped on cleanup")
         except Exception as exc:  # noqa: BLE001
             logger.debug("TrackerWorker cleanup error: %s", exc)
 

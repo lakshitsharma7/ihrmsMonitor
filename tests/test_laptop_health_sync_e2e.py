@@ -9,7 +9,7 @@ Verifies:
 6. Dynamic health metric updates across sync cycles.
 7. Offline resilience (data preservation on network failure).
 8. Network reconnection and successful delayed sync.
-9. Continuous tracking stability during health sync.
+9. Continuous workpulse stability during health sync.
 10. Activity, session, and screenshot sync coexistence.
 """
 
@@ -222,8 +222,8 @@ class TestLaptopHealthSyncEndToEnd(unittest.TestCase):
                 self.assertTrue(recovered)
                 mock_repo2.update_session_server_id.assert_called_once_with(1003, "srv_1003")
 
-    def test_09_continuous_tracking_uninterrupted(self):
-        """TEST 9 & 10: Health syncing coexists cleanly with activity and screenshot tracking."""
+    def test_09_continuous_workpulse_uninterrupted(self):
+        """TEST 9 & 10: Health syncing coexists cleanly with activity and screenshot workpulse."""
         # Check that health collector is lightweight and safe under repeated invocations
         for _ in range(5):
             h = get_system_health()

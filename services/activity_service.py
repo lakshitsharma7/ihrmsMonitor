@@ -1,8 +1,8 @@
 """Dashboard calculations and activity data service."""
 
-from PIL.Image import logger
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -10,6 +10,8 @@ from database.repository import (
     ActivityRepository,
     ApplicationUsage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

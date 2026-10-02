@@ -1223,7 +1223,7 @@ class SettingsRepository:
             start_with_system=(
                 DEFAULT_START_WITH_SYSTEM
             ),
-            tracking_enabled=(
+            workpulse_enabled=(
                 DEFAULT_TRACKING_ENABLED
             ),
             track_window_titles=(

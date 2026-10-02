@@ -1,17 +1,17 @@
 """Comprehensive End-to-End Verification Test for iHRMS Monitor Full Auto-Update Flow.
 
 Verifies:
-1. Current v2.0.1 running with tracking ACTIVE -> API reports v2.1.
+1. Current v2.0.1 running with workpulse ACTIVE -> API reports v2.1.
 2. Background update starts automatically without manual user action.
 3. Pending logs and screenshots are safely uploaded/flushed before update installation (Zero Data Loss).
 4. If 0 pending records exist, pre-update flush proceeds immediately without delay.
 5. Update installation launches silently and triggers application restart.
 6. After restart, existing session (SessionStore + SessionService + ApiConfig) is restored seamlessly.
 7. NO LOGIN SCREEN is displayed; MainWindow opens directly.
-8. If tracking was ACTIVE before update, tracking automatically RESUMES on restart.
-9. If user MANUALLY STOPPED tracking before update, tracking remains STOPPED on restart.
+8. If workpulse was ACTIVE before update, workpulse automatically RESUMES on restart.
+9. If user MANUALLY STOPPED workpulse before update, workpulse remains STOPPED on restart.
 10. Dashboard reflects the updated version (v2.1) and status cleanly resets.
-11. Duplicate updater / application / tracking processes are prevented.
+11. Duplicate updater / application / workpulse processes are prevented.
 12. Network unavailable / download failure / install failure handling keeps app running safely.
 """
 
@@ -53,7 +53,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
         SessionService().clear()
         UpdateStateManager().clear_state()
 
-    def _login_active_session(self, tracking_active=True, manual_stop=False):
+    def _login_active_session(self, workpulse_active=True, manual_stop=False):
         """Helper to establish a valid encrypted session."""
         self.store.save_session(
             company_code="DEMO_COMPANY",
@@ -65,15 +65,15 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             user_type="User",
             employee_id="1001",
             device_info={"hostname": "DEMO-LAPTOP", "os_type": "window"},
-            tracking_permitted=True,
-            tracking_manually_stopped=manual_stop,
+            workpulse_permitted=True,
+            workpulse_manually_stopped=manual_stop,
         )
-        self.store.set_tracking_active(tracking_active)
+        self.store.set_workpulse_active(workpulse_active)
         SessionService().login(
             username="john.doe",
             role="User",
             device_token="DEV_TOKEN_XYZ_999",
-            tracking_permitted=True,
+            workpulse_permitted=True,
             allow_user_device=True,
             allow_logout=True,
             indo_code="EMP_TEST_01",
@@ -83,9 +83,9 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             full_name="John Doe",
         )
 
-    def test_e2e_full_update_flow_tracking_active_to_resume(self):
-        """E2E Test: v2.0.1 running + tracking ACTIVE -> API reports v2.1 -> update -> restart -> session restored -> tracking resumed."""
-        self._login_active_session(tracking_active=True, manual_stop=False)
+    def test_e2e_full_update_flow_workpulse_active_to_resume(self):
+        """E2E Test: v2.0.1 running + workpulse ACTIVE -> API reports v2.1 -> update -> restart -> session restored -> workpulse resumed."""
+        self._login_active_session(workpulse_active=True, manual_stop=False)
 
         # 1. Verify current version vs server version
         current_ver = "2.0.1"
@@ -142,7 +142,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
         self.assertIsNotNone(saved, "Encrypted session MUST persist across restart")
         self.assertEqual(saved.get("username"), "john.doe")
         self.assertTrue(bool(saved.get("device_token")), "Device token must persist across restart")
-        self.assertFalse(self.store.is_tracking_manually_stopped(), "Tracking was not manually stopped")
+        self.assertFalse(self.store.is_workpulse_manually_stopped(), "WorkPulse was not manually stopped")
 
         # Re-initialize SessionService as app.py does on startup
         SessionService().clear()
@@ -151,7 +151,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             role=saved.get("user_type", "User"),
             full_name=saved.get("full_name"),
             user_type=saved.get("user_type", "User"),
-            tracking_permitted=saved.get("tracking_permitted", True),
+            workpulse_permitted=saved.get("workpulse_permitted", True),
             allow_user_device=saved.get("allow_user_device", True),
             allow_logout=saved.get("allow_logout", True),
             indo_code=saved["indo_code"],
@@ -179,15 +179,15 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                # 5. Verify NO login window required & tracking automatically resumed
-                self.assertTrue(win._tracker.is_tracking, "Tracking MUST automatically resume after restart")
+                # 5. Verify NO login window required & workpulse automatically resumed
+                self.assertTrue(win._tracker.is_workpulse, "WorkPulse MUST automatically resume after restart")
                 self.assertEqual(win.status_badge.text(), "Online")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
+                self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Active")
                 # 6. Verify version displayed reflects v2.1
                 self.assertIn("2.1", win.dashboard_page.version_label.text())
-                # 7. Verify NO Stop Tracking button/control is visible anywhere
-                self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must NOT be visible")
-                self.assertFalse(win.start_button.isVisible(), "Start Tracking button must NOT be visible")
+                # 7. Verify NO Stop WorkPulse button/control is visible anywhere
+                self.assertFalse(win.stop_button.isVisible(), "Stop WorkPulse button must NOT be visible")
+                self.assertFalse(win.start_button.isVisible(), "Start WorkPulse button must NOT be visible")
                 if hasattr(win, "tray") and win.tray:
                     self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop action must NOT be visible")
                     self.assertFalse(win.tray.start_action.isVisible(), "Tray Start action must NOT be visible")
@@ -196,9 +196,9 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
                 win.close()
                 QApplication.processEvents()
 
-    def test_e2e_no_stop_tracking_button_visible_anywhere(self):
-        """E2E Test: Stop Tracking button is completely hidden/removed from UI for all users."""
-        self._login_active_session(tracking_active=True, manual_stop=False)
+    def test_e2e_no_stop_workpulse_button_visible_anywhere(self):
+        """E2E Test: Stop WorkPulse button is completely hidden/removed from UI for all users."""
+        self._login_active_session(workpulse_active=True, manual_stop=False)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://demo.indovisionservices.in/hrms_api/ci4/api"), \
              patch("config.settings.get_running_app_version", return_value="2.1"), \
@@ -210,12 +210,12 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
             QApplication.processEvents()
             try:
                 # Button must not be visible in UI
-                self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must not be visible")
-                self.assertFalse(win.start_button.isVisible(), "Start Tracking button must not be visible")
+                self.assertFalse(win.stop_button.isVisible(), "Stop WorkPulse button must not be visible")
+                self.assertFalse(win.start_button.isVisible(), "Start WorkPulse button must not be visible")
                 if hasattr(win, "tray") and win.tray:
                     self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop action must not be visible")
-                self.assertTrue(win._tracker.is_tracking, "Tracking must be active")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
+                self.assertTrue(win._tracker.is_workpulse, "WorkPulse must be active")
+                self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Active")
             finally:
                 win._shutdown()
                 win.close()
@@ -239,7 +239,7 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
 
     def test_e2e_update_download_failure_preserves_app_and_data(self):
         """If download fails, the app safely handles error, does not restart, and pending data remains safe."""
-        self._login_active_session(tracking_active=True, manual_stop=False)
+        self._login_active_session(workpulse_active=True, manual_stop=False)
 
         worker = UpdatePipelineWorker(api_url="https://demo.indovisionservices.in/hrms_api/ci4/api")
         errors = []

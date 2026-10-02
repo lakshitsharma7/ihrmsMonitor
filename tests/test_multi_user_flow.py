@@ -1,4 +1,4 @@
-"""Tests for multi-user session isolation and tracking data separation."""
+"""Tests for multi-user session isolation and workpulse data separation."""
 
 import unittest
 from datetime import datetime, timezone, timedelta
@@ -14,7 +14,7 @@ from services.sync_service import SyncService
 from services.activity_service import ActivityService
 
 
-class TestMultiUserTrackingFlow(unittest.TestCase):
+class TestMultiUserWorkPulseFlow(unittest.TestCase):
     """Test suite ensuring strict multi-user separation in iHRMS Monitor."""
 
     def setUp(self):

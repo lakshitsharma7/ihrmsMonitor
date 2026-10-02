@@ -1,4 +1,4 @@
-"""End-to-end test verifying auto-update handoff, installer execution, restart, session persistence, and tracking resumption."""
+"""End-to-end test verifying auto-update handoff, installer execution, restart, session persistence, and workpulse resumption."""
 
 import os
 import tempfile
@@ -102,7 +102,7 @@ class TestFullAutoUpdateHandoffAndRestart(unittest.TestCase):
             user_type="Employee",
             employee_id="EMP-999",
             device_info={"hostname": "TEST-PC"},
-            tracking_permitted=True,
+            workpulse_permitted=True,
             allow_user_device=True,
             allow_logout=True,
         )
@@ -120,7 +120,7 @@ class TestFullAutoUpdateHandoffAndRestart(unittest.TestCase):
             role=loaded.get("user_type", "User"),
             full_name=loaded.get("full_name"),
             user_type=loaded.get("user_type", "User"),
-            tracking_permitted=loaded.get("tracking_permitted", True),
+            workpulse_permitted=loaded.get("workpulse_permitted", True),
             allow_user_device=loaded.get("allow_user_device", True),
             allow_logout=loaded.get("allow_logout", True),
             indo_code=loaded["indo_code"],
@@ -132,7 +132,7 @@ class TestFullAutoUpdateHandoffAndRestart(unittest.TestCase):
 
         self.assertIsNotNone(svc.current_user)
         self.assertEqual(svc.current_user.username, "jane.smith")
-        self.assertTrue(svc.current_user.tracking_permitted)
+        self.assertTrue(svc.current_user.workpulse_permitted)
 
 
 if __name__ == "__main__":

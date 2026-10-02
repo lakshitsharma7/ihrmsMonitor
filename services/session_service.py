@@ -13,7 +13,7 @@ class UserSession:
     full_name: str | None = None
     # ── RBAC / permission fields from server ──────────────────
     user_type: str = ""                # from login API (e.g. "Joined")
-    tracking_permitted: bool = True    # from enroll_device / get_settings
+    workpulse_permitted: bool = True    # from enroll_device / get_settings
     allow_user_device: bool = True     # dynamic from server / DB (User/Device modal)
     allow_logout: bool = True          # dynamic from server / DB (Logout control)
     # ── Auth data returned dynamically by the login API ───────
@@ -80,7 +80,7 @@ class SessionService:
         full_name: str | None = None,
         *,
         user_type: str = "",
-        tracking_permitted: bool = True,
+        workpulse_permitted: bool = True,
         allow_user_device: bool = True,
         allow_logout: bool = True,
         indo_code: str | None = None,
@@ -99,7 +99,7 @@ class SessionService:
             role=role,
             full_name=full_name,
             user_type=user_type,
-            tracking_permitted=tracking_permitted,
+            workpulse_permitted=workpulse_permitted,
             allow_user_device=allow_user_device,
             allow_logout=allow_logout,
             indo_code=indo_code,
@@ -119,7 +119,7 @@ class SessionService:
         full_name: str | None = None,
         *,
         user_type: str = "",
-        tracking_permitted: bool = True,
+        workpulse_permitted: bool = True,
         allow_user_device: bool = True,
         allow_logout: bool = True,
         indo_code: str | None = None,
@@ -137,7 +137,7 @@ class SessionService:
             role=role or user_type,
             full_name=full_name,
             user_type=user_type,
-            tracking_permitted=tracking_permitted,
+            workpulse_permitted=workpulse_permitted,
             allow_user_device=allow_user_device,
             allow_logout=allow_logout,
             indo_code=indo_code,
@@ -245,15 +245,15 @@ class SessionService:
     def update_permissions(
         self,
         *,
-        tracking_permitted: bool | None = None,
+        workpulse_permitted: bool | None = None,
         allow_user_device: bool | None = None,
         allow_logout: bool | None = None,
     ) -> None:
         """Update permission flags dynamically (called when server pushes new settings)."""
         changed = False
         if self._current_user is not None:
-            if tracking_permitted is not None and self._current_user.tracking_permitted != tracking_permitted:
-                self._current_user.tracking_permitted = tracking_permitted
+            if workpulse_permitted is not None and self._current_user.workpulse_permitted != workpulse_permitted:
+                self._current_user.workpulse_permitted = workpulse_permitted
                 changed = True
             if allow_user_device is not None and self._current_user.allow_user_device != allow_user_device:
                 self._current_user.allow_user_device = allow_user_device
@@ -264,9 +264,9 @@ class SessionService:
         if changed:
             self.notify_permission_listeners()
 
-    def update_tracking_permitted(self, permitted: bool) -> None:
-        """Update the tracking permission flag (called when server pushes new settings)."""
-        self.update_permissions(tracking_permitted=permitted)
+    def update_workpulse_permitted(self, permitted: bool) -> None:
+        """Update the workpulse permission flag (called when server pushes new settings)."""
+        self.update_permissions(workpulse_permitted=permitted)
 
     def update_device_token(self, token: str | None) -> None:
         """Update active device_token across both SessionService and the current user session."""

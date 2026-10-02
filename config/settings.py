@@ -2,7 +2,7 @@
 
 This module holds constants that are not user-editable (app name, poll
 intervals, etc). User-editable preferences (idle threshold, start-with-
-system, tracking-enabled, track-window-titles) live in the database and are
+system, workpulse-enabled, track-window-titles) live in the database and are
 accessed through ``services.settings_service.SettingsService``.
 """
 
@@ -114,7 +114,7 @@ DEFAULT_IDLE_THRESHOLD_SECONDS = 3 * 60
 # application name.
 DEFAULT_TRACK_WINDOW_TITLES = True
 
-# Default value for whether the app starts tracking automatically on launch.
+# Default value for whether the app starts workpulse automatically on launch.
 DEFAULT_TRACKING_ENABLED = True
 
 # Default value for whether the app starts with the OS.

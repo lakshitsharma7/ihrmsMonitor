@@ -76,11 +76,11 @@ def test_settings_repository_defaults_and_update(session_factory):
 
     settings = repo.get_or_create()
     assert settings.idle_threshold == 180
-    assert settings.tracking_enabled is True
+    assert settings.workpulse_enabled is True
 
-    updated = repo.update(idle_threshold=600, tracking_enabled=False)
+    updated = repo.update(idle_threshold=600, workpulse_enabled=False)
     assert updated.idle_threshold == 600
-    assert updated.tracking_enabled is False
+    assert updated.workpulse_enabled is False
 
     # Only one settings row should ever exist.
     again = repo.get_or_create()

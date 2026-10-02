@@ -34,19 +34,19 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.enroll_device_url,
-            "https://default.company.com/hrms_api/ci4/api/tracking/enroll_device",
+            "https://default.company.com/hrms_api/ci4/api/workpulse/enroll_device",
         )
         self.assertEqual(
             self.api_cfg.get_settings_url,
-            "https://default.company.com/hrms_api/ci4/api/tracking/get_settings",
+            "https://default.company.com/hrms_api/ci4/api/workpulse/get_settings",
         )
         self.assertEqual(
             self.api_cfg.save_activity_batch_url,
-            "https://default.company.com/hrms_api/ci4/api/tracking/save_activity_batch",
+            "https://default.company.com/hrms_api/ci4/api/workpulse/save_activity_batch",
         )
         self.assertEqual(
             self.api_cfg.upload_screenshot_url,
-            "https://default.company.com/hrms_api/ci4/api/tracking/upload_screenshot",
+            "https://default.company.com/hrms_api/ci4/api/workpulse/upload_screenshot",
         )
         self.assertEqual(
             self.api_cfg.check_version_url,
@@ -54,7 +54,7 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.report_error_url,
-            "https://default.company.com/hrms_api/ci4/api/tracking/report_error",
+            "https://default.company.com/hrms_api/ci4/api/workpulse/report_error",
         )
         self.assertEqual(
             self.api_cfg.punch_url,
@@ -70,19 +70,19 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.enroll_device_url,
-            "https://new-server.internal.org/api/v2/tracking/enroll_device",
+            "https://new-server.internal.org/api/v2/workpulse/enroll_device",
         )
         self.assertEqual(
             self.api_cfg.get_settings_url,
-            "https://new-server.internal.org/api/v2/tracking/get_settings",
+            "https://new-server.internal.org/api/v2/workpulse/get_settings",
         )
         self.assertEqual(
             self.api_cfg.save_activity_batch_url,
-            "https://new-server.internal.org/api/v2/tracking/save_activity_batch",
+            "https://new-server.internal.org/api/v2/workpulse/save_activity_batch",
         )
         self.assertEqual(
             self.api_cfg.upload_screenshot_url,
-            "https://new-server.internal.org/api/v2/tracking/upload_screenshot",
+            "https://new-server.internal.org/api/v2/workpulse/upload_screenshot",
         )
         self.assertEqual(
             self.api_cfg.check_version_url,
@@ -90,7 +90,7 @@ class TestDynamicApiConfiguration(unittest.TestCase):
         )
         self.assertEqual(
             self.api_cfg.report_error_url,
-            "https://new-server.internal.org/api/v2/tracking/report_error",
+            "https://new-server.internal.org/api/v2/workpulse/report_error",
         )
         self.assertEqual(
             self.api_cfg.punch_url,
@@ -122,9 +122,9 @@ class TestDynamicApiConfiguration(unittest.TestCase):
     def test_05_sync_service_uses_dynamic_urls(self):
         """Verify SyncService routes requests through dynamic ApiConfig properties."""
         sync_svc = SyncService(api_url="https://fallback.com")
-        self.assertEqual(sync_svc.get_settings_url, "https://default.company.com/hrms_api/ci4/api/tracking/get_settings")
-        self.assertEqual(sync_svc.save_activity_batch_url, "https://default.company.com/hrms_api/ci4/api/tracking/save_activity_batch")
-        self.assertEqual(sync_svc.upload_screenshot_url, "https://default.company.com/hrms_api/ci4/api/tracking/upload_screenshot")
+        self.assertEqual(sync_svc.get_settings_url, "https://default.company.com/hrms_api/ci4/api/workpulse/get_settings")
+        self.assertEqual(sync_svc.save_activity_batch_url, "https://default.company.com/hrms_api/ci4/api/workpulse/save_activity_batch")
+        self.assertEqual(sync_svc.upload_screenshot_url, "https://default.company.com/hrms_api/ci4/api/workpulse/upload_screenshot")
 
 
 if __name__ == "__main__":

@@ -103,7 +103,7 @@ class TestDynamicControls(unittest.TestCase):
             user_type="User",
             employee_id="E001",
             device_info={"hostname": "Laptop1"},
-            tracking_permitted=True,
+            workpulse_permitted=True,
             allow_user_device=False,
             allow_logout=False,
         )
@@ -142,7 +142,7 @@ class TestDynamicControls(unittest.TestCase):
                 "idle_threshold_seconds": 180,
                 "allow_logout": False,
                 "allow_user_device": False,
-                "allow_start_stop_activity_tracking": False,
+                "allow_start_stop_activity_workpulse": False,
             }
         }
         mock_post.return_value = mock_response
@@ -218,7 +218,7 @@ class TestDynamicControls(unittest.TestCase):
         )
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
-             patch.object(MainWindow, "start_tracking"), \
+             patch.object(MainWindow, "start_workpulse"), \
              patch.object(MainWindow, "_check_for_updates"), \
              patch.object(MainWindow, "_sync_permissions_from_backend"):
             win = MainWindow()
@@ -272,11 +272,11 @@ class TestDynamicControls(unittest.TestCase):
         )
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
-             patch.object(MainWindow, "start_tracking"), \
+             patch.object(MainWindow, "start_workpulse"), \
              patch.object(MainWindow, "_check_for_updates"), \
              patch.object(MainWindow, "_sync_permissions_from_backend"), \
              patch("ui.main_window.UserDeviceDialog") as mock_dialog, \
-             patch.object(MainWindow, "stop_tracking") as mock_stop_tracking:
+             patch.object(MainWindow, "stop_workpulse") as mock_stop_workpulse:
             win = MainWindow()
             try:
                 # Attempt to open user device info
@@ -285,7 +285,7 @@ class TestDynamicControls(unittest.TestCase):
 
                 # Attempt to logout
                 win.logout()
-                mock_stop_tracking.assert_not_called()
+                mock_stop_workpulse.assert_not_called()
                 # User should still be logged in
                 self.assertIsNotNone(SessionService().current_user)
             finally:

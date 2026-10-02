@@ -170,7 +170,7 @@ def test_provider_failure_does_not_raise(session_factory):
 
     # Must not raise even though the provider explodes.
     state = tracker.poll()
-    assert state.is_tracking is True
+    assert state.is_workpulse is True
     assert state.current_application is None
 
 
@@ -178,12 +178,12 @@ def test_start_stop_state_transitions(session_factory):
     provider = FakeProvider()
     tracker = _make_tracker(session_factory, provider)
 
-    assert tracker.is_tracking is False
+    assert tracker.is_workpulse is False
     tracker.start()
-    assert tracker.is_tracking is True
+    assert tracker.is_workpulse is True
     tracker.start()  
-    assert tracker.is_tracking is True
+    assert tracker.is_workpulse is True
     tracker.stop()
-    assert tracker.is_tracking is False
+    assert tracker.is_workpulse is False
     tracker.stop()  # no-op
-    assert tracker.is_tracking is False
+    assert tracker.is_workpulse is False

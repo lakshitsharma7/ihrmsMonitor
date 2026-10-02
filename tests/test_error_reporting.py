@@ -56,7 +56,7 @@ class TestErrorReportService(unittest.TestCase):
                 exc=exc,
                 extra_context={
                     "action": "test_verification",
-                    "endpoint": "/tracking/save_activity_batch",
+                    "endpoint": "/workpulse/save_activity_batch",
                     "http_status": 500,
                     "response_error": '{"response": "Error", "message": "Server failure"}',
                 },
@@ -65,7 +65,7 @@ class TestErrorReportService(unittest.TestCase):
             self.assertEqual(context["error_type"], "RUNTIME_TEST_ERROR")
             self.assertIn("Test failure occurred", context["error_message"])
             self.assertIn("ValueError", context["traceback"])
-            self.assertEqual(context["endpoint"], "/tracking/save_activity_batch")
+            self.assertEqual(context["endpoint"], "/workpulse/save_activity_batch")
             self.assertEqual(context["http_status"], "500")
             self.assertIn("Server failure", context["response_error"])
             self.assertIn("device_details", context)
@@ -82,7 +82,7 @@ class TestErrorReportService(unittest.TestCase):
             "timestamp_utc": "2026-09-08T06:00:00+00:00",
             "error_type": "ACTIVITY_UPLOAD_ERROR",
             "error_message": "Activity sync batch failed",
-            "endpoint": "/tracking/save_activity_batch",
+            "endpoint": "/workpulse/save_activity_batch",
             "http_status": "502",
             "response_error": "Bad Gateway",
             "user_details": {
@@ -109,7 +109,7 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("Workpulse - Critical Error Report", body)
         self.assertIn("v2.0.1", body)
         self.assertIn("ACTIVITY_UPLOAD_ERROR", body)
-        self.assertIn("/tracking/save_activity_batch", body)
+        self.assertIn("/workpulse/save_activity_batch", body)
         self.assertIn("HTTP Status   : 502", body)
         self.assertIn("Response Err  : Bad Gateway", body)
         self.assertIn("EMP-100", body)
@@ -183,13 +183,13 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("Update Error", page.update_status_label.text())
         self.assertIn("Installer hash mismatch", page.update_status_label.text())
 
-        # Trigger a tracking error
+        # Trigger a workpulse error
         ErrorReportService().report_error(
             error_type="TRACKING_ERROR",
             error_message="Window handle invalid",
         )
-        self.assertIn("Error", page.tracking_status_label.text())
-        self.assertIn("Window handle invalid", page.tracking_status_label.text())
+        self.assertIn("Error", page.workpulse_status_label.text())
+        self.assertIn("Window handle invalid", page.workpulse_status_label.text())
 
 
     def test_dispatch_via_smtp_successful_transmission(self):

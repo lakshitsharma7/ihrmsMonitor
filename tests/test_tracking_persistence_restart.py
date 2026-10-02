@@ -1,11 +1,11 @@
-"""Unit and integration tests for tracking persistence across application / EXE restarts.
+"""Unit and integration tests for workpulse persistence across application / EXE restarts.
 
 Verifies:
-1. Tracking active before restart -> automatically restored on startup, dashboard shows "Tracking: Active".
-2. Tracking manually stopped before restart -> stays stopped on startup, dashboard shows "Tracking: Inactive".
-3. User manually starting tracking clears manually_stopped flag and restores persistence.
-4. Automated stops (e.g. before auto-update restart) preserve tracking auto-start across restart.
-5. Duplicate tracking worker prevention (repeated start_tracking calls are safely ignored).
+1. WorkPulse active before restart -> automatically restored on startup, dashboard shows "WorkPulse: Active".
+2. WorkPulse manually stopped before restart -> stays stopped on startup, dashboard shows "WorkPulse: Inactive".
+3. User manually starting workpulse clears manually_stopped flag and restores persistence.
+4. Automated stops (e.g. before auto-update restart) preserve workpulse auto-start across restart.
+5. Duplicate workpulse worker prevention (repeated start_workpulse calls are safely ignored).
 6. Fresh login resets any previous manual stop flag.
 """
 
@@ -22,7 +22,7 @@ from tracker.tracker_worker import TrackerWorker
 from ui.main_window import MainWindow
 
 
-class TestTrackingPersistenceRestart(unittest.TestCase):
+class TestWorkPulsePersistenceRestart(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -37,35 +37,35 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
         self.store.clear_session()
         SessionService().clear()
 
-    def _login_test_user(self, tracking_permitted=True):
+    def _login_test_user(self, workpulse_permitted=True):
         SessionService().login(
             username="test_persistence_user",
             role="User",
             device_token="TOKEN_PERSIST_123",
-            tracking_permitted=tracking_permitted,
+            workpulse_permitted=workpulse_permitted,
             allow_user_device=True,
             allow_logout=True,
         )
 
     def test_session_store_manual_stop_and_active_helpers(self):
-        """Verify is_tracking_manually_stopped and set_tracking_manually_stopped helpers."""
-        self.assertFalse(self.store.is_tracking_manually_stopped())
-        self.store.set_tracking_manually_stopped(True)
-        self.assertTrue(self.store.is_tracking_manually_stopped())
-        self.store.set_tracking_manually_stopped(False)
-        self.assertFalse(self.store.is_tracking_manually_stopped())
+        """Verify is_workpulse_manually_stopped and set_workpulse_manually_stopped helpers."""
+        self.assertFalse(self.store.is_workpulse_manually_stopped())
+        self.store.set_workpulse_manually_stopped(True)
+        self.assertTrue(self.store.is_workpulse_manually_stopped())
+        self.store.set_workpulse_manually_stopped(False)
+        self.assertFalse(self.store.is_workpulse_manually_stopped())
 
-        self.assertFalse(self.store.is_tracking_active())
-        self.store.set_tracking_active(True)
-        self.assertTrue(self.store.is_tracking_active())
-        self.store.set_tracking_active(False)
-        self.assertFalse(self.store.is_tracking_active())
+        self.assertFalse(self.store.is_workpulse_active())
+        self.store.set_workpulse_active(True)
+        self.assertTrue(self.store.is_workpulse_active())
+        self.store.set_workpulse_active(False)
+        self.assertFalse(self.store.is_workpulse_active())
 
-    def test_restart_with_active_tracking_restores_tracking_and_shows_active(self):
-        """If tracking was active before restart, MainWindow automatically starts tracking, shows 'Tracking: Active', and hides manual stop button."""
-        self._login_test_user(tracking_permitted=True)
-        self.store.set_tracking_manually_stopped(False)
-        self.store.set_tracking_active(True)
+    def test_restart_with_active_workpulse_restores_workpulse_and_shows_active(self):
+        """If workpulse was active before restart, MainWindow automatically starts workpulse, shows 'WorkPulse: Active', and hides manual stop button."""
+        self._login_test_user(workpulse_permitted=True)
+        self.store.set_workpulse_manually_stopped(False)
+        self.store.set_workpulse_active(True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -74,23 +74,23 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win._tracker.is_tracking, "Tracker must be actively running")
+                self.assertTrue(win._tracker.is_workpulse, "Tracker must be actively running")
                 self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
                 # Header buttons are hidden
-                self.assertFalse(win.stop_button.isVisible(), "Stop Tracking button must NOT be visible")
-                self.assertFalse(win.start_button.isVisible(), "Start Tracking button must NOT be visible")
+                self.assertFalse(win.stop_button.isVisible(), "Stop WorkPulse button must NOT be visible")
+                self.assertFalse(win.start_button.isVisible(), "Start WorkPulse button must NOT be visible")
                 if hasattr(win, "tray") and win.tray:
-                    self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop Tracking action must NOT be visible")
+                    self.assertFalse(win.tray.stop_action.isVisible(), "Tray Stop WorkPulse action must NOT be visible")
             finally:
                 win._shutdown()
                 win.close()
                 QApplication.processEvents()
 
-    def test_stop_tracking_button_permanently_hidden(self):
-        """Header Stop Tracking button and manual stop controls are permanently hidden from UI for all users."""
-        self._login_test_user(tracking_permitted=True)
+    def test_stop_workpulse_button_permanently_hidden(self):
+        """Header Stop WorkPulse button and manual stop controls are permanently hidden from UI for all users."""
+        self._login_test_user(workpulse_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -109,8 +109,8 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_user_stop_and_user_start_cycle(self):
-        """User stopping tracking sets manual stop; user restarting tracking clears it."""
-        self._login_test_user(tracking_permitted=True)
+        """User stopping workpulse sets manual stop; user restarting workpulse clears it."""
+        self._login_test_user(workpulse_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -119,37 +119,37 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win._tracker.is_tracking)
-                self.assertFalse(self.store.is_tracking_manually_stopped())
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
+                self.assertTrue(win._tracker.is_workpulse)
+                self.assertFalse(self.store.is_workpulse_manually_stopped())
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
 
                 # User clicks "Paused" button on dashboard -> toggles to Paused state, tracker stays active
-                win.dashboard_page.tracking_toggle_button.click()
+                win.dashboard_page.workpulse_toggle_button.click()
                 QApplication.processEvents()
 
-                self.assertTrue(win._tracker.is_tracking)
-                self.assertTrue(self.store.is_tracking_paused())
+                self.assertTrue(win._tracker.is_workpulse)
+                self.assertTrue(self.store.is_workpulse_paused())
                 self.assertEqual(win.status_badge.text(), "Paused")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Paused")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Resume")
+                self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Resume")
 
                 # User clicks "Resume" button on dashboard -> toggles back to Online/Active state
-                win.dashboard_page.tracking_toggle_button.click()
+                win.dashboard_page.workpulse_toggle_button.click()
                 QApplication.processEvents()
 
-                self.assertTrue(win._tracker.is_tracking)
-                self.assertFalse(self.store.is_tracking_paused())
+                self.assertTrue(win._tracker.is_workpulse)
+                self.assertFalse(self.store.is_workpulse_paused())
                 self.assertEqual(win.status_badge.text(), "Online")
-                self.assertEqual(win.dashboard_page.tracking_status_label.text(), "Online: Active")
-                self.assertEqual(win.dashboard_page.tracking_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Active")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
             finally:
                 win._shutdown()
                 win.close()
                 QApplication.processEvents()
 
-    def test_automated_stop_for_update_preserves_active_tracking_after_restart(self):
+    def test_automated_stop_for_update_preserves_active_workpulse_after_restart(self):
         """Automated stop before update (manual=False) preserves auto-start on next restart."""
-        self._login_test_user(tracking_permitted=True)
+        self._login_test_user(workpulse_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -158,13 +158,13 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win1.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win1._tracker.is_tracking)
-                # Updater stops tracking cleanly without marking manual stop
-                win1.stop_tracking_for_update()
+                self.assertTrue(win1._tracker.is_workpulse)
+                # Updater stops workpulse cleanly without marking manual stop
+                win1.stop_workpulse_for_update()
                 QApplication.processEvents()
 
                 # Flag must remain False because it was not a user manual stop
-                self.assertFalse(self.store.is_tracking_manually_stopped())
+                self.assertFalse(self.store.is_workpulse_manually_stopped())
             finally:
                 win1._shutdown()
                 win1.close()
@@ -175,18 +175,18 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win2.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win2._tracker.is_tracking, "Tracking must resume after update restart")
+                self.assertTrue(win2._tracker.is_workpulse, "WorkPulse must resume after update restart")
                 self.assertEqual(win2.status_badge.text(), "Online")
                 self.assertEqual(win2.dashboard_page.network_status_label.text(), "● Online")
-                self.assertEqual(win2.dashboard_page.tracking_toggle_button.text(), "Paused")
+                self.assertEqual(win2.dashboard_page.workpulse_toggle_button.text(), "Paused")
             finally:
                 win2._shutdown()
                 win2.close()
                 QApplication.processEvents()
 
-    def test_prevent_duplicate_tracking_workers(self):
-        """Calling start_tracking multiple times does NOT spawn duplicate workers or duplicate poll loops."""
-        self._login_test_user(tracking_permitted=True)
+    def test_prevent_duplicate_workpulse_workers(self):
+        """Calling start_workpulse multiple times does NOT spawn duplicate workers or duplicate poll loops."""
+        self._login_test_user(workpulse_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -195,19 +195,19 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win._tracker.is_tracking)
+                self.assertTrue(win._tracker.is_workpulse)
 
-                # Calling start_tracking repeatedly must be safely guarded
+                # Calling start_workpulse repeatedly must be safely guarded
                 mock_slot = MagicMock()
                 win._request_start.connect(mock_slot)
-                win.start_tracking()
-                win.start_tracking()
-                # Because win._tracker.is_tracking is already True, _request_start should not be emitted again
+                win.start_workpulse()
+                win.start_workpulse()
+                # Because win._tracker.is_workpulse is already True, _request_start should not be emitted again
                 mock_slot.assert_not_called()
 
                 # Worker also guards against duplicate start
                 with patch.object(win._worker._tracker, "start") as mock_tracker_start:
-                    win._worker.start_tracking()
+                    win._worker.start_workpulse()
                     mock_tracker_start.assert_not_called()
             finally:
                 win._shutdown()
@@ -215,10 +215,10 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_fresh_login_resets_manual_stop_state(self):
-        """A new login resets tracking_manually_stopped, ensuring auto-tracking starts for the new session."""
+        """A new login resets workpulse_manually_stopped, ensuring auto-workpulse starts for the new session."""
         # Set manual stop in old session
-        self.store.set_tracking_manually_stopped(True)
-        self.assertTrue(self.store.is_tracking_manually_stopped())
+        self.store.set_workpulse_manually_stopped(True)
+        self.assertTrue(self.store.is_workpulse_manually_stopped())
 
         # Fresh login occurs and saves session
         self.store.save_session(
@@ -231,16 +231,16 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             user_type="User",
             employee_id="101",
             device_info={"hostname": "TEST-PC"},
-            tracking_permitted=True,
-            tracking_manually_stopped=False,
+            workpulse_permitted=True,
+            workpulse_manually_stopped=False,
         )
 
-        self.assertFalse(self.store.is_tracking_manually_stopped(), "Fresh login must reset manual stop flag")
-        self.assertTrue(self.store.is_tracking_active())
+        self.assertFalse(self.store.is_workpulse_manually_stopped(), "Fresh login must reset manual stop flag")
+        self.assertTrue(self.store.is_workpulse_active())
 
     def test_windows_shutdown_and_restart_native_event(self):
         """WM_QUERYENDSESSION and WM_ENDSESSION native Windows events cleanly trigger shutdown without process hang."""
-        self._login_test_user(tracking_permitted=True)
+        self._login_test_user(workpulse_permitted=True)
 
         with patch("config.api_config.ApiConfig.base_url", new_callable=PropertyMock, return_value="https://test.api"), \
              patch.object(MainWindow, "_check_for_updates"), \
@@ -249,7 +249,7 @@ class TestTrackingPersistenceRestart(unittest.TestCase):
             win.show()
             QApplication.processEvents()
             try:
-                self.assertTrue(win._tracker.is_tracking)
+                self.assertTrue(win._tracker.is_workpulse)
 
                 # Mock ctypes MSG structure for WM_QUERYENDSESSION (0x0011)
                 import ctypes

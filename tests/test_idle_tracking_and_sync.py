@@ -1,4 +1,4 @@
-"""Comprehensive test suite for iHRMS Monitor idle-time tracking, accumulation,
+"""Comprehensive test suite for iHRMS Monitor idle-time workpulse, accumulation,
 
 persistence, and backend synchronization.
 
@@ -7,7 +7,7 @@ Covers all 7 verification cases:
 - Case 2: Multiple idle periods in one session (accumulating idle)
 - Case 3: Long idle period (preventing premature sync while idle)
 - Case 4: Laptop sleep -> wake (preventing sleep duration inflating idle)
-- Case 5: Offline tracking -> later sync (preserving idle duration and syncing once online)
+- Case 5: Offline workpulse -> later sync (preserving idle duration and syncing once online)
 - Case 6: App restart (stale session handling preserving idle time)
 - Case 7: Multiple activity sessions (each with distinct active and idle durations)
 """
@@ -54,8 +54,8 @@ class FakeProvider(PlatformActivityProvider):
         return self.idle_seconds
 
 
-class TestIdleTrackingAndSync(unittest.TestCase):
-    """Complete test suite verifying idle tracking, persistence, and synchronization."""
+class TestIdleWorkPulseAndSync(unittest.TestCase):
+    """Complete test suite verifying idle workpulse, persistence, and synchronization."""
 
     def setUp(self):
         init_database()
@@ -366,7 +366,7 @@ class TestIdleTrackingAndSync(unittest.TestCase):
         Verifies:
         - Sleep duration is not treated as active or session idle duration
         - Anomalous durations > 7200s are sanitized to 0
-        - Tracking resumes cleanly upon wake
+        - WorkPulse resumes cleanly upon wake
         """
         tracker = self._make_tracker(idle_threshold=60)
         tracker.start()
@@ -409,9 +409,9 @@ class TestIdleTrackingAndSync(unittest.TestCase):
             db.close()
 
     # =========================================================================
-    # CASE 5: Offline tracking -> later sync (preserving idle duration)
+    # CASE 5: Offline workpulse -> later sync (preserving idle duration)
     # =========================================================================
-    def test_case_5_offline_tracking_and_later_sync(self):
+    def test_case_5_offline_workpulse_and_later_sync(self):
         """
         Case 5: Application operates offline, records idle time, and syncs when back online.
         Verifies:
@@ -800,7 +800,7 @@ class TestIdleTrackingAndSync(unittest.TestCase):
     def test_case_12_stop_while_idle_persists_final_idle(self):
         """
         Verify:
-        - If tracking stops while the user is idle, the final idle duration is persisted
+        - If workpulse stops while the user is idle, the final idle duration is persisted
         - Session is ready for sync with the exact idle seconds
         """
         tracker = self._make_tracker(idle_threshold=60)
@@ -818,9 +818,9 @@ class TestIdleTrackingAndSync(unittest.TestCase):
         self.simulate_idle(tracker, 70, step=5.0)
         self.assertTrue(tracker.is_idle)
 
-        # User stops tracking while still idle
+        # User stops workpulse while still idle
         tracker.stop()
-        self.assertFalse(tracker.is_tracking)
+        self.assertFalse(tracker.is_workpulse)
 
         # Verify DB has the final idle duration
         db = get_session()

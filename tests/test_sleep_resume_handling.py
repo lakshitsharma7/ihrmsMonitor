@@ -1,4 +1,4 @@
-"""Unit tests verifying idle/tracking state handling across Windows Sleep/Resume."""
+"""Unit tests verifying idle/workpulse state handling across Windows Sleep/Resume."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ class TestSleepResumeHandling(unittest.TestCase):
         resume_time = clock()
         tracker.handle_system_resume(now=resume_time)
 
-        # State must immediately be tracking and active
+        # State must immediately be workpulse and active
         self.assertFalse(tracker._is_idle)
         self.assertIsNone(tracker._idle_start_time)
         self.assertEqual(tracker._last_idle_seconds, 0.0)

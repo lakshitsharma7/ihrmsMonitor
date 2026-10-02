@@ -280,7 +280,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             indo_code="EC-100",
             allow_user_device=True,
             allow_logout=True,
-            tracking_permitted=True,
+            workpulse_permitted=True,
         )
 
         mock_act_svc = MagicMock()

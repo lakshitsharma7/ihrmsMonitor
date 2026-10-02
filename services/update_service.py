@@ -4,7 +4,7 @@ Handles:
 1. Version checking against the App Controller API (POST /appcontroller/appcontroller).
 2. Background streaming download of newer versions with progress reporting.
 3. Safe, unattended Inno Setup installation and clean application restart.
-4. Preserving all local database records, credentials, settings, and tracking data.
+4. Preserving all local database records, credentials, settings, and workpulse data.
 """
 
 from __future__ import annotations
@@ -873,7 +873,7 @@ def flush_pending_data_before_update(
 
     logger.info("Verifying pending activity logs and screenshots before update...")
 
-    # Finalize active tracking session ONLY if stopping is explicitly requested (right before restart)
+    # Finalize active workpulse session ONLY if stopping is explicitly requested (right before restart)
     if stop_tracker:
         try:
             from PySide6.QtWidgets import QApplication
@@ -881,12 +881,12 @@ def flush_pending_data_before_update(
             app = QApplication.instance()
             if app:
                 for widget in app.topLevelWidgets():
-                    if hasattr(widget, "stop_tracking") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_tracking", False):
-                        logger.info("Stopping active tracking to record session before update.")
+                    if hasattr(widget, "stop_workpulse") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_workpulse", False):
+                        logger.info("Stopping active workpulse to record session before update.")
                         try:
-                            widget.stop_tracking(manual=False)
+                            widget.stop_workpulse(manual=False)
                         except TypeError:
-                            widget.stop_tracking()
+                            widget.stop_workpulse()
                         time.sleep(0.5)
         except Exception as stop_err:
             logger.debug("Could not auto-stop active tracker: %s", stop_err)

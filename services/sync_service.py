@@ -61,7 +61,7 @@ class SyncService:
     # Maximum number of records returned in one history page.
     MAX_PAGE_SIZE = 500
 
-    # Global tracking properties for UI dashboard display
+    # Global workpulse properties for UI dashboard display
     last_sync_status: str = "Sent"  # Sending / Sent / Failed
     last_sync_error: str = ""
     last_successful_sync_time: str = "Never"
@@ -189,7 +189,7 @@ class SyncService:
                 return url
         except Exception:
             pass
-        return f"{self.api_url}/tracking/get_settings"
+        return f"{self.api_url}/workpulse/get_settings"
 
     @property
     def save_activity_batch_url(self) -> str:
@@ -200,7 +200,7 @@ class SyncService:
                 return url
         except Exception:
             pass
-        return f"{self.api_url}/tracking/save_activity_batch"
+        return f"{self.api_url}/workpulse/save_activity_batch"
 
     @property
     def upload_screenshot_url(self) -> str:
@@ -211,7 +211,7 @@ class SyncService:
                 return url
         except Exception:
             pass
-        return f"{self.api_url}/tracking/upload_screenshot"
+        return f"{self.api_url}/workpulse/upload_screenshot"
 
     @property
     def enroll_device_url(self) -> str:
@@ -222,11 +222,11 @@ class SyncService:
                 return url
         except Exception:
             pass
-        return f"{self.api_url}/tracking/enroll_device"
+        return f"{self.api_url}/workpulse/enroll_device"
 
     def fetch_settings(self) -> dict:
         """
-        Fetch latest configuration from tracking/get_settings at the beginning of each sync cycle
+        Fetch latest configuration from workpulse/get_settings at the beginning of each sync cycle
         and apply the returned values directly without using overriding hardcoded fallbacks.
         """
         if not self._fetching_settings_lock.acquire(timeout=5.0):
@@ -360,9 +360,9 @@ class SyncService:
                     if capture_mode is not None:
                         update_kwargs["capture_on_switch"] = True if capture_mode != "disabled" else False
 
-                    tracking_enabled = settings_data.get("tracking_enabled")
-                    if tracking_enabled is not None:
-                        update_kwargs["tracking_enabled"] = bool(tracking_enabled)
+                    workpulse_enabled = settings_data.get("workpulse_enabled")
+                    if workpulse_enabled is not None:
+                        update_kwargs["workpulse_enabled"] = bool(workpulse_enabled)
 
                     if update_kwargs:
                         repo.update(**update_kwargs)
@@ -427,13 +427,13 @@ class SyncService:
                 if server_allow_user_device is not None:
                     self._save_cached_setting("allow_user_device", server_allow_user_device)
 
-                # Tracking permitted (checks if activity tracking is enabled by backend)
-                server_allow_tracking = _extract_permission(
+                # WorkPulse permitted (checks if activity workpulse is enabled by backend)
+                server_allow_workpulse = _extract_permission(
                     settings_data,
-                    ["tracking_enabled", "tracking_permitted", "allow_tracking", "is_tracking_enabled", "enable_tracking"]
+                    ["workpulse_enabled", "workpulse_permitted", "allow_workpulse", "is_workpulse_enabled", "enable_workpulse"]
                 )
-                if server_allow_tracking is not None:
-                    self._save_cached_setting("tracking_permitted", server_allow_tracking)
+                if server_allow_workpulse is not None:
+                    self._save_cached_setting("workpulse_permitted", server_allow_workpulse)
 
                 # Update session permissions dynamically
                 perm_kwargs = {}
@@ -441,8 +441,8 @@ class SyncService:
                     perm_kwargs["allow_logout"] = server_allow_logout
                 if server_allow_user_device is not None:
                     perm_kwargs["allow_user_device"] = server_allow_user_device
-                if server_allow_tracking is not None:
-                    perm_kwargs["tracking_permitted"] = server_allow_tracking
+                if server_allow_workpulse is not None:
+                    perm_kwargs["workpulse_permitted"] = server_allow_workpulse
 
                 if perm_kwargs:
                     session_svc.update_permissions(**perm_kwargs)
@@ -464,7 +464,7 @@ class SyncService:
                             user_type=saved.get("user_type") or curr.user_type,
                             employee_id=saved.get("employee_id") or curr.employee_id,
                             device_info=saved.get("device_info") or curr.device_info or {},
-                            tracking_permitted=curr.tracking_permitted,
+                            workpulse_permitted=curr.workpulse_permitted,
                             base_url=saved.get("base_url"),
                             company_id=saved.get("company_id"),
                             allow_user_device=curr.allow_user_device,
@@ -476,7 +476,7 @@ class SyncService:
                 return settings_data
         except Exception as err:
             logger.warning(
-                "Could not reach Sync API (tracking/get_settings); preserving last successfully received settings "
+                "Could not reach Sync API (workpulse/get_settings); preserving last successfully received settings "
                 "(sync_interval_seconds=%d, idle_threshold_seconds=%d): %s",
                 self.current_sync_interval_seconds,
                 self.current_idle_threshold_seconds,
@@ -491,7 +491,7 @@ class SyncService:
                     error_message=f"Sync API fetch settings failed: {err}",
                     exc=err,
                     extra_context={
-                        "endpoint": "/tracking/get_settings",
+                        "endpoint": "/workpulse/get_settings",
                         "api_url": self._api_url,
                         "http_status": http_code,
                         "response_error": resp_text,
@@ -570,7 +570,7 @@ class SyncService:
             if not enroll_url:
                 base = session_data.get("base_url") or getattr(cfg, "base_url", None)
                 if base:
-                    enroll_url = f"{base.rstrip('/')}/tracking/enroll_device"
+                    enroll_url = f"{base.rstrip('/')}/workpulse/enroll_device"
 
             if not enroll_url:
                 logger.error("Device re-enrollment aborted: Cannot resolve enroll_device URL.")
@@ -722,7 +722,7 @@ class SyncService:
 
         current_emp_id = "unknown"
         try:
-            # Call tracking/get_settings at the start of every sync cycle
+            # Call workpulse/get_settings at the start of every sync cycle
             device_token = self._require_device_token()
 
             if not device_token:
@@ -829,7 +829,7 @@ class SyncService:
                         new_payload = {
                             "device_token": current_device_token,
                             "system_started_at": payload.get("system_started_at"),
-                            "tracking_started_at": payload.get("tracking_started_at"),
+                            "workpulse_started_at": payload.get("workpulse_started_at"),
                             "punch_in": payload.get("punch_in"),
                             "punch_out": payload.get("punch_out"),
                             "sessions": json.dumps(payload["activities"]),
@@ -891,7 +891,7 @@ class SyncService:
                                     error_type=err_type,
                                     error_message=f"Activity upload batch failed: {error_msg}",
                                     extra_context={
-                                        "endpoint": "/tracking/save_activity_batch",
+                                        "endpoint": "/workpulse/save_activity_batch",
                                         "api_url": self._api_url,
                                         "page": page_num,
                                         "response_error": res_data or SyncService.last_sync_error,
@@ -1047,7 +1047,7 @@ class SyncService:
         masked_payload = dict(payload)
         masked_payload["device_token"] = _mask_token(current_token)
         logger.info(
-            "[API_PAYLOAD_SENT] endpoint=/tracking/save_activity_batch page=%d sessions_count=%d payload=%s",
+            "[API_PAYLOAD_SENT] endpoint=/workpulse/save_activity_batch page=%d sessions_count=%d payload=%s",
             page,
             len(payload.get("sessions", [])),
             masked_payload,
@@ -1067,7 +1067,7 @@ class SyncService:
                     retries,
                 )
                 logger.info(
-                    "[API_RESPONSE_RECEIVED] endpoint=/tracking/save_activity_batch page=%d HTTP %d Response body: %s (attempt %d)",
+                    "[API_RESPONSE_RECEIVED] endpoint=/workpulse/save_activity_batch page=%d HTTP %d Response body: %s (attempt %d)",
                     page,
                     response.status_code,
                     response.text,
@@ -1198,7 +1198,7 @@ class SyncService:
                 )
                 if attempt == retries:
                     logger.error(
-                        "Activity sync failed after maximum retries. URL=%s/tracking/save_activity_batch HTTP=%s Error: %s",
+                        "Activity sync failed after maximum retries. URL=%s/workpulse/save_activity_batch HTTP=%s Error: %s",
                         self._api_url,
                         http_code,
                         exc,
@@ -1213,7 +1213,7 @@ class SyncService:
                             extra_context={
                                 "page": page,
                                 "api_url": self._api_url,
-                                "endpoint": "/tracking/save_activity_batch",
+                                "endpoint": "/workpulse/save_activity_batch",
                                 "http_status": http_code,
                                 "response_error": resp_text,
                             },
@@ -1352,7 +1352,7 @@ class SyncService:
             except Exception:
                 att_ctx = {
                     "system_started_at": None,
-                    "tracking_started_at": None,
+                    "workpulse_started_at": None,
                     "punch_in": None,
                     "punch_out": None,
                 }
@@ -1389,7 +1389,7 @@ class SyncService:
                 "disk_usage_percent": sys_health.get("disk_usage_percent", 0.0),
                 "network_status": sys_health.get("network_status", "connected"),
                 "system_started_at": att_ctx.get("system_started_at"),
-                "tracking_started_at": att_ctx.get("tracking_started_at"),
+                "workpulse_started_at": att_ctx.get("workpulse_started_at"),
                 "punch_in": att_ctx.get("punch_in"),
                 "punch_out": att_ctx.get("punch_out"),
             })
@@ -1411,7 +1411,7 @@ class SyncService:
         except Exception:
             today_att = {
                 "system_started_at": None,
-                "tracking_started_at": None,
+                "workpulse_started_at": None,
                 "punch_in": None,
                 "punch_out": None,
             }
@@ -1428,7 +1428,7 @@ class SyncService:
             },
             "system_health": sys_health,
             "system_started_at": today_att.get("system_started_at"),
-            "tracking_started_at": today_att.get("tracking_started_at"),
+            "workpulse_started_at": today_att.get("workpulse_started_at"),
             "punch_in": today_att.get("punch_in"),
             "punch_out": today_att.get("punch_out"),
             "activities": activities,
@@ -1807,7 +1807,7 @@ class SyncService:
         """
         Immediately upload a screenshot to:
 
-            POST /tracking/upload_screenshot
+            POST /workpulse/upload_screenshot
         """
         screenshot_path = Path(
             screenshot_path
@@ -2086,7 +2086,7 @@ class SyncService:
                     error_message=f"Screenshot upload failed for session {activity_session_id}: {exc}",
                     exc=exc,
                     extra_context={
-                        "endpoint": "/tracking/upload_screenshot",
+                        "endpoint": "/workpulse/upload_screenshot",
                         "api_url": self._api_url,
                         "session_id": str(activity_session_id),
                         "file": str(screenshot_path.name),
@@ -2111,7 +2111,7 @@ class SyncService:
                     error_message=f"Unexpected screenshot upload error for session {activity_session_id}: {exc}",
                     exc=exc,
                     extra_context={
-                        "endpoint": "/tracking/upload_screenshot",
+                        "endpoint": "/workpulse/upload_screenshot",
                         "api_url": self._api_url,
                         "session_id": str(activity_session_id),
                         "file": str(screenshot_path.name),

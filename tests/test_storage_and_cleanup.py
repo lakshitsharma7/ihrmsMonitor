@@ -1,5 +1,5 @@
 """
-Comprehensive tests for local storage, offline tracking, upload synchronization,
+Comprehensive tests for local storage, offline workpulse, upload synchronization,
 server-verified deletion, and cleanup sweeps.
 """
 
@@ -67,7 +67,7 @@ class TestLocalStorageAndCleanupFlow(unittest.TestCase):
         self.db_session.close()
         self.temp_dir.cleanup()
 
-    def test_offline_tracking_persists_data_safely(self):
+    def test_offline_workpulse_persists_data_safely(self):
         """Verify that offline activity and screenshot are saved locally and not lost."""
         # 1. Simulate offline screenshot creation
         screenshot_file = self.screenshots_dir / "sess_101.png"

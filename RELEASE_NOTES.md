@@ -9,7 +9,7 @@ We are excited to release **Workpulse v2.0.2**, introducing native macOS distrib
 #### 🍎 Native macOS Support
 - **Native macOS Application (`Workpulse.app`)**: 64-bit Mach-O executable built with Apple Silicon and Intel compatibility.
 - **macOS Disk Image (`Workpulse.dmg`)**: Drag-and-drop installer for effortless installation into `/Applications`.
-- **Platform-Native Monitoring**: Idle tracking via macOS `CGEventSourceSecondsSinceLastEventType`, CoreGraphics window title capture, native dock icon integration, and macOS app state lifecycle management.
+- **Platform-Native Monitoring**: Idle workpulse via macOS `CGEventSourceSecondsSinceLastEventType`, CoreGraphics window title capture, native dock icon integration, and macOS app state lifecycle management.
 - **Headless CI Testing Support**: Automated detection of headless environments and offscreen Qt rendering.
 
 #### 🔄 Multi-Platform Auto-Update System
@@ -18,7 +18,7 @@ We are excited to release **Workpulse v2.0.2**, introducing native macOS distrib
 - **Detached macOS Updater**: Standalone background shell updater (`updater.sh`) that safely waits for app termination, clears lock files, mounts the DMG, upgrades `/Applications/Workpulse.app`, and relaunches the application.
 
 #### 🔒 Security & TLS CA Certificate Resilience
-- **Dynamic CA Bundle Resolution**: Auto-recovers from invalid user paths or stale roaming environment variables (`REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`), guaranteeing uninterrupted HTTPS connections for attendance, leave balances, and tracking sync.
+- **Dynamic CA Bundle Resolution**: Auto-recovers from invalid user paths or stale roaming environment variables (`REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`), guaranteeing uninterrupted HTTPS connections for attendance, leave balances, and workpulse sync.
 - **Dynamic HRMS Single-Sign-On**: Secure token generation for instant HRMS portal access from the Workpulse dashboard without exposing plain-text credentials in URLs.
 
 #### 🧪 Quality Assurance & CI/CD

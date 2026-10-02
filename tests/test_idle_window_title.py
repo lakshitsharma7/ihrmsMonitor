@@ -157,7 +157,7 @@ class TestIdleWindowTitle(unittest.TestCase):
 
         # Active state
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Slack.exe",
             current_window_title="General - Slack",
@@ -168,7 +168,7 @@ class TestIdleWindowTitle(unittest.TestCase):
 
         # Idle state
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=True,
             current_application="Idle",
             current_window_title="Idle - 00:05:42",
@@ -179,7 +179,7 @@ class TestIdleWindowTitle(unittest.TestCase):
 
         # Resumed state
         page.update_tracker_state(TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Slack.exe",
             current_window_title="General - Slack",

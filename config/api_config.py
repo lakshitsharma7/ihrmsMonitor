@@ -30,6 +30,7 @@ session.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 
 import requests
@@ -500,7 +501,7 @@ class ApiConfig:
             os.environ.get("IHRMS_ENROLL_DEVICE_API_URL")
             or self._details.get("enroll_device_url")
             or self._details.get("enroll_url")
-            or self.endpoint("tracking/enroll_device")
+            or self.endpoint("workpulse/enroll_device")
         )
 
     @property
@@ -510,7 +511,7 @@ class ApiConfig:
             os.environ.get("IHRMS_GET_SETTINGS_API_URL")
             or self._details.get("get_settings_url")
             or self._details.get("settings_url")
-            or self.endpoint("tracking/get_settings")
+            or self.endpoint("workpulse/get_settings")
         )
 
     @property
@@ -520,7 +521,7 @@ class ApiConfig:
             os.environ.get("IHRMS_SAVE_ACTIVITY_BATCH_API_URL")
             or self._details.get("save_activity_batch_url")
             or self._details.get("activity_batch_url")
-            or self.endpoint("tracking/save_activity_batch")
+            or self.endpoint("workpulse/save_activity_batch")
         )
 
     @property
@@ -530,7 +531,7 @@ class ApiConfig:
             os.environ.get("IHRMS_UPLOAD_SCREENSHOT_API_URL")
             or self._details.get("upload_screenshot_url")
             or self._details.get("screenshot_url")
-            or self.endpoint("tracking/upload_screenshot")
+            or self.endpoint("workpulse/upload_screenshot")
         )
 
     @property
@@ -548,7 +549,7 @@ class ApiConfig:
         return (
             os.environ.get("IHRMS_REPORT_ERROR_API_URL")
             or self._details.get("report_error_url")
-            or self.endpoint("tracking/report_error")
+            or self.endpoint("workpulse/report_error")
         )
 
     @property
@@ -635,7 +636,7 @@ class ApiConfig:
 
         Example:
 
-            ApiConfig().endpoint("tracking/enroll_device")
+            ApiConfig().endpoint("workpulse/enroll_device")
         """
 
         return f"{self.base_url}/{path.lstrip('/')}"

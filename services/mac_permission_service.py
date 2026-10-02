@@ -18,7 +18,7 @@ existing process. This module coordinates that relaunch:
   2. The user enables Workpulse in System Settings.
   3. Clicking "Quit & Reopen" calls ``relaunch_application()``.
   4. On reopen, ``has_screen_recording_permission()`` returns True.
-  5. Screenshot tracking starts automatically.
+  5. Screenshot workpulse starts automatically.
 
 A persistent restart-counter in AppData prevents infinite relaunch loops
 if the user never actually enables the permission.

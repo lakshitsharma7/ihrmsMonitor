@@ -6,8 +6,8 @@ Verifies:
    - Internet Unavailable -> '● Offline' (red: #ef4444)
 2. Offline state at application startup correctly displays '● Offline'.
 3. Real-time transition from Online -> Offline and Offline -> Online.
-4. Paused tracking or session state does NOT alter internet connectivity indicator.
-5. Tracking and local SQLite persistence continue uninterrupted while offline.
+4. Paused workpulse or session state does NOT alter internet connectivity indicator.
+5. WorkPulse and local SQLite persistence continue uninterrupted while offline.
 6. Offline records are safely retained and synced after reconnection.
 7. Last successful sync timestamp is decoupled from real-time online/offline indicator.
 """
@@ -32,8 +32,8 @@ class TestNetworkStatusCard(unittest.TestCase):
         SessionService().clear()
         try:
             from services.secure_session import SessionStore
-            SessionStore().set_tracking_paused(False)
-            SessionStore().set_tracking_manually_stopped(False)
+            SessionStore().set_workpulse_paused(False)
+            SessionStore().set_workpulse_manually_stopped(False)
         except Exception:
             pass
         self.mock_service = MagicMock()
@@ -44,8 +44,8 @@ class TestNetworkStatusCard(unittest.TestCase):
         SessionService().clear()
         try:
             from services.secure_session import SessionStore
-            SessionStore().set_tracking_paused(False)
-            SessionStore().set_tracking_manually_stopped(False)
+            SessionStore().set_workpulse_paused(False)
+            SessionStore().set_workpulse_manually_stopped(False)
         except Exception:
             pass
 
@@ -88,20 +88,20 @@ class TestNetworkStatusCard(unittest.TestCase):
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertIn("#10b981", dashboard.network_status_label.styleSheet())
 
-    def test_tracking_and_local_persistence_while_offline(self):
-        """Changing network status to Offline does NOT halt tracking or local session recording."""
+    def test_workpulse_and_local_persistence_while_offline(self):
+        """Changing network status to Offline does NOT halt workpulse or local session recording."""
         dashboard = DashboardPage(self.mock_service)
-        dashboard.set_tracking_active(True)
+        dashboard.set_workpulse_active(True)
         dashboard.set_network_status(False)
 
-        # Confirm tracking remains active
+        # Confirm workpulse remains active
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
-        self.assertTrue(dashboard._is_tracking)
-        self.assertEqual(dashboard.tracking_toggle_button.text(), "Paused")
+        self.assertTrue(dashboard._is_workpulse)
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
 
         # Update tracker state with active application while offline
         state = TrackerState(
-            is_tracking=True,
+            is_workpulse=True,
             is_idle=False,
             current_application="Code.exe",
             current_window_title="main.py",
@@ -125,13 +125,13 @@ class TestNetworkStatusCard(unittest.TestCase):
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
         self.assertIn("29 Sep 2026, 05:31:36 PM", dashboard.last_sync_label.text())
 
-    def test_paused_tracking_does_not_show_offline(self):
-        """When user pauses tracking, network connectivity indicator remains Online."""
+    def test_paused_workpulse_does_not_show_offline(self):
+        """When user pauses workpulse, network connectivity indicator remains Online."""
         dashboard = DashboardPage(self.mock_service)
-        dashboard.set_tracking_active(True)
+        dashboard.set_workpulse_active(True)
         dashboard.set_network_status(True)
 
-        dashboard.tracking_toggle_button.click()
+        dashboard.workpulse_toggle_button.click()
         self.assertTrue(dashboard.is_paused())
 
         self.assertEqual(dashboard.network_status_label.text(), "● Online")

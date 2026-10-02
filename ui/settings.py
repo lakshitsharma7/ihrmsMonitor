@@ -42,7 +42,7 @@ class SettingsPage(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        group = QGroupBox("Tracking")
+        group = QGroupBox("WorkPulse")
         form = QFormLayout()
 
         self.start_with_system_checkbox = QCheckBox("Start with system")
@@ -158,6 +158,6 @@ class SettingsPage(QWidget):
             interval_str = f"{settings.screenshot_custom_interval // 60} minutes (custom)"
         self.current_interval_label.setText(interval_str)
 
-    def update_capture_status(self, is_tracking: bool) -> None:
-        status_str = "Active" if is_tracking else "Inactive"
+    def update_capture_status(self, is_workpulse: bool) -> None:
+        status_str = "Active" if is_workpulse else "Inactive"
         self.capture_status_label.setText(status_str)

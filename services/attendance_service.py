@@ -1,8 +1,8 @@
-"""Attendance and System Start tracking service for iHRMS Monitor.
+"""Attendance and System Start workpulse service for iHRMS Monitor.
 
 Tracks:
 1. Daily Windows/System boot time (system_started_at) via psutil.boot_time().
-2. Daily iHRMS Monitor tracking start time (tracking_started_at).
+2. Daily iHRMS Monitor workpulse start time (workpulse_started_at).
 3. Optional Punch-In (punch_in) and Punch-Out (punch_out) timestamps.
 4. Handles multiple application/system restarts without overwriting daily start time.
 5. Offline-first local JSON/QSettings persistence.
@@ -47,7 +47,7 @@ def _format_dt(dt: datetime | None) -> str | None:
 
 
 class AttendanceService:
-    """Singleton service for daily system start, tracking start, and punch tracking."""
+    """Singleton service for daily system start, workpulse start, and punch workpulse."""
 
     _instance: AttendanceService | None = None
     _lock = threading.Lock()
@@ -125,11 +125,11 @@ class AttendanceService:
             else:
                 self._save_state({})
 
-    def record_tracking_start(self, timestamp: datetime | None = None) -> dict:
+    def record_workpulse_start(self, timestamp: datetime | None = None) -> dict:
         """
-        Record the start of tracking for today and capture system boot time.
+        Record the start of workpulse for today and capture system boot time.
         
-        If tracking already started for today's boot, the initial start time is preserved.
+        If workpulse already started for today's boot, the initial start time is preserved.
         """
         with self._state_lock:
             now_local = (timestamp or datetime.now()).astimezone()
@@ -145,9 +145,9 @@ class AttendanceService:
             if not day_data.get("system_started_at"):
                 day_data["system_started_at"] = boot_str
 
-            # Preserve the initial tracking_started_at time across application restarts
-            if not day_data.get("tracking_started_at"):
-                day_data["tracking_started_at"] = now_str
+            # Preserve the initial workpulse_started_at time across application restarts
+            if not day_data.get("workpulse_started_at"):
+                day_data["workpulse_started_at"] = now_str
 
             day_data["date"] = date_key
             day_data["hostname"] = socket.gethostname()
@@ -160,10 +160,10 @@ class AttendanceService:
             self._save_state(state)
 
             logger.info(
-                "Attendance recorded: date=%s system_started_at=%s tracking_started_at=%s punch_in=%s punch_out=%s",
+                "Attendance recorded: date=%s system_started_at=%s workpulse_started_at=%s punch_in=%s punch_out=%s",
                 date_key,
                 day_data["system_started_at"],
-                day_data["tracking_started_at"],
+                day_data["workpulse_started_at"],
                 day_data.get("punch_in"),
                 day_data.get("punch_out"),
             )
@@ -188,8 +188,8 @@ class AttendanceService:
             day_data["hostname"] = socket.gethostname()
             if not day_data.get("system_started_at"):
                 day_data["system_started_at"] = _format_dt(_get_boot_datetime())
-            if not day_data.get("tracking_started_at"):
-                day_data["tracking_started_at"] = _format_dt(now_local)
+            if not day_data.get("workpulse_started_at"):
+                day_data["workpulse_started_at"] = _format_dt(now_local)
 
             day_data["punch_in"] = p_str
             if "punch_out" not in day_data:
@@ -219,8 +219,8 @@ class AttendanceService:
             day_data["hostname"] = socket.gethostname()
             if not day_data.get("system_started_at"):
                 day_data["system_started_at"] = _format_dt(_get_boot_datetime())
-            if not day_data.get("tracking_started_at"):
-                day_data["tracking_started_at"] = _format_dt(now_local)
+            if not day_data.get("workpulse_started_at"):
+                day_data["workpulse_started_at"] = _format_dt(now_local)
 
             day_data["punch_out"] = p_str
 
@@ -495,10 +495,10 @@ class AttendanceService:
 
     def get_daily_attendance(self, date_str: str | None = None) -> dict:
         """
-        Get attendance context (system_started_at, tracking_started_at, punch_in, punch_out).
+        Get attendance context (system_started_at, workpulse_started_at, punch_in, punch_out).
         
-        Guarantees that system_started_at and tracking_started_at are always populated
-        even if tracking start was not explicitly invoked yet or Punch was never performed.
+        Guarantees that system_started_at and workpulse_started_at are always populated
+        even if workpulse start was not explicitly invoked yet or Punch was never performed.
         """
         with self._state_lock:
             now_local = datetime.now().astimezone()
@@ -514,7 +514,7 @@ class AttendanceService:
                     "date": date_key,
                     "hostname": socket.gethostname(),
                     "system_started_at": boot_str,
-                    "tracking_started_at": now_str,
+                    "workpulse_started_at": now_str,
                     "punch_in": None,
                     "punch_out": None,
                 }
@@ -525,7 +525,7 @@ class AttendanceService:
                 "date": day_data.get("date", date_key),
                 "hostname": day_data.get("hostname", socket.gethostname()),
                 "system_started_at": day_data.get("system_started_at") or _format_dt(_get_boot_datetime()),
-                "tracking_started_at": day_data.get("tracking_started_at") or _format_dt(now_local),
+                "workpulse_started_at": day_data.get("workpulse_started_at") or _format_dt(now_local),
                 "punch_in": day_data.get("punch_in"),
                 "punch_out": day_data.get("punch_out"),
             }

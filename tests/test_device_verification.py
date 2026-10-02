@@ -1,4 +1,4 @@
-"""Unit tests for Windows EXE auto-update verification and device fleet tracking."""
+"""Unit tests for Windows EXE auto-update verification and device fleet workpulse."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from services.device_registry_service import DeviceRegistryService, OFFLINE_THRE
 
 
 class TestDeviceVerificationSystem(unittest.TestCase):
-    """Test suite verifying device tracking, version comparison, and update status evaluation."""
+    """Test suite verifying device workpulse, version comparison, and update status evaluation."""
 
     def setUp(self):
         init_database()
@@ -238,7 +238,7 @@ class TestDeviceVerificationSystem(unittest.TestCase):
         self.assertEqual(offline[0]["hostname"], "LAPTOP-DEV-01")
 
     def test_device_reconnect_restores_online_status(self):
-        """Verify device resuming heartbeat resets offline tracking state."""
+        """Verify device resuming heartbeat resets offline workpulse state."""
         dev_id = "DEV-RECONNECTING"
         stale_time = datetime.now(timezone.utc) - timedelta(hours=5)
 

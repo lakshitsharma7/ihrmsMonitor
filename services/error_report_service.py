@@ -22,7 +22,7 @@ Features:
 2. Sanitizes sensitive data (passwords, tokens, API keys) before reporting.
 3. Implements deduplication and cooldown (1-hour window) to prevent duplicate reports.
 4. Asynchronous delivery on a background daemon thread (ErrorReportWorker) so it
-   NEVER blocks or impacts UI responsiveness, tracking, sync, or updates.
+   NEVER blocks or impacts UI responsiveness, workpulse, sync, or updates.
 5. Fails gracefully without interrupting the core application.
 """
 
@@ -288,17 +288,17 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 7. Current application status (tracking, sync, update)
-        tracking_status = "Unknown"
+        # 7. Current application status (workpulse, sync, update)
+        workpulse_status = "Unknown"
         try:
             from services.secure_session import SessionStore
             store = SessionStore()
-            if store.is_tracking_manually_stopped():
-                tracking_status = "Manually Stopped"
-            elif store.is_tracking_active():
-                tracking_status = "Active"
+            if store.is_workpulse_manually_stopped():
+                workpulse_status = "Manually Stopped"
+            elif store.is_workpulse_active():
+                workpulse_status = "Active"
             else:
-                tracking_status = "Inactive"
+                workpulse_status = "Inactive"
         except Exception:
             pass
 
@@ -337,7 +337,7 @@ class ErrorReportService:
             "endpoint": sanitize_text(endpoint),
             "http_status": sanitize_text(http_status),
             "response_error": sanitize_text(response_error),
-            "tracking_status": tracking_status,
+            "workpulse_status": workpulse_status,
             "sync_status": sync_status,
             "update_status": update_status,
             "traceback": sanitize_text(traceback_str),
@@ -458,7 +458,7 @@ class ErrorReportService:
             f"Company Code  : {user.get('company_code', 'N/A')}\n"
             f"Role          : {user.get('role', 'N/A')}\n"
             f"OS User       : {device.get('os_user', 'N/A')}\n"
-            f"Tracking State: {context.get('tracking_status', 'Unknown')}\n"
+            f"WorkPulse State: {context.get('workpulse_status', 'Unknown')}\n"
             f"Sync State    : {context.get('sync_status', 'Unknown')}\n"
             f"Update State  : {context.get('update_status', 'Unknown')}\n\n"
             "--- Traceback ---\n"
@@ -599,7 +599,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
       <tr><td class="label">Company Code</td><td class="val">{user.get('company_code', 'N/A')}</td></tr>
       <tr><td class="label">Role</td><td class="val">{user.get('role', 'N/A')}</td></tr>
       <tr><td class="label">OS User</td><td class="val">{device.get('os_user', 'N/A')}</td></tr>
-      <tr><td class="label">Tracking State</td><td class="val">{context.get('tracking_status', 'Unknown')}</td></tr>
+      <tr><td class="label">WorkPulse State</td><td class="val">{context.get('workpulse_status', 'Unknown')}</td></tr>
       <tr><td class="label">Sync State</td><td class="val">{context.get('sync_status', 'Unknown')}</td></tr>
       <tr><td class="label">Update State</td><td class="val">{context.get('update_status', 'Unknown')}</td></tr>
     </table>
@@ -784,7 +784,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         Record and dispatch an error report to the support email address via SMTP.
 
         Runs asynchronously on a background daemon thread so it NEVER blocks caller
-        execution, UI rendering, tracking, or network sync.
+        execution, UI rendering, workpulse, or network sync.
         Deduplicates identical errors within a 1-hour window.
         """
         try:

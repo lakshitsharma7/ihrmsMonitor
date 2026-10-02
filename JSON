@@ -12,7 +12,7 @@
       "start_time": "2026-08-24T10:04:13Z",
       "end_time": "2026-08-24T10:08:45Z",
       "duration": 272,
-      "tracking_status": "completed"
+      "workpulse_status": "completed"
     },
     {
       "local_session_id": 43,
@@ -21,7 +21,7 @@
       "start_time": "2026-08-24T10:08:45Z",
       "end_time": "2026-08-24T10:20:12Z",
       "duration": 687,
-      "tracking_status": "completed"
+      "workpulse_status": "completed"
     },
     {
       "local_session_id": 44,
@@ -30,7 +30,7 @@
       "start_time": "2026-08-24T10:20:12Z",
       "end_time": null,
       "duration": 536,
-      "tracking_status": "active"
+      "workpulse_status": "active"
     }
   ]
 }

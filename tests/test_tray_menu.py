@@ -2,7 +2,7 @@
 
 Verifies:
 1. Exit action is removed from the background system tray context menu by default.
-2. Other necessary menu actions (Show Dashboard, Start Tracking, Stop Tracking, Today's Activity, Settings, Check for Updates) remain present.
+2. Other necessary menu actions (Show Dashboard, Start WorkPulse, Stop WorkPulse, Today's Activity, Settings, Check for Updates) remain present.
 """
 
 import unittest
@@ -19,8 +19,8 @@ class TestTrayMenu(unittest.TestCase):
     def test_exit_option_removed_from_tray_menu(self):
         parent = QWidget()
         on_show_dashboard = MagicMock()
-        on_start_tracking = MagicMock()
-        on_stop_tracking = MagicMock()
+        on_start_workpulse = MagicMock()
+        on_stop_workpulse = MagicMock()
         on_show_today = MagicMock()
         on_show_settings = MagicMock()
         on_exit = MagicMock()
@@ -29,8 +29,8 @@ class TestTrayMenu(unittest.TestCase):
         tray = TrayController(
             parent=parent,
             on_show_dashboard=on_show_dashboard,
-            on_start_tracking=on_start_tracking,
-            on_stop_tracking=on_stop_tracking,
+            on_start_workpulse=on_start_workpulse,
+            on_stop_workpulse=on_stop_workpulse,
             on_show_today_activity=on_show_today,
             on_show_settings=on_show_settings,
             on_exit=on_exit,
@@ -48,8 +48,8 @@ class TestTrayMenu(unittest.TestCase):
 
         # Verify other essential actions are present
         self.assertIn("Show Dashboard", action_texts)
-        self.assertIn("Start Tracking", action_texts)
-        self.assertIn("Stop Tracking", action_texts)
+        self.assertIn("Start WorkPulse", action_texts)
+        self.assertIn("Stop WorkPulse", action_texts)
         self.assertIn("Today's Activity", action_texts)
         self.assertIn("Settings", action_texts)
         self.assertIn("Check for Updates", action_texts)

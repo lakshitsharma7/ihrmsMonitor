@@ -188,15 +188,15 @@ class TestAutoUpdateFlow(unittest.TestCase):
         self.assertIn("https://softdev.indovisionservices.in/ihrms84/uploads/ihrms-monitor-v2.exe", candidates)
         self.assertNotIn("https://indovisionservices.in/info/dev/v15/acitivity-tracker", candidates)
 
-    def test_flush_pending_data_preserves_tracking_by_default(self):
-        """Pre-update flush does not stop active tracking unless stop_tracker=True."""
+    def test_flush_pending_data_preserves_workpulse_by_default(self):
+        """Pre-update flush does not stop active workpulse unless stop_tracker=True."""
         from unittest.mock import patch, MagicMock
         from services.update_service import flush_pending_data_before_update
 
         mock_widget = MagicMock()
-        mock_widget.stop_tracking = MagicMock()
+        mock_widget.stop_workpulse = MagicMock()
         mock_widget._tracker = MagicMock()
-        mock_widget._tracker.is_tracking = True
+        mock_widget._tracker.is_workpulse = True
 
         mock_app = MagicMock()
         mock_app.topLevelWidgets.return_value = [mock_widget]
@@ -208,12 +208,12 @@ class TestAutoUpdateFlow(unittest.TestCase):
             # Default call: stop_tracker=False
             res = flush_pending_data_before_update(stop_tracker=False)
             self.assertTrue(res)
-            mock_widget.stop_tracking.assert_not_called()
+            mock_widget.stop_workpulse.assert_not_called()
 
             # Final restart call: stop_tracker=True
             res2 = flush_pending_data_before_update(stop_tracker=True)
             self.assertTrue(res2)
-            mock_widget.stop_tracking.assert_called_once()
+            mock_widget.stop_workpulse.assert_called_once()
 
 
     def test_scenario_1_system_starts_with_internet_auto_updates(self):
@@ -278,7 +278,7 @@ class TestAutoUpdateFlow(unittest.TestCase):
              patch("ui.main_window.MainWindow._build_tracker"), \
              patch("ui.main_window.MainWindow._build_tray"), \
              patch("ui.main_window.MainWindow._apply_rbac_permissions"), \
-             patch("ui.main_window.MainWindow.start_tracking"), \
+             patch("ui.main_window.MainWindow.start_workpulse"), \
              patch("services.device_registry_service.DeviceRegistryService.record_heartbeat"), \
              patch("services.device_registry_service.DeviceRegistryService.get_all_devices", return_value=[{"device_identifier": "test", "update_status": "Update Pending"}]):
 
@@ -303,7 +303,7 @@ class TestAutoUpdateFlow(unittest.TestCase):
                  patch.object(window, "_check_for_updates") as mock_recheck:
                 mock_state = MagicMock()
                 mock_state.is_idle = False
-                mock_state.is_tracking = True
+                mock_state.is_workpulse = True
                 mock_state.current_application = "iHRMS Monitor.exe"
                 mock_state.current_window_title = "Dashboard"
                 mock_state.idle_seconds = 0

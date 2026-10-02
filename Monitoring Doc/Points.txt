@@ -19,8 +19,8 @@ Indovision Services
 
 3. HARDWARE DEVICE ENROLLMENT & SCOPED TOKENS
    - Stable hardware identity generated from system motherboard / platform UUID.
-   - Workstation enrollment via POST /tracking/enroll_device returning dedicated device_token.
-   - All subsequent tracking, health telemetry, and screenshot payloads authenticated via device_token.
+   - Workstation enrollment via POST /workpulse/enroll_device returning dedicated device_token.
+   - All subsequent workpulse, health telemetry, and screenshot payloads authenticated via device_token.
 
 4. REAL-TIME ACTIVITY & PLATFORM-SPECIFIC IDLE TRACKING
    - Real-time active window polling via Win32 (GetForegroundWindow/GetWindowTextW) on Windows
@@ -36,7 +36,7 @@ Indovision Services
      * logs/        -> Rotating diagnostic logs (activity_tracker.log)
      * updates/     -> Staged update installers and hidden updater runners
    - Zero data loss during network outages: Local SQLite queue holds pending activities and screenshots.
-   - Transactional Batch Sync via POST /tracking/save_activity_batch (up to 100 records / batch).
+   - Transactional Batch Sync via POST /workpulse/save_activity_batch (up to 100 records / batch).
    - Verified Cleanup: Screenshot files are purged locally ONLY after server HTTP 200 confirmation.
 
 6. DYNAMIC SYSTEM HEALTH TELEMETRY
@@ -50,7 +50,7 @@ Indovision Services
 
 7. ENTERPRISE DASHBOARD & HRMS INTEGRATION
    - Modern PySide6 Dashboard featuring:
-     * Start Time Card (system start / tracking initiation)
+     * Start Time Card (system start / workpulse initiation)
      * Today Total Time Card (accumulated active work duration)
      * Punch Time Card (first punch-in and last punch-out timestamps)
      * Attendance Status Badge (Present, Absent, Half Day, Holiday)
@@ -69,7 +69,7 @@ Indovision Services
 
 9. AUTOMATED QUALITY ASSURANCE & MULTI-PLATFORM CI/CD
    - 295 automated unit and integration tests passing across all functional domains.
-   - 100% test pass rate covering authentication, tracking, sync, attendance, health, and auto-updates.
+   - 100% test pass rate covering authentication, workpulse, sync, attendance, health, and auto-updates.
    - GitHub Actions CI/CD workflows (.github/workflows/release.yml, build-macos.yml) for automated
      PyInstaller executable generation, Inno Setup installer packaging, and macOS DMG builds.
 ================================================================================

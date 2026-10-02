@@ -481,8 +481,8 @@ class MainWindow(QMainWindow):
 
         self._build_tray()
 
-        # Initial UI state: tracking is stopped until the worker
-        # confirms that tracking has actually started.
+        # Initial UI state: workpulse is stopped until the worker
+        # confirms that workpulse has actually started.
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
@@ -499,24 +499,24 @@ class MainWindow(QMainWindow):
         if initial_settings.start_with_system:
             startup.set_enabled(True)
 
-        # Auto-start tracking on startup based on active session & RBAC permissions
+        # Auto-start workpulse on startup based on active session & RBAC permissions
         from services.session_service import SessionService
         session = SessionService().current_user
 
-        if session is not None and not getattr(session, "tracking_permitted", True):
-            logger.info("Auto-starting tracking skipped due to RBAC permissions.")
+        if session is not None and not getattr(session, "workpulse_permitted", True):
+            logger.info("Auto-starting workpulse skipped due to RBAC permissions.")
             if hasattr(self, "dashboard_page") and self.dashboard_page:
-                self.dashboard_page.set_tracking_active(False)
+                self.dashboard_page.set_workpulse_active(False)
         else:
-            logger.info("Auto-starting tracking on startup based on active session and RBAC permissions.")
-            self.start_tracking()
+            logger.info("Auto-starting workpulse on startup based on active session and RBAC permissions.")
+            self.start_workpulse()
 
         is_running_tests = "unittest" in sys.modules or any("unittest" in str(a).lower() for a in sys.argv)
 
-        # Post-render check: ensure tracking is definitely active
+        # Post-render check: ensure workpulse is definitely active
         from PySide6.QtCore import QTimer
         if not is_running_tests:
-            QTimer.singleShot(200, self._ensure_tracking_started)
+            QTimer.singleShot(200, self._ensure_workpulse_started)
 
         # Update system state
         self._update_dialog = None
@@ -622,8 +622,8 @@ class MainWindow(QMainWindow):
                 # Permission granted (normal path after relaunch)
                 logger.info("macOS Screen Recording permission: granted")
                 reset_relaunch_state()  # Clear loop counter on successful grant
-                # Ensure screenshot tracking is active now that permission exists
-                self._ensure_tracking_started()
+                # Ensure screenshot workpulse is active now that permission exists
+                self._ensure_workpulse_started()
                 return
             logger.warning(
                 "macOS Screen Recording permission: NOT granted. "
@@ -668,7 +668,7 @@ class MainWindow(QMainWindow):
                 msg.setIcon(QMessageBox.Icon.Warning)
                 msg.setText(
                     "Workpulse needs Screen Recording permission to capture "
-                    "screenshots for attendance tracking.\n\n"
+                    "screenshots for attendance workpulse.\n\n"
                     f"{reason}"
                 )
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -680,7 +680,7 @@ class MainWindow(QMainWindow):
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setText(
                 "Workpulse needs Screen Recording permission to capture "
-                "screenshots for attendance tracking."
+                "screenshots for attendance workpulse."
             )
             msg.setInformativeText(
                 "1. Click \"Open Settings\" below.\n"
@@ -785,7 +785,7 @@ class MainWindow(QMainWindow):
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
         header_layout.addWidget(self.user_label)
 
-        # Tracking status icon next to status badge
+        # WorkPulse status icon next to status badge
         self.status_icon = QLabel()
         self.status_icon.setFixedSize(24, 24)
         self.status_icon.setStyleSheet("margin-right: 4px; background: transparent;")
@@ -793,9 +793,9 @@ class MainWindow(QMainWindow):
 
         self.status_badge = QLabel("Offline")
         self.status_badge.setObjectName("StatusBadge")
-        self.status_badge.setProperty("tracking", "false")
+        self.status_badge.setProperty("workpulse", "false")
         self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
-        self.status_badge.setToolTip("Activity Tracking Status")
+        self.status_badge.setToolTip("Activity WorkPulse Status")
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
@@ -815,19 +815,19 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.hrms_button)
 
         # ------------------------------------------------------
-        # Tracking controls (Internal, hidden from all users)
+        # WorkPulse controls (Internal, hidden from all users)
         # ------------------------------------------------------
 
-        self.start_button = QPushButton("Start Tracking")
+        self.start_button = QPushButton("Start WorkPulse")
         self.start_button.setObjectName("PrimaryButton")
-        self.start_button.clicked.connect(self.start_tracking)
+        self.start_button.clicked.connect(self.start_workpulse)
         self.start_button.setVisible(False)
         self.start_button.hide()
         header_layout.addWidget(self.start_button)
 
-        self.stop_button = QPushButton("Stop Tracking")
+        self.stop_button = QPushButton("Stop WorkPulse")
         self.stop_button.setObjectName("SecondaryButton")
-        self.stop_button.clicked.connect(lambda: self.stop_tracking(manual=False))
+        self.stop_button.clicked.connect(lambda: self.stop_workpulse(manual=False))
         self.stop_button.setEnabled(False)
         self.stop_button.setVisible(False)
         self.stop_button.hide()
@@ -886,11 +886,11 @@ class MainWindow(QMainWindow):
         self.attendance_page.back_requested.connect(
             lambda: self.tabs.setCurrentWidget(self.dashboard_page)
         )
-        self.dashboard_page.tracking_start_requested.connect(
-            self.start_tracking
+        self.dashboard_page.workpulse_start_requested.connect(
+            self.start_workpulse
         )
-        self.dashboard_page.tracking_stop_requested.connect(
-            lambda: self.stop_tracking(manual=True)
+        self.dashboard_page.workpulse_stop_requested.connect(
+            lambda: self.stop_workpulse(manual=True)
         )
         self.dashboard_page.pause_state_changed.connect(
             self._on_pause_state_changed
@@ -1073,20 +1073,20 @@ class MainWindow(QMainWindow):
             self._on_tracker_state_changed
         )
 
-        self._worker.tracking_started.connect(
-            self._on_tracking_started
+        self._worker.workpulse_started.connect(
+            self._on_workpulse_started
         )
 
-        self._worker.tracking_stopped.connect(
-            self._on_tracking_stopped
+        self._worker.workpulse_stopped.connect(
+            self._on_workpulse_stopped
         )
 
         self._request_start.connect(
-            self._worker.start_tracking
+            self._worker.start_workpulse
         )
 
         self._request_stop.connect(
-            self._worker.stop_tracking
+            self._worker.stop_workpulse
         )
 
         self._request_apply_settings.connect(
@@ -1113,8 +1113,8 @@ class MainWindow(QMainWindow):
         self.tray = TrayController(
             parent=self,
             on_show_dashboard=self._show_and_raise,
-            on_start_tracking=self.start_tracking,
-            on_stop_tracking=lambda: self.stop_tracking(manual=True),
+            on_start_workpulse=self.start_workpulse,
+            on_stop_workpulse=lambda: self.stop_workpulse(manual=True),
             on_show_today_activity=(
                 self._show_today_activity
             ),
@@ -1128,7 +1128,7 @@ class MainWindow(QMainWindow):
         self.tray.show()
 
     def _apply_rbac_permissions(self) -> None:
-        """Enforce RBAC permissions on Start/Stop tracking, User/Device, and Logout controls."""
+        """Enforce RBAC permissions on Start/Stop workpulse, User/Device, and Logout controls."""
         from PySide6.QtCore import QThread
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
@@ -1140,7 +1140,7 @@ class MainWindow(QMainWindow):
         from services.session_service import SessionService
         session = SessionService().current_user
 
-        # Unconditionally hide "Stop Tracking" and "Start Tracking" buttons for all users
+        # Unconditionally hide "Stop WorkPulse" and "Start WorkPulse" buttons for all users
         self.stop_button.setVisible(False)
         self.stop_button.hide()
         self.start_button.setVisible(False)
@@ -1151,8 +1151,8 @@ class MainWindow(QMainWindow):
             if hasattr(self.tray, "start_action") and self.tray.start_action:
                 self.tray.start_action.setVisible(False)
 
-        if session and not session.tracking_permitted:
-            logger.info("Enforcing RBAC tracking restrictions: hiding tracking status")
+        if session and not session.workpulse_permitted:
+            logger.info("Enforcing RBAC workpulse restrictions: hiding workpulse status")
             if hasattr(self, "status_icon") and self.status_icon:
                 self.status_icon.hide()
             self.status_badge.hide()
@@ -1174,13 +1174,13 @@ class MainWindow(QMainWindow):
             self.user_label.setText(f"Welcome, {display_name}")
 
     def _update_status_icon(self) -> None:
-        """Update the Shield+Pulse icon based on the current tracking/idle state."""
+        """Update the Shield+Pulse icon based on the current workpulse/idle state."""
         if not hasattr(self, "status_icon") or not self.status_icon:
             return
             
         from services.session_service import SessionService
         session = SessionService().current_user
-        if session and not session.tracking_permitted:
+        if session and not session.workpulse_permitted:
             self.status_icon.hide()
             return
 
@@ -1189,13 +1189,13 @@ class MainWindow(QMainWindow):
         is_paused = False
         
         # Check current state from status badge property
-        tracking_prop = self.status_badge.property("tracking")
-        if tracking_prop == "true":
+        workpulse_prop = self.status_badge.property("workpulse")
+        if workpulse_prop == "true":
             is_active = True
-        elif tracking_prop == "idle":
+        elif workpulse_prop == "idle":
             is_active = True
             is_idle = True
-        elif tracking_prop == "paused":
+        elif workpulse_prop == "paused":
             is_active = True
             is_paused = True
             
@@ -1250,117 +1250,117 @@ class MainWindow(QMainWindow):
     # ==========================================================
 
     @Slot()
-    def start_tracking(
+    def start_workpulse(
         self,
     ) -> None:
-        """Start tracking."""
+        """Start workpulse."""
         from services.session_service import SessionService
         session = SessionService().current_user
-        if session and not session.tracking_permitted:
-            logger.warning("Start tracking requested but blocked by RBAC permissions.")
+        if session and not session.workpulse_permitted:
+            logger.warning("Start workpulse requested but blocked by RBAC permissions.")
             return
 
-        # Update persistent tracking state
+        # Update persistent workpulse state
         from services.secure_session import SessionStore
         store = SessionStore()
-        store.set_tracking_manually_stopped(False)
-        store.set_tracking_active(True)
+        store.set_workpulse_manually_stopped(False)
+        store.set_workpulse_active(True)
 
         # Update UI state immediately to show Active or Paused
-        if store.is_tracking_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
+        if store.is_workpulse_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
             self.status_badge.setText("Paused")
-            self.status_badge.setProperty("tracking", "paused")
+            self.status_badge.setProperty("workpulse", "paused")
         else:
             self.status_badge.setText("Online")
-            self.status_badge.setProperty("tracking", "true")
+            self.status_badge.setProperty("workpulse", "true")
         self._refresh_badge_style()
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         if hasattr(self, "tray") and self.tray:
-            self.tray.set_tracking_state(True)
+            self.tray.set_workpulse_state(True)
         if hasattr(self, "settings_page") and self.settings_page:
             self.settings_page.update_capture_status(True)
         if hasattr(self, "dashboard_page") and self.dashboard_page:
-            self.dashboard_page.set_tracking_active(True)
-            if self.dashboard_page.current_app_label.text() in ("Not tracking", ""):
+            self.dashboard_page.set_workpulse_active(True)
+            if self.dashboard_page.current_app_label.text() in ("Not workpulse", ""):
                 self.dashboard_page.current_app_label.setText("Detecting...")
 
-        # Guard against duplicate start if tracker is already tracking
-        if hasattr(self, "_tracker") and self._tracker.is_tracking:
-            logger.debug("ActivityTracker is already tracking; skipping duplicate start.")
+        # Guard against duplicate start if tracker is already workpulse
+        if hasattr(self, "_tracker") and self._tracker.is_workpulse:
+            logger.debug("ActivityTracker is already workpulse; skipping duplicate start.")
             return
 
         self._request_start.emit()
 
-    def _ensure_tracking_started(self) -> None:
-        """Verify tracking has started after login/startup; if not, trigger start_tracking if not manually stopped."""
+    def _ensure_workpulse_started(self) -> None:
+        """Verify workpulse has started after login/startup; if not, trigger start_workpulse if not manually stopped."""
         from services.secure_session import SessionStore
-        if SessionStore().is_tracking_manually_stopped():
-            logger.debug("Tracking was manually stopped; skipping _ensure_tracking_started.")
+        if SessionStore().is_workpulse_manually_stopped():
+            logger.debug("WorkPulse was manually stopped; skipping _ensure_workpulse_started.")
             return
 
         from services.session_service import SessionService
         session = SessionService().current_user
-        if (session is None or getattr(session, "tracking_permitted", True)) and hasattr(self, "_tracker") and not self._tracker.is_tracking:
-            logger.info("Ensuring tracking is active after login/startup.")
-            self.start_tracking()
+        if (session is None or getattr(session, "workpulse_permitted", True)) and hasattr(self, "_tracker") and not self._tracker.is_workpulse:
+            logger.info("Ensuring workpulse is active after login/startup.")
+            self.start_workpulse()
 
     @Slot()
-    def stop_tracking(
+    def stop_workpulse(
         self,
         manual: bool = True,
     ) -> None:
-        """Stop tracking.
+        """Stop workpulse.
         
         Args:
-            manual: If True, records that the user manually stopped tracking,
+            manual: If True, records that the user manually stopped workpulse,
                     preserving the stopped state across restarts.
                     If False, automated/internal stop (e.g. before update).
         """
         if manual:
             from services.secure_session import SessionStore
             store = SessionStore()
-            store.set_tracking_manually_stopped(True)
-            store.set_tracking_active(False)
+            store.set_workpulse_manually_stopped(True)
+            store.set_workpulse_active(False)
 
         # Update UI state immediately to show Inactive
         self.status_badge.setText("Offline")
-        self.status_badge.setProperty("tracking", "false")
+        self.status_badge.setProperty("workpulse", "false")
         self._refresh_badge_style()
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         if hasattr(self, "tray") and self.tray:
-            self.tray.set_tracking_state(False)
+            self.tray.set_workpulse_state(False)
         if hasattr(self, "settings_page") and self.settings_page:
             self.settings_page.update_capture_status(False)
         if hasattr(self, "dashboard_page") and self.dashboard_page:
-            self.dashboard_page.set_tracking_active(False)
+            self.dashboard_page.set_workpulse_active(False)
 
         self._request_stop.emit()
 
     @Slot()
-    def stop_tracking_for_update(self) -> None:
-        """Stop tracking cleanly before an auto-update without setting the manual stop flag."""
-        logger.info("Stopping tracking cleanly before auto-update installation.")
-        self.stop_tracking(manual=False)
+    def stop_workpulse_for_update(self) -> None:
+        """Stop workpulse cleanly before an auto-update without setting the manual stop flag."""
+        logger.info("Stopping workpulse cleanly before auto-update installation.")
+        self.stop_workpulse(manual=False)
 
     @Slot()
-    def _on_tracking_started(
+    def _on_workpulse_started(
         self,
     ) -> None:
-        """Update UI after tracking starts."""
+        """Update UI after workpulse starts."""
         from services.secure_session import SessionStore
         store = SessionStore()
-        if store.is_tracking_manually_stopped():
-            logger.debug("Stale tracking_started signal received while tracking is marked stopped; ignoring")
+        if store.is_workpulse_manually_stopped():
+            logger.debug("Stale workpulse_started signal received while workpulse is marked stopped; ignoring")
             return
 
-        if store.is_tracking_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
+        if store.is_workpulse_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
             self.status_badge.setText("Paused")
-            self.status_badge.setProperty("tracking", "paused")
+            self.status_badge.setProperty("workpulse", "paused")
         else:
             self.status_badge.setText("Online")
-            self.status_badge.setProperty("tracking", "true")
+            self.status_badge.setProperty("workpulse", "true")
 
         self._refresh_badge_style()
 
@@ -1372,22 +1372,22 @@ class MainWindow(QMainWindow):
             True
         )
 
-        self.tray.set_tracking_state(
+        self.tray.set_workpulse_state(
             True
         )
         self.settings_page.update_capture_status(True)
         if hasattr(self, "dashboard_page") and self.dashboard_page:
-            self.dashboard_page.set_tracking_active(True)
+            self.dashboard_page.set_workpulse_active(True)
         self._apply_rbac_permissions()
 
     @Slot()
-    def _on_tracking_stopped(
+    def _on_workpulse_stopped(
         self,
     ) -> None:
-        """Update UI after tracking stops."""
+        """Update UI after workpulse stops."""
         from services.secure_session import SessionStore
-        if SessionStore().is_tracking_active() or (hasattr(self, "_tracker") and self._tracker.is_tracking):
-            logger.debug("Stale tracking_stopped signal received while tracking is active; ignoring")
+        if SessionStore().is_workpulse_active() or (hasattr(self, "_tracker") and self._tracker.is_workpulse):
+            logger.debug("Stale workpulse_stopped signal received while workpulse is active; ignoring")
             return
 
         self.status_badge.setText(
@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
         )
 
         self.status_badge.setProperty(
-            "tracking",
+            "workpulse",
             "false",
         )
 
@@ -1409,12 +1409,12 @@ class MainWindow(QMainWindow):
             False
         )
 
-        self.tray.set_tracking_state(
+        self.tray.set_workpulse_state(
             False
         )
         self.settings_page.update_capture_status(False)
         if hasattr(self, "dashboard_page") and self.dashboard_page:
-            self.dashboard_page.set_tracking_active(False)
+            self.dashboard_page.set_workpulse_active(False)
 
         self.dashboard_page.refresh()
         self._apply_rbac_permissions()
@@ -1427,24 +1427,24 @@ class MainWindow(QMainWindow):
         """Update dashboard from tracker state."""
         from services.secure_session import SessionStore
         store = SessionStore()
-        if not state.is_tracking and (store.is_tracking_active() or (hasattr(self, "_tracker") and self._tracker.is_tracking)):
-            logger.debug("Stale inactive TrackerState received while tracking is active; ignoring")
+        if not state.is_workpulse and (store.is_workpulse_active() or (hasattr(self, "_tracker") and self._tracker.is_workpulse)):
+            logger.debug("Stale inactive TrackerState received while workpulse is active; ignoring")
             return
-        if state.is_tracking and store.is_tracking_manually_stopped():
-            logger.debug("Stale active TrackerState received while tracking is manually stopped; ignoring")
+        if state.is_workpulse and store.is_workpulse_manually_stopped():
+            logger.debug("Stale active TrackerState received while workpulse is manually stopped; ignoring")
             return
 
         self.dashboard_page.update_tracker_state(
             state
         )
 
-        if getattr(self.dashboard_page, "_is_paused", False) or store.is_tracking_paused():
+        if getattr(self.dashboard_page, "_is_paused", False) or store.is_workpulse_paused():
             self.status_badge.setText(
                 "Paused"
             )
 
             self.status_badge.setProperty(
-                "tracking",
+                "workpulse",
                 "paused",
             )
 
@@ -1456,19 +1456,19 @@ class MainWindow(QMainWindow):
             )
 
             self.status_badge.setProperty(
-                "tracking",
+                "workpulse",
                 "idle",
             )
 
             self._refresh_badge_style()
 
-        elif state.is_tracking:
+        elif state.is_workpulse:
             self.status_badge.setText(
                 "Online"
             )
 
             self.status_badge.setProperty(
-                "tracking",
+                "workpulse",
                 "true",
             )
 
@@ -1479,7 +1479,7 @@ class MainWindow(QMainWindow):
             )
 
             self.status_badge.setProperty(
-                "tracking",
+                "workpulse",
                 "false",
             )
 
@@ -1520,44 +1520,44 @@ class MainWindow(QMainWindow):
     def _on_pause_state_changed(self, is_paused: bool) -> None:
         """Update top bar status badge when pause status changes without stopping background workers."""
         from services.secure_session import SessionStore
-        SessionStore().set_tracking_paused(is_paused)
+        SessionStore().set_workpulse_paused(is_paused)
         if is_paused:
             self.status_badge.setText("Paused")
-            self.status_badge.setProperty("tracking", "paused")
+            self.status_badge.setProperty("workpulse", "paused")
         else:
-            if hasattr(self, "_tracker") and self._tracker.is_tracking:
+            if hasattr(self, "_tracker") and self._tracker.is_workpulse:
                 if hasattr(self, "_last_rendered_idle") and self._last_rendered_idle:
                     self.status_badge.setText("Idle")
-                    self.status_badge.setProperty("tracking", "idle")
+                    self.status_badge.setProperty("workpulse", "idle")
                 else:
                     self.status_badge.setText("Online")
-                    self.status_badge.setProperty("tracking", "true")
+                    self.status_badge.setProperty("workpulse", "true")
             else:
                 self.status_badge.setText("Offline")
-                self.status_badge.setProperty("tracking", "false")
+                self.status_badge.setProperty("workpulse", "false")
         self._refresh_badge_style()
 
     def _on_status_badge_clicked(self, event=None) -> None:
-        """Allow clicking the status badge to start/resume tracking if currently inactive."""
+        """Allow clicking the status badge to start/resume workpulse if currently inactive."""
         from services.session_service import SessionService
         session = SessionService().current_user
-        if session and not session.tracking_permitted:
+        if session and not session.workpulse_permitted:
             return
 
-        is_tracking = False
-        if hasattr(self, "_tracker") and self._tracker.is_tracking:
-            is_tracking = True
-        elif self.status_badge.property("tracking") in ("true", "idle", "paused"):
-            is_tracking = True
+        is_workpulse = False
+        if hasattr(self, "_tracker") and self._tracker.is_workpulse:
+            is_workpulse = True
+        elif self.status_badge.property("workpulse") in ("true", "idle", "paused"):
+            is_workpulse = True
 
-        if not is_tracking:
-            logger.info("Status badge clicked while inactive; resuming tracking.")
-            self.start_tracking()
+        if not is_workpulse:
+            logger.info("Status badge clicked while inactive; resuming workpulse.")
+            self.start_workpulse()
 
     def _refresh_badge_style(
         self,
     ) -> None:
-        """Refresh tracking status styling."""
+        """Refresh workpulse status styling."""
 
         self.status_badge.style().unpolish(
             self.status_badge
@@ -1567,15 +1567,15 @@ class MainWindow(QMainWindow):
             self.status_badge
         )
 
-        tracking_prop = self.status_badge.property("tracking")
-        if tracking_prop == "true":
-            self.status_badge.setToolTip("Tracking is active")
-        elif tracking_prop == "paused":
+        workpulse_prop = self.status_badge.property("workpulse")
+        if workpulse_prop == "true":
+            self.status_badge.setToolTip("WorkPulse is active")
+        elif workpulse_prop == "paused":
             self.status_badge.setToolTip("Status: Paused")
-        elif tracking_prop == "idle":
+        elif workpulse_prop == "idle":
             self.status_badge.setToolTip("Currently idle")
         else:
-            self.status_badge.setToolTip("Click to start tracking")
+            self.status_badge.setToolTip("Click to start workpulse")
 
         self._update_status_icon()
 
@@ -1604,7 +1604,7 @@ class MainWindow(QMainWindow):
         elif hasattr(self, "settings_page") and current_widget == self.settings_page:
             self.settings_page.reload()
             if hasattr(self, "_tracker") and self._tracker:
-                self.settings_page.update_capture_status(self._tracker.is_tracking)
+                self.settings_page.update_capture_status(self._tracker.is_workpulse)
 
     @Slot()
     def logout(self) -> None:
@@ -1615,7 +1615,7 @@ class MainWindow(QMainWindow):
             return
 
         logger.info("Logging out user")
-        self.stop_tracking(manual=False)
+        self.stop_workpulse(manual=False)
         self._shutdown()
 
         # Hide main window and return to login screen immediately so UI never hangs
@@ -1723,7 +1723,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "tray") and self.tray:
             self.tray.show_message(
                 APP_NAME,
-                "Still tracking in the background.",
+                "Still workpulse in the background.",
             )
 
     def nativeEvent(self, eventType, message):
@@ -1795,12 +1795,12 @@ class MainWindow(QMainWindow):
                 from PySide6.QtCore import QThread
                 if hasattr(self, "_thread") and self._thread and self._thread.isRunning():
                     if QThread.currentThread() == self._thread:
-                        self._worker.stop_tracking()
+                        self._worker.stop_workpulse()
                         self._worker.cleanup()
                     else:
                         QMetaObject.invokeMethod(
                             self._worker,
-                            "stop_tracking",
+                            "stop_workpulse",
                             Qt.ConnectionType.BlockingQueuedConnection,
                         )
                         QMetaObject.invokeMethod(
@@ -1809,7 +1809,7 @@ class MainWindow(QMainWindow):
                             Qt.ConnectionType.BlockingQueuedConnection,
                         )
                 else:
-                    self._worker.stop_tracking()
+                    self._worker.stop_workpulse()
             elif hasattr(self, "_tracker") and self._tracker:
                 self._tracker.stop()
         except Exception:
@@ -1927,16 +1927,16 @@ class MainWindow(QMainWindow):
                     else:
                         self.update_button.setVisible(False)
 
-                # Ensure active tracking is running and unaffected by update errors
+                # Ensure active workpulse is running and unaffected by update errors
                 try:
                     from services.session_service import SessionService
                     session = SessionService().current_user
-                    if session and session.tracking_permitted:
-                        if not self._tracker or not getattr(self._tracker, "is_tracking", False):
-                            logger.info("Ensuring tracking remains active after update failure.")
-                            self.start_tracking()
+                    if session and session.workpulse_permitted:
+                        if not self._tracker or not getattr(self._tracker, "is_workpulse", False):
+                            logger.info("Ensuring workpulse remains active after update failure.")
+                            self.start_workpulse()
                 except Exception as track_err:
-                    logger.debug("Could not verify tracking in update on_error: %s", track_err)
+                    logger.debug("Could not verify workpulse in update on_error: %s", track_err)
 
             def on_ready_to_install(installer_path: str):
                 logger.info("Pipeline update ready to install received on Main Thread: %s (target_version=%s)", installer_path, self._latest_version)

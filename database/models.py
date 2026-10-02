@@ -23,7 +23,7 @@ class ActivitySession(Base):
 
     A new row is created whenever the focused application changes. A row's
     ``ended_at``/``duration_seconds`` are updated as the session continues,
-    and finalized when the session closes (application changes, tracking
+    and finalized when the session closes (application changes, workpulse
     stops, or the user goes idle).
     """
 
@@ -61,7 +61,7 @@ class Settings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idle_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     start_with_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tracking_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    workpulse_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     track_window_titles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     screenshot_interval_type: Mapped[str] = mapped_column(String(50), nullable=False, default="3_min")
     screenshot_custom_interval: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
