@@ -5,7 +5,7 @@ REM Run this on Windows.
 setlocal enabledelayedexpansion
 
 echo ===================================================
-echo [1/3] Preparing Environment and Verifying Dependencies...
+echo [1/4] Preparing Environment and Verifying Dependencies...
 echo ===================================================
 set "PYTHON_EXE=python"
 if exist "%~dp0venv\Scripts\python.exe" set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
@@ -18,7 +18,7 @@ if errorlevel 1 goto :error
 
 echo.
 echo ===================================================
-echo [2/3] Generating Version Info and Building with PyInstaller...
+echo [2/4] Generating Version Info and Building with PyInstaller...
 echo ===================================================
 "!PYTHON_EXE!" scripts\generate_version_info.py
 if errorlevel 1 goto :error
@@ -38,7 +38,18 @@ echo PyInstaller build succeeded in dist\Workpulse\
 
 echo.
 echo ===================================================
-echo [3/3] Compiling Windows Installer with Inno Setup...
+echo [3/4] Signing Executable with Authenticode...
+echo ===================================================
+if exist "scripts\sign_windows.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\Workpulse\Workpulse.exe"
+    if errorlevel 1 (
+        echo Code signing step completed with notification.
+    )
+)
+
+echo.
+echo ===================================================
+echo [4/4] Compiling Windows Installer with Inno Setup...
 echo ===================================================
 set "ISCC="
 
@@ -71,10 +82,18 @@ if exist "installer\WorkpulseSetup.exe" (
     del /f /q "installer\WorkpulseSetup.exe" 2>nul
 )
 
+if exist "dist\Windows\WorkpulseSetup.exe" (
+    copy /y "dist\Windows\WorkpulseSetup.exe" "dist\Windows\Workpulse-Setup-%APP_VER%.exe"
+    if exist "scripts\sign_windows.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\Windows\WorkpulseSetup.exe", "dist\Windows\Workpulse-Setup-%APP_VER%.exe"
+    )
+)
+
 echo.
 echo ===================================================
 echo Windows Build Complete:
 echo   Release Installer: dist\Windows\WorkpulseSetup.exe
+echo   Version Installer: dist\Windows\Workpulse-Setup-%APP_VER%.exe
 echo ===================================================
 goto :eof
 

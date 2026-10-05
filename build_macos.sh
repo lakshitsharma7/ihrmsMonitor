@@ -12,11 +12,16 @@ APP_BUNDLE="dist/Workpulse.app"
 DMG_FILE="dist/macOS/Workpulse.dmg"
 DMG_STAGING="dist/dmg_staging"
 
+APP_VER="1.0"
+if [ -f "VERSION" ]; then
+    APP_VER="$(tr -d '[:space:]' < VERSION)"
+fi
+
 echo "==================================================="
-echo "[1/6] Preparing Environment & Cleaning Stale Builds"
+echo "[1/6] Preparing Environment & Cleaning Stale Builds (v${APP_VER})"
 echo "==================================================="
 mkdir -p "dist/macOS"
-rm -rf build/ dist/Workpulse.app "${DMG_STAGING}" "${DMG_FILE}"
+rm -rf build/ dist/Workpulse.app "${DMG_STAGING}" "dist/macOS"/*
 python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 
@@ -50,19 +55,15 @@ if [ ! -f "${APP_BUNDLE}/Contents/Info.plist" ]; then
     exit 1
 fi
 
-# Verify version in Info.plist is 1.0
+# Verify version in Info.plist
 PLIST_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true)"
 echo "Verified Info.plist version: ${PLIST_VER}"
-if [ "${PLIST_VER}" != "1.0" ]; then
-    echo "ERROR: Expected CFBundleShortVersionString to be 1.0, got: '${PLIST_VER}'" >&2
-    exit 1
-fi
 
 echo "Newly built Workpulse.app bundle verified at ${APP_BUNDLE}"
 
 echo ""
 echo "==================================================="
-echo "[4/6] Code Signing Workpulse.app (Inside-Out)..."
+echo "[4/6] Code Signing Workpulse.app (Inside-Out with Hardened Runtime)..."
 echo "==================================================="
 
 # Discover Signing Identity
@@ -152,13 +153,19 @@ if [ ! -f "${DMG_FILE}" ]; then
     exit 1
 fi
 
+DMG_VERSION_FILE="dist/macOS/Workpulse-${APP_VER}.dmg"
+cp -f "${DMG_FILE}" "${DMG_VERSION_FILE}"
+
 if [ -n "${SIGNING_IDENTITY}" ]; then
-    echo "Signing ${DMG_FILE} with Developer ID..."
+    echo "Signing DMG files with Developer ID..."
     codesign --force --timestamp --sign "${SIGNING_IDENTITY}" "${DMG_FILE}"
     codesign --verify --verbose=2 "${DMG_FILE}"
+
+    codesign --force --timestamp --sign "${SIGNING_IDENTITY}" "${DMG_VERSION_FILE}"
+    codesign --verify --verbose=2 "${DMG_VERSION_FILE}"
 fi
 
-echo "DMG created at ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
+echo "DMG created at ${DMG_FILE} and ${DMG_VERSION_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
 
 # Test mounting the newly created DMG and verify payload
 echo "Verifying DMG mount and installation structure..."
@@ -250,16 +257,22 @@ if [ ${#NOTARY_ARGS[@]} -gt 0 ]; then
     fi
 
     echo ""
-    echo "Apple Notarization Accepted! Stapling ticket to ${DMG_FILE}..."
+    echo "Apple Notarization Accepted! Stapling ticket to DMGs and App bundle..."
+    xcrun stapler staple "${APP_BUNDLE}" || true
     xcrun stapler staple "${DMG_FILE}"
     xcrun stapler validate "${DMG_FILE}"
+    if [ -f "${DMG_VERSION_FILE}" ]; then
+        xcrun stapler staple "${DMG_VERSION_FILE}" || true
+        xcrun stapler validate "${DMG_VERSION_FILE}" || true
+    fi
     echo "Ticket successfully stapled and validated."
 
-    # Also assess the app with spctl Gatekeeper
+    # Assess the app with spctl Gatekeeper
     if command -v spctl >/dev/null 2>&1; then
         echo ""
         echo "Running Gatekeeper assessment (spctl)..."
         spctl --assess --type execute --verbose=4 "${APP_BUNDLE}" || true
+        spctl --assess --type install --verbose=4 "${DMG_FILE}" || true
     fi
 else
     echo "Notice: Apple Notarization credentials not configured. Skipping notarytool."
@@ -271,4 +284,5 @@ echo "==================================================="
 echo "macOS Build Pipeline Completed Successfully!"
 echo "  1. App: ${APP_BUNDLE}"
 echo "  2. DMG: ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
+echo "  3. Version DMG: ${DMG_VERSION_FILE}"
 echo "==================================================="

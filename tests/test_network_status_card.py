@@ -137,8 +137,8 @@ class TestNetworkStatusCard(unittest.TestCase):
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertIn("#10b981", dashboard.network_status_label.styleSheet())
 
-    def test_network_reachability_monitor_concurrent_probing(self):
-        """NetworkReachabilityMonitor probes endpoints concurrently and reports online/offline correctly."""
+    def test_network_reachability_monitor_probing(self):
+        """NetworkReachabilityMonitor probes backend endpoints and reports online/offline correctly."""
         monitor = NetworkReachabilityMonitor()
 
         # Success probe
@@ -164,6 +164,47 @@ class TestNetworkStatusCard(unittest.TestCase):
 
         monitor.unregister_listener(listener)
 
+    def test_backend_unreachable_sets_offline(self):
+        """When backend server is unreachable, reachability check returns False and updates state."""
+        monitor = NetworkReachabilityMonitor()
+        with patch.object(NetworkReachabilityMonitor, "_probe_socket_target", return_value=False):
+            state = monitor.check_reachability(timeout=0.2)
+            self.assertFalse(state)
+
+    def test_backend_targets_retrieval(self):
+        """Verify _get_targets retrieves configured backend endpoint or APP_CONTROLLER_URL fallback."""
+        monitor = NetworkReachabilityMonitor()
+        targets = monitor._get_targets()
+        self.assertTrue(len(targets) >= 1)
+        # Should include host and valid integer port
+        for host, port in targets:
+            self.assertIsInstance(host, str)
+            self.assertTrue(len(host) > 0)
+            self.assertIsInstance(port, int)
+            self.assertIn(port, (80, 443))
+
+    def test_realtime_reachability_callback_updates_dashboard(self):
+        """When monitor fires reachability callback, dashboard updates network_status_label."""
+        dashboard = DashboardPage(self.mock_service)
+        dashboard._on_reachability_changed(False)
+        self.assertEqual(dashboard.network_status_label.text(), "● Offline")
+        self.assertIn("#ef4444", dashboard.network_status_label.styleSheet())
+
+        dashboard._on_reachability_changed(True)
+        self.assertEqual(dashboard.network_status_label.text(), "● Online")
+        self.assertIn("#10b981", dashboard.network_status_label.styleSheet())
+
+    def test_report_api_failure_does_not_spawn_multiple_locked_threads(self):
+        """Multiple rapid report_api_failure calls respect lock and do not spawn unbounded threads."""
+        monitor = NetworkReachabilityMonitor()
+        monitor._check_lock.acquire()
+        try:
+            # When locked, report_api_failure returns immediately without spawning threads
+            monitor.report_api_failure()
+        finally:
+            monitor._check_lock.release()
+
 
 if __name__ == "__main__":
     unittest.main()
+

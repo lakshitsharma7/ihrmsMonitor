@@ -234,6 +234,16 @@ coll = COLLECT(
     name='Workpulse',
 )
 
+app_version = '1.0'
+if os.path.exists('VERSION'):
+    try:
+        with open('VERSION', 'r', encoding='utf-8') as vf:
+            v = vf.read().strip()
+            if v:
+                app_version = v
+    except Exception:
+        pass
+
 app = BUNDLE(
     coll,
     name='Workpulse.app',
@@ -243,8 +253,8 @@ app = BUNDLE(
         'CFBundleName': 'Workpulse',
         'CFBundleDisplayName': 'Workpulse',
         'CFBundleIdentifier': 'com.indovision.workpulse',
-        'CFBundleVersion': '1.0',
-        'CFBundleShortVersionString': '1.0',
+        'CFBundleVersion': app_version,
+        'CFBundleShortVersionString': app_version,
         'CFBundlePackageType': 'APPL',
         'CFBundleSignature': '????',
         'CFBundleExecutable': 'Workpulse',

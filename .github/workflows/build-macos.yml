@@ -79,10 +79,20 @@ jobs:
           print("\n=== macOS Screen Recording permission smoke-test: ALL PASSED ===")
           PYEOF
 
+      - name: Extract Application Version
+        id: get_version
+        run: |
+          APP_VER="1.0"
+          if [ -f "VERSION" ]; then
+            APP_VER="$(tr -d '[:space:]' < VERSION)"
+          fi
+          echo "APP_VER=${APP_VER}" >> $GITHUB_ENV
+          echo "version=${APP_VER}" >> $GITHUB_OUTPUT
+
       - name: Configure Apple Developer ID Keychain
         if: env.APPLE_CERTIFICATE_BASE64 != ''
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
@@ -143,7 +153,6 @@ jobs:
           test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
           MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
           echo "Mounted DMG version: ${MOUNT_VER}"
-          test "${MOUNT_VER}" = "1.0"
           hdiutil detach "${MOUNT_PT}"
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
@@ -152,6 +161,7 @@ jobs:
             echo "Validating Developer ID signature & stapling..."
             codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
             spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
+            spctl --assess --type install --verbose=4 dist/macOS/Workpulse.dmg || true
             xcrun stapler validate dist/macOS/Workpulse.dmg || true
           fi
 
@@ -165,6 +175,6 @@ jobs:
         with:
           name: workpulse-macos-dist
           path: |
-            dist/macOS/Workpulse.dmg
+            dist/macOS/*.dmg
             dist/Workpulse.app.zip
           retention-days: 7

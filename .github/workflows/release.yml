@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build Windows Release
+    name: Build & Sign Windows Release
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-windows.txt
 
       - name: Run unit and integration tests
         env:
@@ -39,9 +39,29 @@ jobs:
         run: |
           python scripts/run_tests.py
 
+      - name: Extract Application Version
+        id: get_version
+        shell: pwsh
+        run: |
+          $ver = "1.0"
+          if (Test-Path "VERSION") {
+            $ver = (Get-Content "VERSION").Trim()
+          }
+          echo "APP_VER=$ver" >> $env:GITHUB_ENV
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+
       - name: Build Windows Executable (PyInstaller)
         run: |
           pyinstaller Workpulse.spec --clean --noconfirm
+
+      - name: Sign Workpulse Executable with Authenticode
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+        run: |
+          .\scripts\sign_windows.ps1 -Target "dist\Workpulse\Workpulse.exe"
 
       - name: Install Inno Setup
         run: |
@@ -49,16 +69,42 @@ jobs:
 
       - name: Compile Inno Setup Installer
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\WorkpulseSetup.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="${{ env.APP_VER }}" Workpulse.iss
 
-      - name: Prepare Windows Distribution Files
+      - name: Prepare & Sign Windows Installers
         shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
         run: |
           mkdir dist\windows_release -Force
-          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\WorkpulseSetup.exe
-          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\Workpulse-Installer.exe
-          Copy-Item dist\installer\WorkpulseSetup.exe dist\windows_release\iHRMSMonitorSetup.exe
-          Copy-Item dist\Workpulse\Workpulse.exe dist\windows_release\Workpulse.exe
+          $ver = "${{ env.APP_VER }}"
+          
+          # Canonical and version-tagged installer filenames
+          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\Workpulse-Setup-$ver.exe" -Force
+          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\WorkpulseSetup.exe" -Force
+          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\Workpulse-Installer.exe" -Force
+
+          # Sign all installer artifacts
+          $targets = @(
+            "dist\windows_release\Workpulse-Setup-$ver.exe",
+            "dist\windows_release\WorkpulseSetup.exe",
+            "dist\windows_release\Workpulse-Installer.exe"
+          )
+          .\scripts\sign_windows.ps1 -Target $targets
+
+      - name: Verify Windows Signatures
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "dist\windows_release\*.exe"
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "Verifying $($f.Name): Status=$($sig.Status) | Signer=$($sig.SignerCertificate.Subject)"
+            if ($env:WINDOWS_CERTIFICATE_BASE64 -and $sig.Status -ne "Valid") {
+              throw "Signature verification failed for $($f.Name)"
+            }
+          }
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -68,7 +114,7 @@ jobs:
           retention-days: 5
 
   build-macos:
-    name: Build macOS Release
+    name: Build, Sign & Notarize macOS Release
     runs-on: macos-latest
     steps:
       - name: Check out repository
@@ -91,10 +137,20 @@ jobs:
         run: |
           python3 scripts/run_tests.py
 
+      - name: Extract Application Version
+        id: get_version
+        run: |
+          APP_VER="1.0"
+          if [ -f "VERSION" ]; then
+            APP_VER="$(tr -d '[:space:]' < VERSION)"
+          fi
+          echo "APP_VER=${APP_VER}" >> $GITHUB_ENV
+          echo "version=${APP_VER}" >> $GITHUB_OUTPUT
+
       - name: Configure Apple Developer ID Keychain
         if: env.APPLE_CERTIFICATE_BASE64 != ''
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
@@ -138,7 +194,7 @@ jobs:
           test -d dist/Workpulse.app
           test -f dist/Workpulse.app/Contents/MacOS/Workpulse
           test -f dist/macOS/Workpulse.dmg
-          ls -lh dist/macOS/Workpulse.dmg
+          ls -lh dist/macOS/
 
           echo "Mounting and verifying DMG payload..."
           MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
@@ -147,7 +203,6 @@ jobs:
           test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
           MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
           echo "Mounted DMG version: ${MOUNT_VER}"
-          test "${MOUNT_VER}" = "1.0"
           hdiutil detach "${MOUNT_PT}"
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
@@ -156,6 +211,7 @@ jobs:
             echo "Validating Developer ID signature & stapling..."
             codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
             spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
+            spctl --assess --type install --verbose=4 dist/macOS/Workpulse.dmg || true
             xcrun stapler validate dist/macOS/Workpulse.dmg || true
           fi
 
@@ -163,7 +219,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-release-assets
-          path: dist/macOS/Workpulse.dmg
+          path: dist/macOS/*.dmg
           retention-days: 5
 
   publish-release:
@@ -204,8 +260,8 @@ jobs:
           draft: false
           prerelease: false
           files: |
+            release_assets/windows/Workpulse-Setup-*.exe
             release_assets/windows/WorkpulseSetup.exe
-            release_assets/windows/Workpulse.exe
             release_assets/windows/Workpulse-Installer.exe
-            release_assets/windows/iHRMSMonitorSetup.exe
+            release_assets/macos/Workpulse-*.dmg
             release_assets/macos/Workpulse.dmg

@@ -6,7 +6,15 @@
 AppId={{8A8898F6-DFEE-4752-9A92-6F83BE800E5C}
 AppName=Workpulse
 AppVersion={#MyAppVersion}
+AppPublisher=Indovision Services Private Limited
+AppPublisherURL=https://indovisionservices.in
+AppSupportURL=https://indovisionservices.in
+AppUpdatesURL=https://indovisionservices.in
 VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany=Indovision Services Private Limited
+VersionInfoDescription=Workpulse Setup
+VersionInfoCopyright=Copyright (C) 2026 Indovision Services Private Limited
+VersionInfoProductName=Workpulse
 DefaultDirName={autopf}\Workpulse
 DefaultGroupName=Workpulse
 UsePreviousAppDir=no
@@ -23,6 +31,8 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 CloseApplications=force
 RestartApplications=no
+SignTool=signtool
+SignedUninstaller=yes
 
 [Files]
 Source: "dist\Workpulse\Workpulse.exe"; DestDir: "{app}"; Flags: ignoreversion

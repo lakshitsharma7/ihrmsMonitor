@@ -1,15 +1,14 @@
-"""Cross-platform network connectivity and reachability monitor.
+"""Real-time network connectivity and reachability monitor.
 
 Provides dynamic, real-time detection of network/Internet reachability:
-- macOS: SystemConfiguration / Network framework reachability check with socket fallback.
-- Windows/Linux: Fast concurrent multi-target socket probe (API host + high-availability DNS/HTTP endpoints).
+- Probes configured backend/API endpoints using direct TCP socket connections.
+- Fast, short timeout to keep UI completely responsive.
 - Signals / callbacks on connectivity state change (Online <-> Offline).
-- Immediate reporting on API success/failure.
+- Decoupled from sync/activity tracking, authentication, or running state.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import socket
 import sys
 import threading
@@ -23,7 +22,7 @@ logger = get_logger(__name__)
 
 
 class NetworkReachabilityMonitor:
-    """Monitors active internet and network connectivity across platforms."""
+    """Monitors active internet and backend network connectivity."""
 
     _instance: Optional[NetworkReachabilityMonitor] = None
     _lock = threading.Lock()
@@ -44,6 +43,7 @@ class NetworkReachabilityMonitor:
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
         self._check_interval: float = 2.0
+        self._check_lock = threading.Lock()
 
     @property
     def is_online(self) -> bool:
@@ -58,7 +58,7 @@ class NetworkReachabilityMonitor:
             self._notify_listeners(True)
 
     def report_offline(self) -> None:
-        """Explicitly notify monitor that a network/API operation failed due to connectivity."""
+        """Explicitly notify monitor that network connectivity was lost."""
         if self._is_online:
             logger.info("Network connectivity lost (reported Offline)")
             self._is_online = False
@@ -68,15 +68,12 @@ class NetworkReachabilityMonitor:
         """Called when an API request fails; quickly confirms reachability before marking offline."""
         if "unittest" in sys.modules or "pytest" in sys.modules:
             return
-        def _check():
-            try:
-                is_reachable = self.check_reachability(timeout=1.0)
-                if not is_reachable:
-                    self.report_offline()
-                else:
-                    self.report_online()
-            except Exception:
-                pass
+        if self._check_lock.locked():
+            return
+
+        def _check() -> None:
+            self._perform_check(timeout=1.0)
+
         threading.Thread(target=_check, daemon=True).start()
 
     def register_listener(self, callback: Callable[[bool], None]) -> None:
@@ -95,33 +92,11 @@ class NetworkReachabilityMonitor:
             if callback in self._listeners:
                 self._listeners.remove(callback)
 
-    @staticmethod
-    def _probe_socket_target(host: str, port: int, timeout: float) -> bool:
-        """Attempt a direct TCP socket connection to a single (host, port)."""
-        try:
-            with socket.create_connection((host, port), timeout=timeout):
-                return True
-        except Exception:
-            return False
-
-    def check_reachability(self, timeout: float = 1.2) -> bool:
-        """
-        Perform a fast, concurrent reachability check against configured endpoints.
-        Returns True if usable internet/network connectivity is confirmed, False otherwise.
-        """
-        # 1. macOS native reachability if available
-        if sys.platform == "darwin":
-            try:
-                mac_online = self._check_macos_reachability()
-                if mac_online is not None:
-                    return mac_online
-            except Exception:
-                pass
-
-        # 2. Collect target endpoints
+    def _get_targets(self) -> List[Tuple[str, int]]:
+        """Collect target (host, port) endpoints from the configured backend."""
         targets: List[Tuple[str, int]] = []
 
-        # Target A: Configured backend API endpoint
+        # 1. Configured backend API endpoint
         try:
             from config.api_config import ApiConfig
             base_url = None
@@ -129,6 +104,15 @@ class NetworkReachabilityMonitor:
                 base_url = ApiConfig().base_url
             except Exception:
                 pass
+            if not base_url:
+                try:
+                    from PySide6.QtCore import QSettings
+                    st = QSettings("iHRMS", "WorkPulse")
+                    cached = st.value("ApiConfig/last_base_url")
+                    if cached:
+                        base_url = str(cached)
+                except Exception:
+                    pass
             if not base_url:
                 try:
                     from services.secure_session import SessionStore
@@ -147,56 +131,55 @@ class NetworkReachabilityMonitor:
         except Exception:
             pass
 
-        # Target B: Fast public DNS and HTTP endpoints (Google, Cloudflare, OpenDNS)
-        public_probes = [
-            ("8.8.8.8", 53),
-            ("1.1.1.1", 53),
-            ("208.67.222.222", 53),
-            ("1.1.1.1", 80),
-            ("8.8.4.4", 53),
-        ]
-        targets.extend(public_probes)
-
-        # 3. Fast concurrent socket probing (first success returns True immediately)
-        max_workers = min(len(targets), 6)
+        # 2. Configured verification / app controller URL
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(self._probe_socket_target, host, port, timeout)
-                    for host, port in targets
-                ]
-                for future in concurrent.futures.as_completed(futures, timeout=timeout + 0.4):
-                    try:
-                        if future.result():
-                            return True
-                    except Exception:
-                        pass
+            from config.api_config import APP_CONTROLLER_URL
+            if APP_CONTROLLER_URL:
+                parsed = urlparse(APP_CONTROLLER_URL)
+                ctrl_host = parsed.hostname
+                ctrl_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if ctrl_host and (ctrl_host, ctrl_port) not in targets:
+                    targets.append((ctrl_host, ctrl_port))
         except Exception:
             pass
 
+        if not targets:
+            targets = [("info.indovisionservices.in", 443)]
+
+        return targets
+
+    @staticmethod
+    def _probe_socket_target(host: str, port: int, timeout: float = 1.5) -> bool:
+        """Attempt a direct TCP socket connection to a single (host, port)."""
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
+    def check_reachability(self, timeout: float = 1.5) -> bool:
+        """
+        Perform a reachability check against the configured backend endpoint.
+        Returns True if the backend server is reachable, False otherwise.
+        """
+        targets = self._get_targets()
+        for host, port in targets:
+            if self._probe_socket_target(host, port, timeout=timeout):
+                return True
         return False
 
-    def _check_macos_reachability(self) -> Optional[bool]:
-        """Check reachability on macOS via SystemConfiguration if available."""
-        try:
-            # pyrefly: ignore [missing-import]
-            from SystemConfiguration import (
-                SCNetworkReachabilityCreateWithName,
-                SCNetworkReachabilityGetFlags,
-                kSCNetworkReachabilityFlagsReachable,
-                kSCNetworkReachabilityFlagsConnectionRequired,
-            )
-            target = SCNetworkReachabilityCreateWithName(None, "apple.com")
-            if target:
-                flags_tuple = SCNetworkReachabilityGetFlags(target, None)
-                if flags_tuple and len(flags_tuple) == 2 and flags_tuple[0]:
-                    flags = flags_tuple[1]
-                    is_reachable = (flags & kSCNetworkReachabilityFlagsReachable) != 0
-                    needs_connection = (flags & kSCNetworkReachabilityFlagsConnectionRequired) != 0
-                    return bool(is_reachable and not needs_connection)
-        except Exception:
-            pass
-        return None
+    def _perform_check(self, timeout: float = 1.5) -> bool:
+        """Internal helper to execute a check, update state, and notify listeners."""
+        with self._check_lock:
+            try:
+                current_state = self.check_reachability(timeout=timeout)
+                if current_state != self._is_online:
+                    self._is_online = current_state
+                    self._notify_listeners(current_state)
+                return current_state
+            except Exception as e:
+                logger.debug("NetworkReachabilityMonitor check error: %s", e)
+                return False
 
     def start_monitoring(self, interval: float = 2.0) -> None:
         """Start background polling monitor if not already running."""
@@ -219,10 +202,7 @@ class NetworkReachabilityMonitor:
         """Background thread loop polling network reachability."""
         while self._running:
             try:
-                current_state = self.check_reachability(timeout=1.2)
-                if current_state != self._is_online:
-                    self._is_online = current_state
-                    self._notify_listeners(current_state)
+                self._perform_check(timeout=1.5)
             except Exception as e:
                 logger.debug("NetworkReachabilityMonitor loop error: %s", e)
             time.sleep(self._check_interval)

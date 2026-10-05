@@ -123,14 +123,6 @@ class DashboardPage(QWidget):
 
         self._cached_today_total_seconds = max(persisted, db_seconds)
 
-        self._build_ui()
-
-        # Autonomous timer to detect midnight/calendar date rollover even if workpulse is stopped
-        self._date_timer = QTimer(self)
-        self._date_timer.setInterval(10000)
-        self._date_timer.timeout.connect(self._check_date_rollover)
-        self._date_timer.start()
-
         # Dynamic network connectivity detector
         try:
             from services.network_monitor import NetworkReachabilityMonitor
@@ -140,6 +132,14 @@ class DashboardPage(QWidget):
             monitor.start_monitoring(interval=2.0)
         except Exception:
             self._is_network_online = True
+
+        self._build_ui()
+
+        # Autonomous timer to detect midnight/calendar date rollover even if workpulse is stopped
+        self._date_timer = QTimer(self)
+        self._date_timer.setInterval(10000)
+        self._date_timer.timeout.connect(self._check_date_rollover)
+        self._date_timer.start()
 
         try:
             att = AttendanceService().get_daily_attendance(self._cached_calendar_date.strftime("%Y-%m-%d"))
@@ -654,9 +654,16 @@ class DashboardPage(QWidget):
     def _on_reachability_changed(self, is_online: bool) -> None:
         """Handle async network reachability changes from NetworkReachabilityMonitor."""
         try:
-            QTimer.singleShot(0, lambda: self.set_network_status(is_online))
+            from PySide6.QtCore import QThread
+            if self.thread() == QThread.currentThread():
+                self.set_network_status(is_online)
+            else:
+                QTimer.singleShot(0, lambda: self.set_network_status(is_online))
         except Exception:
-            pass
+            try:
+                self.set_network_status(is_online)
+            except Exception:
+                pass
 
     def _check_network_connectivity(self) -> None:
         """Dynamically check internet / network connectivity in a background thread."""
