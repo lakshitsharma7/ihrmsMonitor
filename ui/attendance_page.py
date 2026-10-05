@@ -98,6 +98,15 @@ class CalendarDayCard(QFrame):
             dow_color = "#166534"
             detail_color = "#0F172A"
             today_badge_bg = "#16A34A"
+        elif "MISSED" in label_upper or "MISPUNCH" in label_upper or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH"):
+            card_bg = "#F0FDF4"      # Full light green card
+            card_border = "#86EFAC" if not is_today else "#16A34A"
+            card_hover = "#DCFCE7"
+            badge_bg = "#DCFCE7"
+            badge_border = "#86EFAC"
+            dow_color = "#166534"
+            detail_color = "#0F172A"
+            today_badge_bg = "#16A34A"
         elif label_upper == "ABSENT" or raw_code in ("A", "ABSENT"):
             card_bg = "#FEF2F2"      # Full light red card
             card_border = "#FECACA" if not is_today else "#DC2626"
@@ -125,15 +134,15 @@ class CalendarDayCard(QFrame):
             dow_color = "#7E22CE"
             detail_color = "#0F172A"
             today_badge_bg = "#9333EA"
-        elif "LEAVE" in label_upper or raw_code in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or "LEAVE" in raw_code:
-            card_bg = "#FFFBEB"      # Full light amber card
-            card_border = "#FDE68A" if not is_today else "#D97706"
-            card_hover = "#FEF3C7"
-            badge_bg = "#FEF3C7"
-            badge_border = "#FCD34D"
-            dow_color = "#B45309"
+        elif "LEAVE" in label_upper or raw_code in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or "LEAVE" in raw_code:
+            card_bg = "#FAF5FF"      # Full light purple card matching reference UI
+            card_border = "#E9D5FF" if not is_today else "#7E22CE"
+            card_hover = "#F3E8FF"
+            badge_bg = "#F3E8FF"
+            badge_border = "#D8B4FE"
+            dow_color = "#7E22CE"
             detail_color = "#0F172A"
-            today_badge_bg = "#D97706"
+            today_badge_bg = "#7E22CE"
         elif "COMP" in label_upper or "COMP" in raw_code:
             card_bg = "#ECFEFF"      # Full light cyan card
             card_border = "#A5F3FC" if not is_today else "#0891B2"
@@ -367,13 +376,23 @@ class AttendancePage(QWidget):
         present_layout.addWidget(self.present_val_label)
         stats_row.addWidget(present_card)
 
+        # Missed Punch Card
+        missed_punch_card = QGroupBox("Missed Punch")
+        mp_layout = QVBoxLayout(missed_punch_card)
+        mp_layout.setContentsMargins(12, 8, 12, 10)
+        self.missed_punch_val_label = QLabel("0 Days")
+        self.missed_punch_val_label.setObjectName("AttendanceStatMissedPunch")
+        self.missed_punch_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #DC2626;")
+        mp_layout.addWidget(self.missed_punch_val_label)
+        stats_row.addWidget(missed_punch_card)
+
         # Absent Card
         absent_card = QGroupBox("Absent Days")
         absent_layout = QVBoxLayout(absent_card)
         absent_layout.setContentsMargins(12, 8, 12, 10)
         self.absent_val_label = QLabel("0 Days")
         self.absent_val_label.setObjectName("AttendanceStatAbsent")
-        self.absent_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #DC2626;")
+        self.absent_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #EA580C;")
         absent_layout.addWidget(self.absent_val_label)
         stats_row.addWidget(absent_card)
 
@@ -393,7 +412,7 @@ class AttendancePage(QWidget):
         leave_layout.setContentsMargins(12, 8, 12, 10)
         self.leave_val_label = QLabel("0 Days")
         self.leave_val_label.setObjectName("AttendanceStatLeave")
-        self.leave_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #D97706;")
+        self.leave_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #7E22CE;")
         leave_layout.addWidget(self.leave_val_label)
         stats_row.addWidget(leave_card)
 
@@ -544,6 +563,9 @@ class AttendancePage(QWidget):
         else:
             available_months = list(MONTH_NAMES)
 
+        if desired_month and desired_month in MONTH_NAMES and desired_month not in available_months:
+            available_months.append(desired_month)
+
         self.month_combo.blockSignals(True)
         self.month_combo.clear()
         for m in available_months:
@@ -592,6 +614,29 @@ class AttendancePage(QWidget):
             self._on_month_year_changed()
         else:
             new_m_name = MONTH_NAMES[sel_month_num - 2]
+            self.month_combo.setCurrentText(new_m_name)
+
+    def _on_next_month(self) -> None:
+        """Navigate to next month."""
+        sel_month_name = self.month_combo.currentText()
+        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else 1
+        try:
+            cur_y = int(self.year_combo.currentText())
+        except ValueError:
+            cur_y = datetime.now().year
+
+        if sel_month_num == 12:
+            new_m_name = MONTH_NAMES[0]
+            new_y = cur_y + 1
+            if self.year_combo.findText(str(new_y)) == -1:
+                self.year_combo.addItem(str(new_y))
+            self.year_combo.blockSignals(True)
+            self.year_combo.setCurrentText(str(new_y))
+            self.year_combo.blockSignals(False)
+            self._populate_month_combo(target_year=new_y, desired_month=new_m_name)
+            self._on_month_year_changed()
+        else:
+            new_m_name = MONTH_NAMES[sel_month_num]
             self.month_combo.setCurrentText(new_m_name)
 
     def _on_today(self) -> None:
@@ -667,12 +712,15 @@ class AttendancePage(QWidget):
 
         summary = data.get("summary", {})
         present_cnt = summary.get("present", 0)
+        missed_punch_cnt = summary.get("missed_punch", 0)
         absent_cnt = summary.get("absent", 0)
         weekoff_cnt = summary.get("week_off", 0)
         leave_cnt = summary.get("leave", 0) + summary.get("holiday", 0)
         total_days = summary.get("total_days", 0)
 
         self.present_val_label.setText(f"{present_cnt} Days")
+        if hasattr(self, "missed_punch_val_label"):
+            self.missed_punch_val_label.setText(f"{missed_punch_cnt} Days")
         self.absent_val_label.setText(f"{absent_cnt} Days")
         self.weekoff_val_label.setText(f"{weekoff_cnt} Days")
         self.leave_val_label.setText(f"{leave_cnt} Days")
@@ -689,15 +737,36 @@ class AttendancePage(QWidget):
 
         # Resolve month number & year for grid alignment
         month_name = data.get("month") or self.month_combo.currentText()
-        try:
-            month_num = MONTH_NAMES.index(month_name) + 1
-        except ValueError:
+        month_num = 1
+        if isinstance(month_name, int) and 1 <= month_name <= 12:
+            month_num = month_name
+        elif isinstance(month_name, str):
+            m_clean = month_name.strip()
+            if m_clean in MONTH_NAMES:
+                month_num = MONTH_NAMES.index(m_clean) + 1
+            elif m_clean.capitalize() in MONTH_NAMES:
+                month_num = MONTH_NAMES.index(m_clean.capitalize()) + 1
+            elif any(m_clean.lower().startswith(m.lower()[:3]) for m in MONTH_NAMES):
+                for idx, m in enumerate(MONTH_NAMES):
+                    if m_clean.lower().startswith(m.lower()[:3]):
+                        month_num = idx + 1
+                        break
+            else:
+                try:
+                    m_i = int(m_clean)
+                    if 1 <= m_i <= 12:
+                        month_num = m_i
+                    else:
+                        month_num = self.month_combo.currentIndex() + 1
+                except ValueError:
+                    month_num = self.month_combo.currentIndex() + 1
+        else:
             month_num = self.month_combo.currentIndex() + 1
 
         year_val = data.get("year") or self.year_combo.currentText()
         try:
-            year_num = int(year_val)
-        except ValueError:
+            year_num = int(str(year_val).strip())
+        except (ValueError, TypeError):
             year_num = datetime.now().year
 
         self._populate_calendar(days, month_num, year_num)
@@ -715,8 +784,24 @@ class AttendancePage(QWidget):
         # Map day number -> day dict
         days_map: dict[int, dict] = {}
         for d in days:
-            if isinstance(d, dict) and "day_num" in d:
-                days_map[d["day_num"]] = d
+            if isinstance(d, dict):
+                if "day_num" in d and isinstance(d["day_num"], int) and 1 <= d["day_num"] <= 31:
+                    days_map[d["day_num"]] = d
+                elif "date" in d and isinstance(d["date"], str):
+                    try:
+                        raw_date_str = d["date"].split(" ")[0].split("T")[0]
+                        if "-" in raw_date_str:
+                            parts = raw_date_str.split("-")
+                            if len(parts) == 3 and len(parts[0]) == 4: # YYYY-MM-DD
+                                d_idx = int(parts[2])
+                                if 1 <= d_idx <= 31 and d_idx not in days_map:
+                                    days_map[d_idx] = d
+                            elif len(parts) == 3 and len(parts[2]) == 4: # DD-MM-YYYY
+                                d_idx = int(parts[0])
+                                if 1 <= d_idx <= 31 and d_idx not in days_map:
+                                    days_map[d_idx] = d
+                    except Exception:
+                        pass
 
         first_weekday, num_days_in_month = calendar.monthrange(year_num, month_num)
         # first_weekday is 0 (Monday) to 6 (Sunday)

@@ -554,16 +554,16 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             self.assertEqual(day_1["status_label"], "Absent")
             self.assertIsNone(day_1["details"])
 
-            # Day 9 (09-09-2026) should be Present with 11:37:19, 11:37:19
+            # Day 9 (09-09-2026 in mispunch_days) should be Missed Punch with 11:37:19, 11:37:19
             day_9 = res["days"][8]
             self.assertEqual(day_9["date"], "2026-09-09")
-            self.assertEqual(day_9["status_label"], "Present")
+            self.assertEqual(day_9["status_label"], "Missed Punch")
             self.assertEqual(day_9["details"], "Punch: 11:37:19, 11:37:19")
 
-            # Day 18 (18-09-2026) should be Present with 11:35:11 - 11:38:19
+            # Day 18 (18-09-2026 in mispunch_days) should be Missed Punch with 11:35:11 - 11:38:19
             day_18 = res["days"][17]
             self.assertEqual(day_18["date"], "2026-09-18")
-            self.assertEqual(day_18["status_label"], "Present")
+            self.assertEqual(day_18["status_label"], "Missed Punch")
             self.assertEqual(day_18["details"], "Punch: 11:35:11 - 11:38:19")
 
     def test_13_invalid_punch_sentinels_ignored(self):
@@ -671,6 +671,258 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         })
         self.assertIn("background-color: #FEF2F2", today_absent_card.styleSheet())
         self.assertIn("border: 2px solid #DC2626", today_absent_card.styleSheet())
+
+    def test_16_august_15_days_records_mapping(self):
+        """Verify August with 15 non-contiguous attendance days and diverse date formats maps each day accurately."""
+        # 15 days in August: 1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 18, 19
+        mock_response_data = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {"date": "2025-08-01", "punch_in": "09:00:00", "punch_out": "18:00:00"},
+                    {"lastUpdate": "02-08-2025", "punchTime": "09:05:00,18:05:00"},
+                    {"date": "2025-08-04", "punch_in": "09:10:00", "punch_out": "18:10:00"},
+                    {"attendance_date": "2025-08-05", "punch_in": "09:15:00"},
+                    {"date": "2025-08-06", "punch_in": "09:20:00", "punch_out": "18:20:00"},
+                    {"punch_date": "07-08-2025", "punch_in": "09:25:00"},
+                    {"date": "2025-08-08", "punch_in": "09:30:00", "punch_out": "18:30:00"},
+                    {"date": "2025-08-09", "punch_in": "09:35:00"},
+                    {"date": "2025-08-11", "punch_in": "09:40:00", "punch_out": "18:40:00"},
+                    {"date": "2025-08-12", "punch_in": "09:45:00"},
+                    {"date": "2025-08-13", "punch_in": "09:50:00", "punch_out": "18:50:00"},
+                    {"date": "2025-08-14", "punch_in": "09:55:00"},
+                    {"date": "15-Aug-2025", "status": "Holiday", "name": "Independence Day"},
+                    {"date": "2025-08-18", "punch_in": "10:00:00", "punch_out": "19:00:00"},
+                    {"date": "2025-08-19", "punch_in": "10:05:00"},
+                ],
+                "holiday_days": [
+                    {"name": "Independence Day", "date": "2025-08-15"}
+                ],
+                "weekoff": [
+                    {"date": "2025-08-03"},
+                    {"date": "2025-08-10"},
+                    {"date": "2025-08-17"},
+                    {"date": "2025-08-24"},
+                    {"date": "2025-08-31"},
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response_data
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="August",
+                year=2025,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            self.assertEqual(len(res["days"]), 31)
+            # Day 1: Aug 1
+            self.assertEqual(res["days"][0]["date"], "2025-08-01")
+            self.assertEqual(res["days"][0]["status_label"], "Present")
+            self.assertIn("09:00:00 - 18:00:00", res["days"][0]["details"])
+
+            # Day 3: Aug 3 (Sunday - Week Off)
+            self.assertEqual(res["days"][2]["date"], "2025-08-03")
+            self.assertEqual(res["days"][2]["status_label"], "Week Off")
+
+            # Day 4: Aug 4
+            self.assertEqual(res["days"][3]["date"], "2025-08-04")
+            self.assertEqual(res["days"][3]["status_label"], "Present")
+
+            # Day 15: Aug 15 (Holiday)
+            self.assertEqual(res["days"][14]["date"], "2025-08-15")
+            self.assertIn("Independence Day", res["days"][14]["status_label"])
+
+            # Day 19: Aug 19
+            self.assertEqual(res["days"][18]["date"], "2025-08-19")
+            self.assertEqual(res["days"][18]["status_label"], "Present")
+
+            # UI Population verification
+            page = AttendancePage(service=self.service)
+            page._apply_attendance_data(res)
+            self.assertEqual(len(page._day_cards), 31)
+
+    def test_17_multi_year_same_month_isolation(self):
+        """Verify August 2025 and August 2026 data are completely isolated and not mixed."""
+        mock_aug_2025 = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [{"date": "2025-08-01", "punch_in": "09:00:00"}]
+            }
+        }
+        mock_aug_2026 = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [{"date": "2026-08-01", "punch_in": "10:30:00"}]
+            }
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.side_effect = [mock_aug_2025, mock_aug_2026]
+            mock_post.return_value = mock_resp
+
+            res_2025 = self.service.get_monthly_attendance_record(month="August", year=2025, force=True)
+            res_2026 = self.service.get_monthly_attendance_record(month="August", year=2026, force=True)
+
+            self.assertEqual(res_2025["year"], 2025)
+            self.assertEqual(res_2026["year"], 2026)
+            self.assertIn("09:00:00", res_2025["days"][0]["details"])
+            self.assertIn("10:30:00", res_2026["days"][0]["details"])
+
+    def test_18_flexible_month_inputs(self):
+        """Verify resolution of abbreviations, string numbers, and 0-indexed month inputs."""
+        mock_response = {"response": 200, "status": 1, "result": {"present_days": []}}
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_response
+            mock_post.return_value = mock_resp
+
+            # Abbreviation "Aug"
+            res = self.service.get_monthly_attendance_record(month="Aug", year=2025, force=True)
+            self.assertEqual(res["month"], "August")
+
+            # Numeric "08"
+            res = self.service.get_monthly_attendance_record(month="08", year=2025, force=True)
+            self.assertEqual(res["month"], "August")
+
+            # JS 0-indexed 0 -> January
+            res = self.service.get_monthly_attendance_record(month=0, year=2025, force=True)
+            self.assertEqual(res["month"], "January")
+
+    def test_19_dict_response_structures(self):
+        """Verify API response with dictionary collections for present_days and holidays."""
+        mock_dict_response = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": {
+                    "2025-08-01": {"punch_in": "09:00:00", "punch_out": "18:00:00"},
+                    "2025-08-02": {"punch_in": "09:30:00"}
+                },
+                "holiday_days": {
+                    "2025-08-15": {"name": "Independence Day"}
+                }
+            }
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_dict_response
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(month="August", year=2025, force=True)
+            self.assertEqual(res["days"][0]["status_label"], "Present")
+            self.assertEqual(res["days"][1]["status_label"], "Present")
+            self.assertIn("Independence Day", res["days"][14]["status_label"])
+
+    def test_20_may_2026_screenshot_reference_comparison(self):
+        """Verify May 2026 reference scenario matches reference counts and day classifications."""
+        mock_may_response = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {"date": "2026-05-04", "punchTime": "12:19:25,12:19:25"},
+                    {"date": "2026-05-05", "punchTime": "10:41:33,10:41:33"},
+                    {"date": "2026-05-06", "punchTime": "11:08:24 - 11:25:00"},
+                    {"date": "2026-05-14", "punchTime": "11:45:46,11:45:46"},
+                    {"date": "2026-05-25", "punchTime": "10:00:00,10:00:00"},
+                    {"date": "2026-05-27", "punchTime": "10:15:00,10:15:00"},
+                    {"date": "2026-05-28", "punchTime": "10:20:00,10:20:00"},
+                ],
+                "mispunch_days": [
+                    "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-14",
+                    "2026-05-25", "2026-05-27", "2026-05-28"
+                ],
+                "leave_days": [
+                    {"date": "2026-05-21", "leave_type": "Casual Leave"}
+                ],
+                "weekoff": [
+                    {"date": "2026-05-02"}, {"date": "2026-05-03"},
+                    {"date": "2026-05-09"}, {"date": "2026-05-10"},
+                    {"date": "2026-05-16"}, {"date": "2026-05-17"},
+                    {"date": "2026-05-23"}, {"date": "2026-05-24"},
+                    {"date": "2026-05-30"}, {"date": "2026-05-31"}
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = mock_may_response
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="May",
+                year=2026,
+                indo_code="EC-098",
+                key="testapikey111",
+                force=True,
+            )
+
+            self.assertEqual(len(res["days"]), 31)
+
+            # Check specific days from screenshot:
+            # May 1 (Fri): Absent
+            self.assertEqual(res["days"][0]["date"], "2026-05-01")
+            self.assertEqual(res["days"][0]["status_label"], "Absent")
+
+            # May 2 (Sat): Week Off
+            self.assertEqual(res["days"][1]["date"], "2026-05-02")
+            self.assertEqual(res["days"][1]["status_label"], "Week Off")
+
+            # May 3 (Sun): Week Off
+            self.assertEqual(res["days"][2]["date"], "2026-05-03")
+            self.assertEqual(res["days"][2]["status_label"], "Week Off")
+
+            # May 4 (Mon): Missed Punch
+            self.assertEqual(res["days"][3]["date"], "2026-05-04")
+            self.assertEqual(res["days"][3]["status_label"], "Missed Punch")
+            self.assertEqual(res["days"][3]["details"], "Punch: 12:19:25, 12:19:25")
+
+            # May 16 (Sat): Week Off
+            self.assertEqual(res["days"][15]["date"], "2026-05-16")
+            self.assertEqual(res["days"][15]["status_label"], "Week Off")
+
+            # May 21 (Thu): Leave
+            self.assertEqual(res["days"][20]["date"], "2026-05-21")
+            self.assertIn("Leave", res["days"][20]["status_label"])
+
+            # Summary counts check
+            summary = res["summary"]
+            self.assertEqual(summary["total_days"], 31)
+            self.assertEqual(summary["week_off"], 10)
+            self.assertEqual(summary["leave"], 1)
+            self.assertEqual(summary["missed_punch"], 7)
+
+            # UI rendering check
+            page = AttendancePage(service=self.service)
+            page._apply_attendance_data(res)
+            self.assertEqual(page.weekoff_val_label.text(), "10 Days")
+            self.assertEqual(page.leave_val_label.text(), "1 Days")
+            self.assertEqual(page.missed_punch_val_label.text(), "7 Days")
 
 
 if __name__ == "__main__":

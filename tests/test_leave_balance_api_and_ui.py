@@ -343,6 +343,95 @@ class TestLeaveBalanceApiAndUi(unittest.TestCase):
             page.leave_balance_button.click()
             mock_open.assert_called_once()
 
+    @patch("requests.post")
+    def test_actual_api_response_from_screenshot_parses_and_renders_ui(self, mock_post):
+        """Verify the exact API response from user screenshot parses correctly and updates UI with real values."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"OK"
+        # Exact payload structure from screenshot:
+        mock_response.json.return_value = {
+            "response": 200,
+            "status": 1,
+            "leave_quota": [
+                {
+                    "indo_code": "EC-098",
+                    "lt_id": "1,2,3,4,5,6,7",
+                    "leaves": "202.00,100.00,0.00,133.34,233.34,203.00,0",
+                    "leavesTaked": "2,0,0,1,0.25,3,0",
+                    "remaining": "200,100,0,132.34,233.09,200,0",
+                }
+            ],
+        }
+        mock_post.return_value = mock_response
+
+        # 1. Test Service Parsing
+        res = self.service.get_leave_quota(indo_code="EC-098", key="testapikey111", force=True)
+        self.assertIsNone(res["error"])
+        self.assertEqual(len(res["items"]), 7)
+
+        # Verify summary in API service output
+        self.assertAlmostEqual(res["summary"]["total_quota"], 871.68, places=2)
+        self.assertAlmostEqual(res["summary"]["total_used"], 6.25, places=2)
+        self.assertAlmostEqual(res["summary"]["total_available"], 865.43, places=2)
+
+        # 2. Test Dialog Integration
+        mock_service = MagicMock()
+        mock_service.get_leave_quota.return_value = res
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.refresh(async_mode=False)
+
+        self.assertEqual(dialog.total_quota_val.text(), "871.68 Days")
+        self.assertEqual(dialog.total_used_val.text(), "6.25 Days")
+        self.assertEqual(dialog.total_avail_val.text(), "865.43 Days")
+
+        # Verify all 7 cards in dialog
+        self.assertEqual(len(dialog._cards), 7)
+        # CL: 202 Total / 2 Used / 200 Left
+        self.assertEqual(dialog._cards[0].code_badge.text(), "CL")
+        # SL: 100 Total / 0 Used / 100 Left
+        self.assertEqual(dialog._cards[1].code_badge.text(), "SL")
+        # CO: 0 Total / 0 Used / 0 Left
+        self.assertEqual(dialog._cards[2].code_badge.text(), "CO")
+        # OD: 133.34 Total / 1 Used / 132.34 Left
+        self.assertEqual(dialog._cards[3].code_badge.text(), "OD")
+        # LWP: 233.34 Total / 0.25 Used / 233.09 Left
+        self.assertEqual(dialog._cards[4].code_badge.text(), "LWP")
+        # EL: 203 Total / 3 Used / 200 Left
+        self.assertEqual(dialog._cards[5].code_badge.text(), "EL")
+        # RH: 0 Total / 0 Used / 0 Left
+        self.assertEqual(dialog._cards[6].code_badge.text(), "RH")
+
+    @patch("requests.post")
+    def test_dynamic_custom_leave_types(self, mock_post):
+        """Verify dynamic leave types beyond standard 7 are parsed and rendered without code change."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"OK"
+        mock_response.json.return_value = {
+            "response": 200,
+            "status": 1,
+            "leave_quota": [
+                {
+                    "indo_code": "EC-098",
+                    "lt_id": "1,2,8",
+                    "leaves": "10,5,3",
+                    "leavesTaked": "2,1,0",
+                    "remaining": "8,4,3",
+                }
+            ],
+        }
+        mock_post.return_value = mock_response
+
+        res = self.service.get_leave_quota(indo_code="EC-098", key="testapikey111", force=True)
+        self.assertEqual(len(res["items"]), 7)
+        self.assertEqual(res["items"][0]["code"], "CL")
+        self.assertEqual(res["items"][1]["code"], "SL")
+        self.assertEqual(res["items"][2]["code"], "LT8")
+        self.assertEqual(res["items"][2]["total_quota"], 3.0)
+        self.assertEqual(res["items"][2]["available"], 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

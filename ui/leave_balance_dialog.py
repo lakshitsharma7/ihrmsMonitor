@@ -466,12 +466,16 @@ class LeaveBalanceDialog(QDialog):
 
         # Extract items list or raw container
         raw_items = []
+        is_pre_parsed = False
         if isinstance(data, dict):
-            raw_items = data.get("items")
-            if raw_items is None:
+            if "items" in data and isinstance(data["items"], list):
+                raw_items = data["items"]
+                is_pre_parsed = True
+            if raw_items is None or not is_pre_parsed:
                 raw_c = (
                     data.get("data")
                     or data.get("result")
+                    or data.get("leave_quota")
                     or data.get("leaves")
                     or data.get("leave_types")
                     or data.get("leave_balances")
@@ -480,139 +484,183 @@ class LeaveBalanceDialog(QDialog):
                 if isinstance(raw_c, list):
                     raw_items = raw_c
                 elif isinstance(raw_c, dict):
-                    # Check for comma-separated CSV format inside raw_c
-                    for cand in ("lt_id", "leaves", "leavesTaked", "remaining"):
-                        if cand in raw_c:
-                            # Let AttendanceService or local CSV parsing handle it
-                            raw_items = self._service._leave_cache.get(f"{raw_c}") or []
-                            break
-                    if not raw_items:
-                        for ik in ("leaves", "leave_types", "leave_balances", "records", "items", "list", "rows", "details"):
-                            if ik in raw_c and isinstance(raw_c[ik], list):
-                                raw_items = raw_c[ik]
-                                break
-                    if not raw_items:
-                        raw_items = []
-                        for k, v in raw_c.items():
-                            if isinstance(v, dict):
-                                entry = dict(v)
-                                if "leave_type" not in entry and "name" not in entry:
-                                    entry["leave_type"] = k
-                                raw_items.append(entry)
-                            elif isinstance(v, (int, float, str)) and str(v).replace(".", "", 1).isdigit():
-                                raw_items.append({"leave_type": k, "available": v, "total_quota": v, "used": 0})
+                    raw_items = [raw_c]
         elif isinstance(data, list):
             raw_items = data
 
-        # Pass 1: Try exact code or alias match for all fixed types
-        assigned: dict[int, dict] = {}
-        matched_raw_indices = set()
+        final_items: list[dict] = []
 
-        for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
-            code = fixed["code"].lower()
-            aliases = fixed.get("aliases", ())
-            for r_idx, entry in enumerate(raw_items):
-                if not isinstance(entry, dict) or r_idx in matched_raw_indices:
+        if is_pre_parsed and raw_items:
+            for entry in raw_items:
+                if not isinstance(entry, dict):
                     continue
-                entry_code = str(
-                    entry.get("code")
-                    or entry.get("short_name")
-                    or entry.get("short_code")
-                    or entry.get("leave_code")
-                    or entry.get("leaveCode")
-                    or ""
-                ).strip().lower()
-                entry_name = str(
-                    entry.get("name")
-                    or entry.get("leave_type")
-                    or entry.get("leave_type_name")
-                    or entry.get("leave_name")
-                    or entry.get("type")
-                    or ""
-                ).strip().lower()
+                code = str(entry.get("code") or entry.get("short_name") or "LT").strip()
+                name = str(entry.get("name") or entry.get("leave_type") or "Leave Type").strip()
+                q_raw = (
+                    entry.get("total_quota_str")
+                    or entry.get("total_str")
+                    or entry.get("total_quota")
+                    or entry.get("total")
+                    or 0.0
+                )
+                u_raw = (
+                    entry.get("used_str")
+                    or entry.get("used")
+                    or 0.0
+                )
+                l_raw = (
+                    entry.get("available_str")
+                    or entry.get("left_str")
+                    or entry.get("remaining_str")
+                    or entry.get("available")
+                    or entry.get("left")
+                    or entry.get("remaining")
+                    or 0.0
+                )
+                q_num = _to_num(q_raw)
+                u_num = _to_num(u_raw)
+                l_num = _to_num(l_raw)
 
-                if (entry_code and (entry_code == code or entry_code in aliases)) or (entry_name and any(alias in entry_name for alias in aliases)):
-                    assigned[fixed_idx] = entry
-                    matched_raw_indices.add(r_idx)
-                    break
+                final_items.append({
+                    "code": code,
+                    "name": name,
+                    "short_name": code,
+                    "leave_type": name,
+                    "total": q_num,
+                    "total_quota": q_num,
+                    "total_quota_str": str(q_raw) if str(q_raw) not in ("0.0", "0") else _fmt_val(q_num),
+                    "used": u_num,
+                    "used_str": str(u_raw) if str(u_raw) not in ("0.0", "0") else _fmt_val(u_num),
+                    "left": l_num,
+                    "available": l_num,
+                    "available_str": str(l_raw) if str(l_raw) not in ("0.0", "0") else _fmt_val(l_num),
+                })
+        else:
+            # Fallback mapping for raw dictionary / list formats
+            assigned: dict[int, dict] = {}
+            matched_raw_indices = set()
 
-        # Pass 2: For any fixed type that didn't match by code/name, match positional if unmapped raw items exist
-        unmatched_raw = [entry for r_idx, entry in enumerate(raw_items) if isinstance(entry, dict) and r_idx not in matched_raw_indices]
-        unmatched_fixed = [f_idx for f_idx in range(len(FIXED_LEAVE_TYPES)) if f_idx not in assigned]
-        for f_idx, entry in zip(unmatched_fixed, unmatched_raw):
-            assigned[f_idx] = entry
+            for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+                code = fixed["code"].lower()
+                aliases = fixed.get("aliases", ())
+                for r_idx, entry in enumerate(raw_items):
+                    if not isinstance(entry, dict) or r_idx in matched_raw_indices:
+                        continue
+                    entry_code = str(
+                        entry.get("code")
+                        or entry.get("short_name")
+                        or entry.get("short_code")
+                        or entry.get("leave_code")
+                        or entry.get("leaveCode")
+                        or ""
+                    ).strip().lower()
+                    entry_name = str(
+                        entry.get("name")
+                        or entry.get("leave_type")
+                        or entry.get("leave_type_name")
+                        or entry.get("leave_name")
+                        or entry.get("type")
+                        or ""
+                    ).strip().lower()
 
-        final_7_items: list[dict] = []
-        for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
-            code = fixed["code"]
-            name = fixed["name"]
-            entry = assigned.get(fixed_idx, {})
+                    if (entry_code and (entry_code == code or entry_code in aliases)) or (entry_name and any(alias in entry_name for alias in aliases)):
+                        assigned[fixed_idx] = entry
+                        matched_raw_indices.add(r_idx)
+                        break
 
-            # Extract numeric fields
-            q_raw = (
-                entry.get("total_quota_str")
-                or entry.get("total_quota")
-                or entry.get("total_str")
-                or entry.get("total")
-                or entry.get("totalQuota")
-                or entry.get("total_leaves")
-                or entry.get("allotted")
-                or entry.get("quota")
-                or entry.get("leaves")
-                or 0.0
-            )
-            u_raw = (
-                entry.get("used_str")
-                or entry.get("used")
-                or entry.get("leavesTaked")
-                or entry.get("leaves_taked")
-                or entry.get("leaves_taken")
-                or entry.get("taken")
-                or entry.get("consumed")
-                or entry.get("availed")
-                or 0.0
-            )
-            l_raw = (
-                entry.get("available_str")
-                or entry.get("available")
-                or entry.get("left_str")
-                or entry.get("left")
-                or entry.get("remaining")
-                or entry.get("remaining_str")
-                or entry.get("leave_balance")
-                or entry.get("balance")
-                or 0.0
-            )
+            # Pass 2: For any fixed type that didn't match by code/name, match positional if unmapped raw items exist
+            unmatched_raw = [entry for r_idx, entry in enumerate(raw_items) if isinstance(entry, dict) and r_idx not in matched_raw_indices]
+            unmatched_fixed = [f_idx for f_idx in range(len(FIXED_LEAVE_TYPES)) if f_idx not in assigned]
+            for f_idx, entry in zip(unmatched_fixed, unmatched_raw):
+                assigned[f_idx] = entry
 
-            q_num = _to_num(q_raw)
-            u_num = _to_num(u_raw)
-            l_num = _to_num(l_raw)
+            for fixed_idx, fixed in enumerate(FIXED_LEAVE_TYPES):
+                code = fixed["code"]
+                name = fixed["name"]
+                entry = assigned.get(fixed_idx, {})
 
-            if l_raw == 0.0 and q_num > 0 and u_num >= 0:
-                l_num = max(0.0, q_num - u_num)
+                # Extract numeric fields
+                q_raw = (
+                    entry.get("total_quota_str")
+                    or entry.get("total_quota")
+                    or entry.get("total_str")
+                    or entry.get("total")
+                    or entry.get("totalQuota")
+                    or entry.get("total_leaves")
+                    or entry.get("allotted")
+                    or entry.get("quota")
+                    or entry.get("leaves")
+                    or 0.0
+                )
+                u_raw = (
+                    entry.get("used_str")
+                    or entry.get("used")
+                    or entry.get("leavesTaked")
+                    or entry.get("leaves_taked")
+                    or entry.get("leaves_taken")
+                    or entry.get("taken")
+                    or entry.get("consumed")
+                    or entry.get("availed")
+                    or 0.0
+                )
+                l_raw = (
+                    entry.get("available_str")
+                    or entry.get("available")
+                    or entry.get("left_str")
+                    or entry.get("left")
+                    or entry.get("remaining")
+                    or entry.get("remaining_str")
+                    or entry.get("leave_balance")
+                    or entry.get("balance")
+                    or 0.0
+                )
 
-            final_7_items.append({
-                "code": code,
-                "name": name,
-                "short_name": code,
-                "leave_type": name,
-                "total": q_num,
-                "total_quota": q_num,
-                "total_quota_str": str(q_raw) if str(q_raw) != "0.0" else _fmt_val(q_num),
-                "used": u_num,
-                "used_str": str(u_raw) if str(u_raw) != "0.0" else _fmt_val(u_num),
-                "left": l_num,
-                "available": l_num,
-                "available_str": str(l_raw) if str(l_raw) != "0.0" else _fmt_val(l_num),
-            })
+                q_num = _to_num(q_raw)
+                u_num = _to_num(u_raw)
+                l_num = _to_num(l_raw)
+
+                if l_raw == 0.0 and q_num > 0 and u_num >= 0:
+                    l_num = max(0.0, q_num - u_num)
+
+                final_items.append({
+                    "code": code,
+                    "name": name,
+                    "short_name": code,
+                    "leave_type": name,
+                    "total": q_num,
+                    "total_quota": q_num,
+                    "total_quota_str": str(q_raw) if str(q_raw) != "0.0" else _fmt_val(q_num),
+                    "used": u_num,
+                    "used_str": str(u_raw) if str(u_raw) != "0.0" else _fmt_val(u_num),
+                    "left": l_num,
+                    "available": l_num,
+                    "available_str": str(l_raw) if str(l_raw) != "0.0" else _fmt_val(l_num),
+                })
+
+        if not final_items:
+            self.scroll_area.setVisible(False)
+            self.empty_state.setVisible(True)
+            self.total_quota_val.setText("0 Days")
+            self.total_used_val.setText("0 Days")
+            self.total_avail_val.setText("0 Days")
+            return
 
         self.empty_state.setVisible(False)
         self.scroll_area.setVisible(True)
 
-        # Compute dynamic summary totals from the 7 cards
-        tot_allotted = sum(item["total"] for item in final_7_items)
-        tot_used = sum(item["used"] for item in final_7_items)
-        tot_avail = sum(item["left"] for item in final_7_items)
+        # Compute dynamic summary totals from summary dict or items
+        summary_dict = data.get("summary") if isinstance(data, dict) and isinstance(data.get("summary"), dict) else {}
+        tot_allotted = summary_dict.get("total_quota")
+        if tot_allotted is None:
+            tot_allotted = sum(item["total"] for item in final_items)
+
+        tot_used = summary_dict.get("total_used")
+        if tot_used is None:
+            tot_used = sum(item["used"] for item in final_items)
+
+        tot_avail = summary_dict.get("total_available")
+        if tot_avail is None:
+            tot_avail = sum(item["left"] for item in final_items)
 
         self.total_quota_val.setText(f"{_fmt_val(tot_allotted)} Days")
         self.total_used_val.setText(f"{_fmt_val(tot_used)} Days")
@@ -626,9 +674,9 @@ class LeaveBalanceDialog(QDialog):
                 w.deleteLater()
         self._cards.clear()
 
-        # Render the 7 cards in a 2-column responsive grid
+        # Render cards dynamically in a 2-column responsive grid
         cols_per_row = 2
-        for idx, item in enumerate(final_7_items):
+        for idx, item in enumerate(final_items):
             row_idx = idx // cols_per_row
             col_idx = idx % cols_per_row
             card = LeaveSummaryCard(item=item)

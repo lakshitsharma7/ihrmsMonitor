@@ -569,30 +569,49 @@ class AttendanceService:
             "January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"
         ]
+        short_month_map = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+            "sept": 9
+        }
+        full_month_map = {m.lower(): i + 1 for i, m in enumerate(month_names)}
 
-        if isinstance(month, int) and 1 <= month <= 12:
-            resolved_month_name = month_names[month - 1]
-            resolved_month_num = month
+        if isinstance(month, int):
+            if 1 <= month <= 12:
+                resolved_month_num = month
+                resolved_month_name = month_names[month - 1]
+            elif month == 0:
+                resolved_month_num = 1
+                resolved_month_name = month_names[0]
+            else:
+                resolved_month_num = now.month
+                resolved_month_name = month_names[now.month - 1]
         elif isinstance(month, str) and month.strip():
-            m_str = month.strip().capitalize()
-            if m_str in month_names:
-                resolved_month_name = m_str
-                resolved_month_num = month_names.index(m_str) + 1
+            m_clean = month.strip().lower()
+            if m_clean in full_month_map:
+                resolved_month_num = full_month_map[m_clean]
+                resolved_month_name = month_names[resolved_month_num - 1]
+            elif m_clean[:3] in short_month_map:
+                resolved_month_num = short_month_map[m_clean[:3]]
+                resolved_month_name = month_names[resolved_month_num - 1]
             else:
                 try:
-                    m_int = int(m_str)
+                    m_int = int(m_clean)
                     if 1 <= m_int <= 12:
-                        resolved_month_name = month_names[m_int - 1]
                         resolved_month_num = m_int
+                        resolved_month_name = month_names[m_int - 1]
+                    elif m_int == 0:
+                        resolved_month_num = 1
+                        resolved_month_name = month_names[0]
                     else:
-                        resolved_month_name = month_names[now.month - 1]
                         resolved_month_num = now.month
+                        resolved_month_name = month_names[now.month - 1]
                 except ValueError:
-                    resolved_month_name = month_names[now.month - 1]
                     resolved_month_num = now.month
+                    resolved_month_name = month_names[now.month - 1]
         else:
-            resolved_month_name = month_names[now.month - 1]
             resolved_month_num = now.month
+            resolved_month_name = month_names[now.month - 1]
 
         if year is not None:
             try:
@@ -758,41 +777,49 @@ class AttendanceService:
             return s if _is_valid_punch_time(s) else None
 
         def _normalize_date_key(raw_val: Any, target_year: int, target_month: int) -> str | None:
-            """Normalize various date formats (DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY, day num) into 'YYYY-MM-DD'."""
-            if not raw_val:
+            """Normalize various date formats (DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY, named months, day num) into 'YYYY-MM-DD'."""
+            if raw_val is None:
                 return None
             s = str(raw_val).strip()
-            if not s or s.lower() in ("none", "null", "undefined", "-"):
+            if not s or s.lower() in ("none", "null", "undefined", "-", "--", "n/a", "na", "{}", "[]"):
                 return None
+
+            # Strip time component if separated by space or T
             if " " in s:
                 s = s.split(" ")[0].strip()
             if "T" in s:
                 s = s.split("T")[0].strip()
 
-            # YYYY-MM-DD or YYYY/MM/DD
-            if len(s) == 10 and (s[4] in ("-", "/") and s[7] in ("-", "/")):
-                sep = s[4]
-                try:
-                    dt = datetime.strptime(s, f"%Y{sep}%m{sep}%d")
-                    return dt.strftime("%Y-%m-%d")
-                except ValueError:
-                    pass
+            import re
 
-            # DD-MM-YYYY or DD/MM/YYYY
-            if len(s) == 10 and (s[2] in ("-", "/") and s[5] in ("-", "/")):
-                sep = s[2]
-                try:
-                    dt = datetime.strptime(s, f"%d{sep}%m{sep}%Y")
-                    return dt.strftime("%Y-%m-%d")
-                except ValueError:
-                    pass
+            # Pattern 1: YYYY-MM-DD or YYYY/MM/DD (1 or 2 digits for month/day)
+            m1 = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", s)
+            if m1:
+                y, mo, d = int(m1.group(1)), int(m1.group(2)), int(m1.group(3))
+                if 1 <= mo <= 12 and 1 <= d <= 31:
+                    return f"{y:04d}-{mo:02d}-{d:02d}"
 
-            try:
-                day_num = int(s)
-                if 1 <= day_num <= 31:
-                    return f"{target_year:04d}-{target_month:02d}-{day_num:02d}"
-            except ValueError:
-                pass
+            # Pattern 2: DD-MM-YYYY or DD/MM/YYYY (1 or 2 digits for day/month)
+            m2 = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", s)
+            if m2:
+                d, mo, y = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+                if 1 <= mo <= 12 and 1 <= d <= 31:
+                    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+            # Pattern 3: DD-Mon-YYYY, DD Mon YYYY, DD-Month-YYYY (e.g. 15-Aug-2025, 01-August-2025)
+            m3 = re.match(r"^(\d{1,2})[-/\s]([a-zA-Z]+)[-/\s](\d{4})$", s)
+            if m3:
+                d, mon_str, y = int(m3.group(1)), m3.group(2).lower(), int(m3.group(3))
+                mo = short_month_map.get(mon_str[:3]) or full_month_map.get(mon_str)
+                if mo and 1 <= d <= 31:
+                    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+            # Pattern 4: Pure day number (1..31 or '01'..'31')
+            m4 = re.match(r"^\d{1,2}$", s)
+            if m4:
+                d = int(s)
+                if 1 <= d <= 31:
+                    return f"{target_year:04d}-{target_month:02d}-{d:02d}"
 
             return None
 
@@ -800,48 +827,86 @@ class AttendanceService:
             val: Any,
             date_str: str,
             local_punch: dict | None = None,
+            api_punch: Any = None,
         ) -> tuple[str | None, str | None, list[str]]:
-            """Extract clean punch display string, details line, and raw punch times list."""
+            """Extract clean punch display string, details line, and raw punch times list from API and local store."""
             punches: list[str] = []
             working_hrs: str | None = None
 
-            if isinstance(val, dict):
+            def _inspect_dict(d: dict) -> None:
+                nonlocal punches, working_hrs
+                if not isinstance(d, dict):
+                    return
+
                 # 1. Direct punch in / out fields
                 p_in = (
-                    val.get("punch_in")
-                    or val.get("punchIn")
-                    or val.get("punch_in_time")
-                    or val.get("in_time")
-                    or val.get("first_punch")
-                    or val.get("first_in")
-                    or val.get("check_in")
+                    d.get("punch_in")
+                    or d.get("punchIn")
+                    or d.get("punch_in_time")
+                    or d.get("punchInTime")
+                    or d.get("in_time")
+                    or d.get("inTime")
+                    or d.get("first_punch")
+                    or d.get("firstPunch")
+                    or d.get("first_in")
+                    or d.get("firstIn")
+                    or d.get("check_in")
+                    or d.get("checkIn")
+                    or d.get("start_time")
+                    or d.get("startTime")
+                    or d.get("sign_in")
+                    or d.get("signIn")
+                    or d.get("login_time")
+                    or d.get("loginTime")
+                    or d.get("time_in")
+                    or d.get("timeIn")
+                    or d.get("in")
                 )
                 p_out = (
-                    val.get("punch_out")
-                    or val.get("punchOut")
-                    or val.get("punch_out_time")
-                    or val.get("out_time")
-                    or val.get("last_punch")
-                    or val.get("last_out")
-                    or val.get("check_out")
+                    d.get("punch_out")
+                    or d.get("punchOut")
+                    or d.get("punch_out_time")
+                    or d.get("punchOutTime")
+                    or d.get("out_time")
+                    or d.get("outTime")
+                    or d.get("last_punch")
+                    or d.get("lastPunch")
+                    or d.get("last_out")
+                    or d.get("lastOut")
+                    or d.get("check_out")
+                    or d.get("checkOut")
+                    or d.get("end_time")
+                    or d.get("endTime")
+                    or d.get("sign_out")
+                    or d.get("signOut")
+                    or d.get("logout_time")
+                    or d.get("logoutTime")
+                    or d.get("time_out")
+                    or d.get("timeOut")
+                    or d.get("out")
                 )
 
                 c_in = _clean_time_str(p_in)
                 c_out = _clean_time_str(p_out)
-                if c_in:
+                if c_in and c_in not in punches:
                     punches.append(c_in)
-                if c_out and c_out != c_in:
+                if c_out and c_out != c_in and c_out not in punches:
                     punches.append(c_out)
 
                 # 2. punch_time / punchTime / punch / punches / attendance_time
                 p_time = (
-                    val.get("punchTime")
-                    or val.get("punch_time")
-                    or val.get("punch_times")
-                    or val.get("punch")
-                    or val.get("punches")
-                    or val.get("attendance_time")
-                    or val.get("time")
+                    d.get("punchTime")
+                    or d.get("punch_time")
+                    or d.get("punch_times")
+                    or d.get("punchTimes")
+                    or d.get("punch")
+                    or d.get("punches")
+                    or d.get("attendance_time")
+                    or d.get("attendanceTime")
+                    or d.get("time")
+                    or d.get("times")
+                    or d.get("clock_in")
+                    or d.get("clock_out")
                 )
                 if isinstance(p_time, list):
                     for item in p_time:
@@ -861,25 +926,34 @@ class AttendanceService:
                             punches.append(c)
 
                 # 3. working hours
-                w_hrs = val.get("working_hours") or val.get("work_duration") or val.get("hours") or val.get("total_hours")
-                if _is_valid_punch_time(w_hrs):
+                w_hrs = d.get("working_hours") or d.get("work_duration") or d.get("hours") or d.get("total_hours") or d.get("work_hours")
+                if _is_valid_punch_time(w_hrs) and not working_hrs:
                     working_hrs = str(w_hrs).strip()
 
-            elif isinstance(val, str):
-                if _is_valid_punch_time(val):
-                    if "," in val:
-                        parts = [_clean_time_str(p) for p in val.split(",") if _is_valid_punch_time(p)]
-                        punches = [p for p in parts if p]
-                    elif " - " in val:
-                        parts = [_clean_time_str(p) for p in val.split(" - ") if _is_valid_punch_time(p)]
-                        punches = [p for p in parts if p]
-                    elif ":" in val:
-                        c = _clean_time_str(val)
-                        if c:
-                            punches.append(c)
+            if isinstance(val, dict):
+                _inspect_dict(val)
+            elif isinstance(val, str) and _is_valid_punch_time(val):
+                if "," in val:
+                    parts = [_clean_time_str(p) for p in val.split(",") if _is_valid_punch_time(p)]
+                    punches = [p for p in parts if p]
+                elif " - " in val:
+                    parts = [_clean_time_str(p) for p in val.split(" - ") if _is_valid_punch_time(p)]
+                    punches = [p for p in parts if p]
+                elif not punches:
+                    c = _clean_time_str(val)
+                    if c:
+                        punches.append(c)
+
+            # Inspect separate API punch record if present for this date
+            if isinstance(api_punch, dict):
+                _inspect_dict(api_punch)
+            elif isinstance(api_punch, str) and _is_valid_punch_time(api_punch):
+                c = _clean_time_str(api_punch)
+                if c and c not in punches:
+                    punches.append(c)
 
             # 4. Merge local store punch if available for date
-            if local_punch:
+            if local_punch and isinstance(local_punch, dict):
                 l_in = _clean_time_str(local_punch.get("punch_in"))
                 l_out = _clean_time_str(local_punch.get("punch_out"))
                 if l_in and l_in not in punches:
@@ -909,71 +983,183 @@ class AttendanceService:
             details_str = " | ".join(detail_parts) if detail_parts else None
             return punch_display, details_str, punches
 
+        def _collect_items(raw_val: Any) -> list:
+            """Ensure dictionary or list collection is returned as list of items."""
+            if raw_val is None:
+                return []
+            if isinstance(raw_val, list):
+                return raw_val
+            if isinstance(raw_val, dict):
+                items = []
+                for k, v in raw_val.items():
+                    if isinstance(v, dict):
+                        if not (v.get("date") or v.get("lastUpdate") or v.get("punch_date")):
+                            v_copy = dict(v)
+                            v_copy["date"] = k
+                            items.append(v_copy)
+                        else:
+                            items.append(v)
+                    elif isinstance(v, (str, int, float, bool)):
+                        items.append({"date": k, "name": str(v), "status": str(v)})
+                    else:
+                        items.append(v)
+                return items
+            return []
+
         # Holidays
-        holiday_days = result.get("holiday_days") or []
+        holiday_days = _collect_items(result.get("holiday_days") or result.get("holidays"))
         holiday_map = {}
-        if isinstance(holiday_days, list):
-            for h in holiday_days:
-                if isinstance(h, dict) and h.get("date"):
-                    k = _normalize_date_key(h.get("date"), resolved_year, resolved_month_num)
-                    if k:
-                        holiday_map[k] = h.get("name") or "Holiday"
+        for h in holiday_days:
+            if isinstance(h, dict) and (h.get("date") or h.get("holiday_date") or h.get("day")):
+                raw_d = h.get("date") or h.get("holiday_date") or h.get("day")
+                k = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
+                if k:
+                    holiday_map[k] = h.get("name") or h.get("holiday_name") or h.get("title") or "Holiday"
+            elif isinstance(h, str):
+                k = _normalize_date_key(h, resolved_year, resolved_month_num)
+                if k:
+                    holiday_map[k] = "Holiday"
 
         # Weekoffs
-        weekoff_days = result.get("weekoff") or []
+        weekoff_days = _collect_items(result.get("weekoff") or result.get("weekoffs") or result.get("week_offs"))
         weekoff_set = set()
-        if isinstance(weekoff_days, list):
-            for w in weekoff_days:
-                if isinstance(w, dict) and w.get("date"):
-                    k = _normalize_date_key(w.get("date"), resolved_year, resolved_month_num)
-                    if k:
-                        weekoff_set.add(k)
-                elif isinstance(w, str):
-                    k = _normalize_date_key(w, resolved_year, resolved_month_num)
-                    if k:
-                        weekoff_set.add(k)
+        for w in weekoff_days:
+            if isinstance(w, dict) and (w.get("date") or w.get("day")):
+                k = _normalize_date_key(w.get("date") or w.get("day"), resolved_year, resolved_month_num)
+                if k:
+                    weekoff_set.add(k)
+            elif isinstance(w, str):
+                k = _normalize_date_key(w, resolved_year, resolved_month_num)
+                if k:
+                    weekoff_set.add(k)
 
         # Leaves
-        leave_days = result.get("leave_days") or []
+        leave_days = _collect_items(
+            result.get("leave_days")
+            or result.get("leaves")
+            or result.get("leave_records")
+            or result.get("leave_list")
+            or result.get("leaves_list")
+            or result.get("applied_leaves")
+            or result.get("leave_data")
+            or result.get("leave")
+        )
         leave_set = set()
-        if isinstance(leave_days, list):
-            for l in leave_days:
-                if isinstance(l, dict) and l.get("date"):
-                    k = _normalize_date_key(l.get("date"), resolved_year, resolved_month_num)
-                    if k:
-                        leave_set.add(k)
-                elif isinstance(l, str):
-                    k = _normalize_date_key(l, resolved_year, resolved_month_num)
-                    if k:
-                        leave_set.add(k)
+        leave_name_map = {}
+        for l in leave_days:
+            if isinstance(l, dict):
+                raw_d = l.get("date") or l.get("leave_date") or l.get("day") or l.get("from_date") or l.get("lastUpdate")
+                k = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
+                if k:
+                    leave_set.add(k)
+                    leave_name_map[k] = l.get("leave_type") or l.get("name") or l.get("status") or "Leave"
+            elif isinstance(l, str):
+                k = _normalize_date_key(l, resolved_year, resolved_month_num)
+                if k:
+                    leave_set.add(k)
+                    leave_name_map[k] = "Leave"
 
         # Comp Offs
-        comp_off_days = result.get("comp_off_days") or []
+        comp_off_days = _collect_items(result.get("comp_off_days") or result.get("comp_offs") or result.get("compoffs"))
         comp_off_set = set()
-        if isinstance(comp_off_days, list):
-            for c in comp_off_days:
-                if isinstance(c, dict) and c.get("date"):
-                    k = _normalize_date_key(c.get("date"), resolved_year, resolved_month_num)
-                    if k:
-                        comp_off_set.add(k)
-                elif isinstance(c, str):
-                    k = _normalize_date_key(c, resolved_year, resolved_month_num)
-                    if k:
-                        comp_off_set.add(k)
+        for c in comp_off_days:
+            if isinstance(c, dict) and (c.get("date") or c.get("day")):
+                k = _normalize_date_key(c.get("date") or c.get("day"), resolved_year, resolved_month_num)
+                if k:
+                    comp_off_set.add(k)
+            elif isinstance(c, str):
+                k = _normalize_date_key(c, resolved_year, resolved_month_num)
+                if k:
+                    comp_off_set.add(k)
+
+        # Missed Punch Days (mispunch_days / missed_punch / mispunch / etc.)
+        mispunch_days = _collect_items(
+            result.get("mispunch_days")
+            or result.get("mispunch")
+            or result.get("mis_punch")
+            or result.get("mis_punches")
+            or result.get("missed_punch")
+            or result.get("missed_punches")
+            or result.get("mispunches")
+        )
+        mispunch_set = set()
+        for mp in mispunch_days:
+            if isinstance(mp, dict) and (mp.get("date") or mp.get("lastUpdate") or mp.get("day")):
+                k = _normalize_date_key(mp.get("date") or mp.get("lastUpdate") or mp.get("day"), resolved_year, resolved_month_num)
+                if k:
+                    mispunch_set.add(k)
+            elif isinstance(mp, str):
+                k = _normalize_date_key(mp, resolved_year, resolved_month_num)
+                if k:
+                    mispunch_set.add(k)
+
+        # Separate Punch Records collection (punches, punch_data, punch_records, etc.)
+        punches_raw = (
+            result.get("punches")
+            or result.get("punch_records")
+            or result.get("punch_data")
+            or result.get("punch_list")
+            or result.get("daily_punches")
+            or result.get("in_out_details")
+            or result.get("punch_times")
+            or result.get("punches_list")
+            or result.get("raw_punches")
+        )
+        punches_list = _collect_items(punches_raw)
+        punches_by_date: dict[str, Any] = {}
+        for p in punches_list:
+            if isinstance(p, dict):
+                raw_d = (
+                    p.get("date")
+                    or p.get("lastUpdate")
+                    or p.get("punch_date")
+                    or p.get("attendance_date")
+                    or p.get("att_date")
+                    or p.get("AttDate")
+                    or p.get("punchDate")
+                    or p.get("attendanceDate")
+                    or p.get("in_date")
+                    or p.get("in_time")
+                    or p.get("punch_in")
+                    or p.get("punchIn")
+                    or p.get("punch_time")
+                    or p.get("punchTime")
+                    or p.get("datetime")
+                    or p.get("day")
+                    or p.get("day_num")
+                )
+                k = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
+                if k:
+                    punches_by_date[k] = p
+            elif isinstance(p, str):
+                k = _normalize_date_key(p, resolved_year, resolved_month_num)
+                if k:
+                    punches_by_date[k] = p
 
         # Present / Attendance Records Normalization (By Date vs By Month Array)
-        present_days_list = result.get("present_days") or []
-        if not isinstance(present_days_list, list):
-            present_days_list = []
+        present_days_raw = (
+            result.get("present_days")
+            or result.get("attendance_records")
+            or result.get("attendance")
+            or result.get("records")
+            or result.get("data")
+            or result.get("punch_data")
+            or result.get("punch_list")
+            or result.get("details")
+        )
+        if present_days_raw is None and isinstance(result, list):
+            present_days_raw = result
+
+        present_days_list = _collect_items(present_days_raw)
 
         present_days_by_date: dict[str, Any] = {}
         is_full_month_status_array = False
 
-        if isinstance(present_days_list, list) and present_days_list:
+        if present_days_list:
             all_simple = all(
                 isinstance(item, str) and item.strip().upper() in (
                     "P", "PRESENT", "A", "ABSENT", "EL", "CL", "SL", "PL", "ML",
-                    "WEEK OFF", "WO", "W/O", "HOLIDAY", "H", "HD", "HALF DAY", "LATE", "L", "COMP OFF", "CO", "-"
+                    "WEEK OFF", "WO", "W/O", "HOLIDAY", "H", "HD", "HALF DAY", "LATE", "L", "COMP OFF", "CO", "MP", "MISSED PUNCH", "-"
                 )
                 for item in present_days_list if item is not None and str(item).strip()
             )
@@ -985,13 +1171,29 @@ class AttendanceService:
                         continue
                     if isinstance(item, dict):
                         raw_d = (
-                            item.get("lastUpdate")
-                            or item.get("date")
+                            item.get("date")
+                            or item.get("lastUpdate")
                             or item.get("punch_date")
                             or item.get("attendance_date")
-                            or item.get("day")
+                            or item.get("att_date")
+                            or item.get("AttDate")
+                            or item.get("punchDate")
+                            or item.get("attendanceDate")
+                            or item.get("in_date")
+                            or item.get("punch_in")
+                            or item.get("punchIn")
+                            or item.get("in_time")
+                            or item.get("punch_time")
+                            or item.get("punchTime")
+                            or item.get("datetime")
+                            or item.get("dateTime")
+                            or item.get("date_time")
+                            or item.get("punch_datetime")
                             or item.get("created_at")
                             or item.get("updated_at")
+                            or item.get("day")
+                            or item.get("day_num")
+                            or item.get("day_no")
                         )
                         d_key = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
                         if d_key:
@@ -1003,6 +1205,9 @@ class AttendanceService:
                         d_key = _normalize_date_key(item, resolved_year, resolved_month_num)
                         if d_key:
                             present_days_by_date[d_key] = {"date": d_key, "status": "P"}
+                        elif item.strip().upper() in ("P", "PRESENT", "A", "ABSENT", "EL", "CL", "SL", "PL", "ML", "WEEK OFF", "WO", "HOLIDAY", "H", "HD", "LATE", "MP", "MISSED PUNCH"):
+                            d_key = f"{resolved_year:04d}-{resolved_month_num:02d}-{(idx + 1):02d}"
+                            present_days_by_date[d_key] = {"date": d_key, "status": item.strip()}
 
         # Load local state punches for merging (today / tracked days)
         local_state_map = {}
@@ -1017,6 +1222,7 @@ class AttendanceService:
 
         parsed_days = []
         present_cnt = 0
+        missed_punch_cnt = 0
         absent_cnt = 0
         week_off_cnt = 0
         leave_cnt = 0
@@ -1034,10 +1240,19 @@ class AttendanceService:
             else:
                 val = present_days_by_date.get(date_str)
 
-            # Extract punch times and details
+            # Extract punch times and details (from day record, separate punch record, and local punch)
+            api_punch = punches_by_date.get(date_str)
             local_punch = local_state_map.get(date_str)
-            punch_display, day_detail, punches = _extract_punch_and_details(val, date_str, local_punch)
+            punch_display, day_detail, punches = _extract_punch_and_details(
+                val=val,
+                date_str=date_str,
+                local_punch=local_punch,
+                api_punch=api_punch,
+            )
             has_valid_punch = bool(punch_display)
+            is_single_or_same_punch = (
+                len(punches) == 1 or (len(punches) == 2 and punches[0] == punches[1])
+            )
 
             # Extract raw API status
             raw_status = None
@@ -1063,9 +1278,7 @@ class AttendanceService:
 
             raw_upper = raw_status_str.upper() if raw_status_str else ""
 
-            # Saturday / Sunday business rules:
-            # 1st Saturday and 3rd Saturday are working days.
-            # 2nd, 4th, 5th Saturday and Sundays are Week Offs.
+            # Saturday / Sunday business rules (used only when API weekoff is not explicitly provided)
             is_sunday = (day_date.weekday() == 6)
             is_saturday = (day_date.weekday() == 5)
             sat_idx = (day_idx - 1) // 7 + 1 if is_saturday else 0
@@ -1073,39 +1286,42 @@ class AttendanceService:
 
             # Status Precedence Resolution:
             # 1. Holiday from API
-            # 2. Valid punch / attendance detected -> Present (or Half Day / Late)
-            # 3. Explicit Leave / Comp Off from API
-            # 4. Week Off (Sunday, 2nd/4th/5th Sat, or API weekoff)
-            # 5. Past / today working day with no attendance -> Absent
-            # 6. Future working day -> "-"
+            # 2. Explicit Leave / Comp Off from API
+            # 3. Explicit Missed Punch (from API mispunch_days or raw status)
+            # 4. Explicit Week Off from API
+            # 5. Valid punch / attendance detected -> Present (or Half Day / Late / Missed Punch)
+            # 6. Fallback Week Off (Sunday, 2nd/4th/5th Sat when API weekoff list is omitted)
+            # 7. Explicit Absent from API
+            # 8. Past / today working day with no attendance -> Absent
+            # 9. Future working day -> "-"
             if date_str in holiday_map:
                 status_code = f"Holiday: {holiday_map[date_str]}"
-            elif has_valid_punch:
+            elif date_str in leave_set:
+                status_code = leave_name_map.get(date_str) or "Leave"
+            elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
+                status_code = raw_status_str if raw_status_str else "Leave"
+            elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
+                status_code = "Comp Off"
+            elif date_str in mispunch_set or raw_upper in ("MISSED PUNCH", "MISSEDPUNCH", "MISSED_PUNCH", "MISPUNCH", "MIS_PUNCH", "MP"):
+                status_code = "Missed Punch"
+            elif date_str in weekoff_set:
+                status_code = "Week Off"
+            elif has_valid_punch or raw_upper in ("P", "PRESENT"):
                 if raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
                     status_code = "Half Day"
                 elif raw_upper in ("LATE", "L"):
                     status_code = "Late"
+                elif date_str in mispunch_set:
+                    status_code = "Missed Punch"
                 else:
                     status_code = "P"
-            elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
-                status_code = raw_status_str
-            elif date_str in leave_set:
-                status_code = "Leave"
-            elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
-                status_code = "Comp Off"
             elif raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
                 status_code = "Week Off"
-            elif date_str in weekoff_set and not is_working_saturday:
+            elif not weekoff_set and (is_sunday or (is_saturday and not is_working_saturday)):
                 status_code = "Week Off"
-            elif is_sunday:
-                status_code = "Week Off"
-            elif is_saturday and not is_working_saturday:
-                status_code = "Week Off"
-            elif raw_upper in ("P", "PRESENT"):
-                status_code = "P"
             elif raw_upper in ("A", "ABSENT"):
                 status_code = "A"
-            elif is_working_saturday:
+            elif is_working_saturday and not weekoff_set:
                 if day_date.date() <= now.date():
                     status_code = "A"
                 else:
@@ -1123,6 +1339,12 @@ class AttendanceService:
                 color = "#16a34a"  # Green
                 bg_color = "#dcfce7"
                 present_cnt += 1
+            elif "MISSED" in code_upper or "MISPUNCH" in code_upper or code_upper == "MP":
+                status_label = "Missed Punch"
+                status_badge = "MP"
+                color = "#dc2626"  # Red
+                bg_color = "#fee2e2"
+                missed_punch_cnt += 1
             elif code_upper in ("A", "ABSENT"):
                 status_label = "Absent"
                 status_badge = "A"
@@ -1141,11 +1363,11 @@ class AttendanceService:
                 color = "#9333ea"  # Purple
                 bg_color = "#f3e8ff"
                 holiday_cnt += 1
-            elif code_upper in ("EL", "CL", "SL", "PL", "ML", "LEAVE") or "LEAVE" in code_upper:
+            elif code_upper in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or "LEAVE" in code_upper:
                 status_label = f"Leave ({status_code})" if len(status_code) <= 3 else status_code
                 status_badge = status_code if len(status_code) <= 3 else "L"
-                color = "#d97706"  # Amber
-                bg_color = "#fef3c7"
+                color = "#7e22ce"  # Purple matching reference UI
+                bg_color = "#f3e8ff"
                 leave_cnt += 1
             elif "COMP" in code_upper:
                 status_label = "Comp Off"
@@ -1204,6 +1426,7 @@ class AttendanceService:
             "days": parsed_days,
             "summary": {
                 "present": present_cnt,
+                "missed_punch": missed_punch_cnt,
                 "absent": absent_cnt,
                 "week_off": week_off_cnt,
                 "leave": leave_cnt,
@@ -1468,6 +1691,7 @@ class AttendanceService:
 
         # ------------------------------------------------------------------
         # Format A: Comma-separated strings / lists inside container dict
+        # (Can be a dict or a list containing a dict with CSV fields)
         # ------------------------------------------------------------------
         CSV_LT_ID_KEYS = ("lt_id", "lt_ids", "leave_type_id", "leave_type_ids", "leave_types", "leave_type", "ltid")
         CSV_LEAVES_KEYS = ("leaves", "total_leaves", "total_quota", "allotted", "quota", "total", "allocated")
@@ -1475,38 +1699,84 @@ class AttendanceService:
         CSV_REMAINING_KEYS = ("remaining", "remains", "leave_balance", "available", "balance", "available_leave", "balance_quota")
         CSV_CARRY_KEYS = ("carry_over", "carry_overs", "carryover", "carryovers")
 
+        def _is_csv_container(d: dict) -> bool:
+            if not isinstance(d, dict):
+                return False
+            for k, v in d.items():
+                k_lower = k.lower()
+                if k_lower in CSV_LT_ID_KEYS:
+                    if isinstance(v, str) and "," in v:
+                        return True
+                    if isinstance(v, (list, tuple)) and len(v) > 1:
+                        return True
+                if isinstance(v, str) and "," in v:
+                    if any(cand in k_lower for cand in ("leaves", "taked", "taken", "remain", "quota", "balance", "carry")):
+                        return True
+                if isinstance(v, (list, tuple)) and len(v) > 1 and not isinstance(v[0], dict):
+                    if any(cand in k_lower for cand in ("leaves", "taked", "taken", "remain", "quota", "balance", "carry")):
+                        return True
+            return False
+
         is_csv_dict = False
+        csv_container = None
         if isinstance(raw_items, dict):
-            has_dict_children = any(isinstance(v, list) and v and isinstance(v[0], dict) for v in raw_items.values())
-            if not has_dict_children:
-                for cand in CSV_LT_ID_KEYS + CSV_LEAVES_KEYS:
-                    if any(k.lower() == cand.lower() for k in raw_items.keys()):
-                        is_csv_dict = True
-                        break
+            if _is_csv_container(raw_items):
+                is_csv_dict = True
+                csv_container = raw_items
+        elif isinstance(raw_items, list) and raw_items:
+            # Check if list has a dictionary containing CSV fields (e.g. leave_quota: [{lt_id: "...", leaves: "..."}])
+            if isinstance(raw_items[0], dict) and _is_csv_container(raw_items[0]):
+                is_csv_dict = True
+                csv_container = raw_items[0]
 
         parsed_items = []
 
-        if is_csv_dict and isinstance(raw_items, dict):
-            raw_lt_ids = _extract_csv_list(raw_items, CSV_LT_ID_KEYS)
-            raw_leaves = _extract_csv_list(raw_items, CSV_LEAVES_KEYS)
-            raw_taken = _extract_csv_list(raw_items, CSV_TAKED_KEYS)
-            raw_remaining = _extract_csv_list(raw_items, CSV_REMAINING_KEYS)
-            raw_carry = _extract_csv_list(raw_items, CSV_CARRY_KEYS)
+        if is_csv_dict and isinstance(csv_container, dict):
+            raw_lt_ids = _extract_csv_list(csv_container, CSV_LT_ID_KEYS)
+            raw_leaves = _extract_csv_list(csv_container, CSV_LEAVES_KEYS)
+            raw_taken = _extract_csv_list(csv_container, CSV_TAKED_KEYS)
+            raw_remaining = _extract_csv_list(csv_container, CSV_REMAINING_KEYS)
+            raw_carry = _extract_csv_list(csv_container, CSV_CARRY_KEYS)
 
-            for i, fixed in enumerate(FIXED_LEAVE_TYPES):
-                raw_id = raw_lt_ids[i] if i < len(raw_lt_ids) else str(i + 1)
+            ID_NAME_MAP = {
+                "1": ("CL", "Casual Leave"),
+                "2": ("SL", "Sick Leave"),
+                "3": ("CO", "Comp Off"),
+                "4": ("OD", "Business Trip"),
+                "5": ("LWP", "Leave Without Pay"),
+                "6": ("EL", "Paid Leave"),
+                "7": ("RH", "Restricted/Floating"),
+            }
+
+            max_len = max(len(raw_lt_ids), len(raw_leaves), len(raw_taken), len(raw_remaining), len(FIXED_LEAVE_TYPES))
+            for i in range(max_len):
+                raw_id = raw_lt_ids[i] if i < len(raw_lt_ids) else (str(i + 1) if i < len(FIXED_LEAVE_TYPES) else str(i + 1))
                 q_str = raw_leaves[i] if i < len(raw_leaves) else "0"
                 u_str = raw_taken[i] if i < len(raw_taken) else "0"
-                r_str = raw_remaining[i] if i < len(raw_remaining) else "0"
+                r_str = raw_remaining[i] if i < len(raw_remaining) else ""
                 c_str = raw_carry[i] if i < len(raw_carry) else "0"
 
                 q_num = _to_num(q_str)
                 u_num = _to_num(u_str)
-                r_num = _to_num(r_str)
+                if r_str:
+                    r_num = _to_num(r_str)
+                else:
+                    r_num = max(0.0, q_num - u_num)
+                    r_str = _fmt_num(r_num)
                 c_num = _to_num(c_str)
 
-                type_name = fixed["name"]
-                short_code = fixed["code"]
+                # Determine code and name
+                if raw_id in ID_NAME_MAP:
+                    short_code, type_name = ID_NAME_MAP[raw_id]
+                elif raw_id and raw_id not in ("1", "2", "3", "4", "5", "6", "7"):
+                    short_code = raw_id if raw_id.isalpha() else f"LT{raw_id}"
+                    type_name = f"Leave Type {raw_id}"
+                elif i < len(FIXED_LEAVE_TYPES):
+                    short_code = FIXED_LEAVE_TYPES[i]["code"]
+                    type_name = FIXED_LEAVE_TYPES[i]["name"]
+                else:
+                    short_code = f"LT{raw_id}"
+                    type_name = f"Leave Type {raw_id}"
 
                 total_quota_str = q_str if q_str else _fmt_num(q_num)
                 used_str = u_str if u_str else _fmt_num(u_num)

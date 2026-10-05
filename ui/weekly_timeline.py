@@ -42,7 +42,7 @@ class WeeklyBarChart(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self._week_data: list[dict] = []
         self._hover_idx: int | None = None
-        self.setMouseWorkPulse(True)
+        self.setMouseTracking(True)
 
     def set_data(self, week_data: list[dict]) -> None:
         """Update chart data and trigger repaint."""
