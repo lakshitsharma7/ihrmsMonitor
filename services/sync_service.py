@@ -70,6 +70,8 @@ class SyncService:
     current_idle_threshold_seconds: int = 300  # Default 300 seconds until first API settings load
     _sync_lock: threading.Lock = threading.Lock()
     _fetching_settings_lock: threading.Lock = threading.Lock()
+    _sync_failure_reported: bool = False
+    _offline_sync_failure_reported: bool = False
 
     @staticmethod
     def _save_cached_setting(key: str, value: Any) -> None:
@@ -505,12 +507,66 @@ class SyncService:
         return {}
 
     @classmethod
+    def _report_sync_failure(
+        cls,
+        error_message: str,
+        endpoint: str = "/workpulse/save_activity_batch",
+        http_status: int | str | None = None,
+        response_error: Any = None,
+        exc: Exception | None = None,
+        extra_context: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Report sync failure to ErrorReportService with continuous failure deduplication.
+        Sends exactly 1 email when the failure starts and suppresses duplicate emails
+        during the same continuous failure session. Distinguishes offline vs online failures.
+        """
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            is_online = NetworkReachabilityMonitor().is_online
+        except Exception:
+            is_online = True
+
+        if not is_online:
+            if not cls._offline_sync_failure_reported:
+                cls._offline_sync_failure_reported = True
+                try:
+                    from services.error_report_service import ErrorReportService
+                    ErrorReportService().report_sync_failure(
+                        error_message=f"Offline: {error_message}",
+                        endpoint=endpoint,
+                        http_status=http_status,
+                        response_error=response_error,
+                        exc=exc,
+                        extra_context=extra_context,
+                    )
+                except Exception:
+                    pass
+        else:
+            if not cls._sync_failure_reported:
+                cls._sync_failure_reported = True
+                try:
+                    from services.error_report_service import ErrorReportService
+                    ErrorReportService().report_sync_failure(
+                        error_message=error_message,
+                        endpoint=endpoint,
+                        http_status=http_status,
+                        response_error=response_error,
+                        exc=exc,
+                        extra_context=extra_context,
+                    )
+                except Exception:
+                    pass
+
+    @classmethod
     def reset_sync_state(cls) -> None:
         """Reset sync status flags and counters when switching users or on logout."""
         cls.last_sync_status = "Sent"
         cls.last_sync_error = ""
         cls.last_successful_sync_time = "Never"
         cls.records_currently_sending = 0
+        cls._sync_failure_reported = False
+        cls._offline_sync_failure_reported = False
 
     @classmethod
     def re_enroll_device_static(cls) -> str | None:
@@ -884,21 +940,18 @@ class SyncService:
                             elif SyncService.last_sync_status not in ("Failed", "Failed (Network Error)", "Failed (Timeout)", "Failed (Offline)") and not SyncService.last_sync_status.startswith("Failed ("):
                                 SyncService.last_sync_status = f"Failed ({str(error_msg)[:25]})" if error_msg else "Failed"
 
-                            try:
-                                from services.error_report_service import ErrorReportService
-                                err_type = "AUTH_ERROR" if is_auth else "ACTIVITY_UPLOAD_ERROR"
-                                ErrorReportService().report_error(
-                                    error_type=err_type,
-                                    error_message=f"Activity upload batch failed: {error_msg}",
-                                    extra_context={
-                                        "endpoint": "/workpulse/save_activity_batch",
-                                        "api_url": self._api_url,
-                                        "page": page_num,
-                                        "response_error": res_data or SyncService.last_sync_error,
-                                    },
-                                )
-                            except Exception:
-                                pass
+                            SyncService._report_sync_failure(
+                                error_message=f"Activity upload batch failed: {error_msg}",
+                                endpoint="/workpulse/save_activity_batch",
+                                http_status=getattr(res_data, "get", lambda k: None)("status") if isinstance(res_data, dict) else None,
+                                response_error=res_data or SyncService.last_sync_error,
+                                extra_context={
+                                    "endpoint": "/workpulse/save_activity_batch",
+                                    "api_url": self._api_url,
+                                    "page": page_num,
+                                    "response_error": res_data or SyncService.last_sync_error,
+                                },
+                            )
                             return False
                             
                         # Process mappings in a short-lived db session
@@ -984,6 +1037,9 @@ class SyncService:
             SyncService.last_successful_sync_time = formatted_time
             SyncService._save_cached_setting("last_successful_sync_time", formatted_time)
             SyncService.records_currently_sending = 0
+            # Reset continuous failure flags on successful sync
+            SyncService._sync_failure_reported = False
+            SyncService._offline_sync_failure_reported = False
 
             next_sync_dt = datetime.now() + timedelta(seconds=self.current_sync_interval_seconds)
             next_sync_str = next_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -1022,16 +1078,12 @@ class SyncService:
                 next_sync_str,
                 exc,
             )
-            try:
-                from services.error_report_service import ErrorReportService
-                ErrorReportService().report_error(
-                    error_type="ACTIVITY_SYNC_ERROR",
-                    error_message=f"Activity sync failed: {exc}",
-                    exc=exc,
-                    extra_context={"api_url": self._api_url},
-                )
-            except Exception:
-                pass
+            SyncService._report_sync_failure(
+                error_message=f"Activity sync failed: {exc}",
+                endpoint="/workpulse/save_activity_batch",
+                exc=exc,
+                extra_context={"api_url": self._api_url},
+            )
             return False
         finally:
             self._sync_lock.release()
@@ -1203,23 +1255,20 @@ class SyncService:
                         http_code,
                         exc,
                     )
-                    try:
-                        from services.error_report_service import ErrorReportService
-                        err_type = "AUTH_ERROR" if is_auth_rejection else "ACTIVITY_SYNC_ERROR"
-                        ErrorReportService().report_error(
-                            error_type=err_type,
-                            error_message=f"Activity sync failed after {retries} retries: {SyncService.last_sync_error}",
-                            exc=exc,
-                            extra_context={
-                                "page": page,
-                                "api_url": self._api_url,
-                                "endpoint": "/workpulse/save_activity_batch",
-                                "http_status": http_code,
-                                "response_error": resp_text,
-                            },
-                        )
-                    except Exception:
-                        pass
+                    SyncService._report_sync_failure(
+                        error_message=f"Activity sync failed after {retries} retries: {SyncService.last_sync_error}",
+                        endpoint="/workpulse/save_activity_batch",
+                        http_status=http_code,
+                        response_error=resp_text,
+                        exc=exc,
+                        extra_context={
+                            "page": page,
+                            "api_url": self._api_url,
+                            "endpoint": "/workpulse/save_activity_batch",
+                            "http_status": http_code,
+                            "response_error": resp_text,
+                        },
+                    )
                     return None
         return None
 

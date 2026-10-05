@@ -5,24 +5,29 @@ support email via direct SMTP.
 
 SMTP Delivery Architecture:
 ---------------------------
-1. **Direct SMTP Delivery** (primary)
+1. **Direct SMTP Delivery** (primary when online)
    The report context is formatted into a standard RFC 2822 MIME email message
-   with structured diagnostic metadata and sanitized log tails.
+   with structured diagnostic metadata, system health metrics, and sanitized log tails.
    The message is securely transmitted over TLS/STARTTLS to the configured SMTP
    server (smtp.gmail.com:587).
 
-2. **Local Log File Fallback** (offline resilience)
-   If the SMTP server is unreachable (offline, network timeout, authentication error),
-   the full diagnostic report is preserved locally in ``error_reports.log`` in the
-   application data directory.
+2. **Persistent Offline Queue** (offline resilience)
+   If the network is offline, the report is saved locally in ``queued_reports.json``
+   without attempting immediate SMTP or throwing error popups.
+   As soon as network connectivity is restored, the queued reports are automatically
+   processed and sent to the support email.
+
+3. **Local Log File Fallback** (secondary fallback)
+   If SMTP transmission fails, reports are appended locally to ``error_reports.log``.
 
 Features:
 1. Gathers logged-in user details, device/hostname, app version, error info,
-   timestamp, and recent sanitized application logs.
-2. Sanitizes sensitive data (passwords, tokens, API keys) before reporting.
-3. Implements deduplication and cooldown (1-hour window) to prevent duplicate reports.
-4. Asynchronous delivery on a background daemon thread (ErrorReportWorker) so it
-   NEVER blocks or impacts UI responsiveness, workpulse, sync, or updates.
+   network status, sync status, timestamps, system health (CPU, RAM, Disk),
+   and recent sanitized application logs.
+2. Sanitizes sensitive data (passwords, tokens, API keys, credentials) before reporting.
+3. Implements deduplication and cooldown to prevent duplicate report spam.
+4. Asynchronous delivery on background daemon threads so it NEVER blocks UI responsiveness,
+   workpulse tracking, sync, or updates.
 5. Fails gracefully without interrupting the core application.
 """
 
@@ -66,17 +71,18 @@ DEFAULT_SMTP_FROM = "ivsdevmail@gmail.com"
 DEFAULT_SUPPORT_EMAIL = "support-hrms@indovisionservices.in"
 DEFAULT_SMTP_TIMEOUT_SECONDS = 12
 
-# Redaction patterns for sensitive information
+# Redaction patterns for sensitive information (passwords, tokens, API keys, credentials)
 SENSITIVE_PATTERNS = [
     (re.compile(r'(?i)(password|pass|passwd|pwd)["\']?\s*[:=]\s*["\']?([^"\'\s&,]+)', re.IGNORECASE), r'\1: [REDACTED]'),
     (re.compile(r'(?i)(key|api_key|apikey|token|device_token|bearer)["\']?\s*[:=]\s*["\']?([^"\'\s&,]+)', re.IGNORECASE), r'\1: [REDACTED]'),
     (re.compile(r'(?i)(authorization:\s*bearer\s+)([a-zA-Z0-9_\-\.]+)', re.IGNORECASE), r'\1[REDACTED]'),
     (re.compile(r'(?i)(https?://[^:\s]+:)([^@\s]+)(@)', re.IGNORECASE), r'\1[REDACTED]\3'),
+    (re.compile(r'(?i)(cookie|session_id|sessionid|auth_token)["\']?\s*[:=]\s*["\']?([^"\'\s&,]+)', re.IGNORECASE), r'\1: [REDACTED]'),
 ]
 
 
 def sanitize_text(text: str) -> str:
-    """Mask credentials, passwords, and tokens from error messages and logs."""
+    """Mask credentials, passwords, cookies, headers, and tokens from error messages and logs."""
     if not text:
         return ""
     sanitized = text
@@ -89,7 +95,7 @@ def sanitize_text(text: str) -> str:
 
 
 class ErrorReportService:
-    """Centralized Error & Support Reporting Service using direct secure SMTP."""
+    """Centralized Error & Support Reporting Service using direct secure SMTP and offline queue."""
 
     _instance: ErrorReportService | None = None
     _lock = threading.Lock()
@@ -102,7 +108,7 @@ class ErrorReportService:
             return cls._instance
 
     def _init_service(self) -> None:
-        """Initialize SMTP configuration, listener list, and deduplication caches."""
+        """Initialize SMTP configuration, listener list, queue lock, and deduplication caches."""
         self._smtp_host = os.environ.get("SMTP_HOST", DEFAULT_SMTP_HOST).strip()
         port_val = os.environ.get("SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip()
         self._smtp_port = int(port_val) if port_val.isdigit() else DEFAULT_SMTP_PORT
@@ -119,6 +125,126 @@ class ErrorReportService:
         # Cooldown cache: maps hash(signature) -> last_sent_timestamp
         self._sent_reports: dict[str, float] = {}
         self._cooldown_seconds = 3600.0  # 1 hour cooldown per unique error signature
+
+        # Offline persistent queue lock
+        self._queue_lock = threading.Lock()
+
+        # Connect to centralized NetworkReachabilityMonitor for automatic queued report flushing
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            monitor = NetworkReachabilityMonitor()
+            monitor.register_listener(self._on_connectivity_changed)
+            if monitor.is_online:
+                # If already online at startup, attempt background flush of any previously queued reports
+                threading.Thread(
+                    target=self.flush_queued_reports,
+                    name="StartupQueuedReportFlusher",
+                    daemon=True,
+                ).start()
+        except Exception:
+            pass
+
+    def _on_connectivity_changed(self, is_online: bool) -> None:
+        """When network connectivity returns, automatically flush any offline queued reports."""
+        if is_online:
+            try:
+                threading.Thread(
+                    target=self.flush_queued_reports,
+                    name="QueuedReportFlusher",
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
+
+    # ==============================================================
+    # OFFLINE PERSISTENT QUEUE
+    # ==============================================================
+
+    def _get_queue_file_path(self) -> Path:
+        """Return the path to the persistent offline queued reports file."""
+        log_dir = get_log_file_path().parent
+        return log_dir / "queued_reports.json"
+
+    def _load_queued_reports(self) -> list[dict[str, Any]]:
+        """Load queued reports from local disk."""
+        queue_path = self._get_queue_file_path()
+        if not queue_path.exists():
+            return []
+        try:
+            with open(queue_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as err:
+            logger.debug("ErrorReportService: Failed to read queued reports: %s", err)
+        return []
+
+    def _save_queued_reports(self, reports: list[dict[str, Any]]) -> None:
+        """Save queued reports to local disk atomically."""
+        queue_path = self._get_queue_file_path()
+        try:
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(queue_path, "w", encoding="utf-8") as f:
+                json.dump(reports, f, indent=2)
+        except Exception as err:
+            logger.warning("ErrorReportService: Failed to save queued reports: %s", err)
+
+    def _queue_report(self, context: dict[str, Any]) -> None:
+        """Add an error report to the local persistent queue (preventing duplicate items)."""
+        with self._queue_lock:
+            reports = self._load_queued_reports()
+            sig = self._get_error_signature(
+                context.get("error_type", "ERROR_REPORT"),
+                context.get("error_message", "N/A"),
+            )
+            for r in reports:
+                if r.get("_signature") == sig:
+                    logger.debug("ErrorReportService: Report already queued; skipping duplicate: %s", sig)
+                    return
+
+            context["_signature"] = sig
+            context["_queued_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            reports.append(context)
+            self._save_queued_reports(reports)
+            logger.info("ErrorReportService: Queued support report locally in %s (offline mode): %s", self._get_queue_file_path(), context.get("error_type"))
+
+    def flush_queued_reports(self) -> int:
+        """
+        Process and transmit any locally queued reports when internet connection is restored.
+        Returns the number of successfully sent reports.
+        """
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            if not NetworkReachabilityMonitor().is_online:
+                logger.debug("flush_queued_reports skipped: Network is currently offline.")
+                return 0
+        except Exception:
+            pass
+
+        with self._queue_lock:
+            reports = self._load_queued_reports()
+            if not reports:
+                return 0
+
+            logger.info("ErrorReportService: Flushing %d queued offline support reports...", len(reports))
+            remaining: list[dict[str, Any]] = []
+            sent_count = 0
+
+            for report in reports:
+                try:
+                    success = self._dispatch_via_smtp(report)
+                    if success:
+                        sent_count += 1
+                    else:
+                        remaining.append(report)
+                except Exception as dispatch_err:
+                    logger.debug("ErrorReportService: Failed to dispatch queued report: %s", dispatch_err)
+                    remaining.append(report)
+
+            self._save_queued_reports(remaining)
+            if sent_count > 0:
+                logger.info("ErrorReportService: Successfully transmitted %d queued support reports.", sent_count)
+            return sent_count
 
     def register_listener(self, callback: Any) -> None:
         """Register a callback listener to receive error notifications immediately."""
@@ -153,7 +279,6 @@ class ErrorReportService:
     def _record_sent(self, signature: str) -> None:
         """Record the timestamp an error report was dispatched."""
         self._sent_reports[signature] = time.time()
-        # Prune old cache entries
         now = time.time()
         self._sent_reports = {
             sig: ts for sig, ts in self._sent_reports.items()
@@ -288,7 +413,7 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 7. Current application status (workpulse, sync, update)
+        # 7. Current application status (workpulse, sync, network, update)
         workpulse_status = "Unknown"
         try:
             from services.secure_session import SessionStore
@@ -303,9 +428,18 @@ class ErrorReportService:
             pass
 
         sync_status = "Unknown"
+        last_successful_sync_time = "Never"
         try:
             from services.sync_service import SyncService
-            sync_status = f"{SyncService.last_sync_status} (Last success: {SyncService.last_successful_sync_time})"
+            sync_status = SyncService.last_sync_status
+            last_successful_sync_time = SyncService.get_last_successful_sync_time()
+        except Exception:
+            pass
+
+        network_status = "Unknown"
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            network_status = "Online" if NetworkReachabilityMonitor().is_online else "Offline"
         except Exception:
             pass
 
@@ -339,6 +473,9 @@ class ErrorReportService:
             "response_error": sanitize_text(response_error),
             "workpulse_status": workpulse_status,
             "sync_status": sync_status,
+            "network_status": network_status,
+            "last_successful_sync_time": last_successful_sync_time,
+            "sync_failure_time": now_local,
             "update_status": update_status,
             "traceback": sanitize_text(traceback_str),
             "timestamp_local": now_local,
@@ -368,13 +505,14 @@ class ErrorReportService:
     # ==============================================================
 
     def _build_report_text(self, context: dict[str, Any]) -> str:
-        """Construct a structured plain-text report body with real-time system health."""
+        """Construct a structured plain-text report body with real-time system health and sync diagnostics."""
         user = context.get("user_details", {})
         device = context.get("device_details", {})
         health = context.get("system_health", {})
 
         emp_name = user.get("full_name") or "Not Available"
         emp_code = user.get("employee_code") or user.get("employee_id") or "Not Available"
+        emp_id = user.get("employee_id") or emp_code
         hostname = device.get("hostname") or "Unknown"
 
         error_type = context.get("error_type", "ERROR_REPORT")
@@ -419,48 +557,51 @@ class ErrorReportService:
             "WORKPULSE ERROR REPORT\n"
             f"{app_name} - Critical Error Report\n"
             "==================================================\n\n"
-            f"Employee Name : {emp_name}\n"
-            f"Employee Code : {emp_code}\n"
-            f"Host Name     : {hostname}\n\n"
+            f"Employee Name            : {emp_name}\n"
+            f"Employee Code / ID       : {emp_code} (ID: {emp_id})\n"
+            f"Device / Host Name       : {hostname}\n"
+            f"OS / Platform            : {os_name} {os_version} ({architecture})\n"
+            f"Workpulse App Version    : v{app_version}\n\n"
             "==================================================\n"
-            "ERROR DETAILS\n"
+            "CONNECTIVITY & SYNC DIAGNOSTICS\n"
             "==================================================\n\n"
-            f"Error Type    : {error_type}\n"
-            f"Error Message : {error_message}\n"
-            f"Module        : {module_str}\n"
-            f"API/Action    : {api_action}\n"
-            f"HTTP Status   : {context.get('http_status', 'N/A')}\n"
-            f"Response Err  : {context.get('response_error', 'N/A')}\n"
-            f"Date & Time   : {date_time_str}\n\n"
+            f"Network Status           : {context.get('network_status', 'Unknown')}\n"
+            f"Sync Status              : {context.get('sync_status', 'Unknown')}\n"
+            f"Last Successful Sync Time: {context.get('last_successful_sync_time', 'Never')}\n"
+            f"Current Failure Time     : {context.get('sync_failure_time', context.get('timestamp_local', 'N/A'))}\n"
+            f"Current Date & Time      : {date_time_str}\n\n"
             "==================================================\n"
-            "CURRENT SYSTEM HEALTH AT ERROR TIME\n"
+            "ERROR / FAILURE DETAILS\n"
             "==================================================\n\n"
-            f"CPU Usage        : {cpu_usage_str}\n"
-            f"CPU Cores        : {cpu_cores_str}\n\n"
-            f"RAM Usage        : {ram_usage_str}\n"
-            f"RAM Used         : {ram_used_str}\n"
-            f"RAM Available    : {ram_avail_str}\n"
-            f"RAM Total        : {ram_total_str}\n\n"
-            f"Disk Usage       : {disk_usage_str}\n"
-            f"Disk Used        : {disk_used_str}\n"
-            f"Disk Free        : {disk_free_str}\n"
-            f"Disk Total       : {disk_total_str}\n\n"
-            f"Operating System : {os_name}\n"
-            f"OS Version       : {os_version}\n"
-            f"Architecture     : {architecture}\n"
-            f"Python Version   : {python_version}\n"
-            f"Workpulse Version: {app_version}\n\n"
+            f"Error Type               : {error_type}\n"
+            f"Error / Failure Reason   : {error_message}\n"
+            f"Module Origin            : {module_str}\n"
+            f"API Endpoint / Action    : {api_action}\n"
+            f"HTTP Status              : {context.get('http_status', 'N/A')}\n"
+            f"Response Details         : {context.get('response_error', 'N/A')}\n\n"
             "==================================================\n"
-            "ADDITIONAL DIAGNOSTICS\n"
+            "SYSTEM HEALTH & RESOURCES\n"
             "==================================================\n\n"
-            f"Application   : {app_name} v{app_version}\n"
-            f"Username      : {user.get('username', 'N/A')}\n"
-            f"Company Code  : {user.get('company_code', 'N/A')}\n"
-            f"Role          : {user.get('role', 'N/A')}\n"
-            f"OS User       : {device.get('os_user', 'N/A')}\n"
-            f"WorkPulse State: {context.get('workpulse_status', 'Unknown')}\n"
-            f"Sync State    : {context.get('sync_status', 'Unknown')}\n"
-            f"Update State  : {context.get('update_status', 'Unknown')}\n\n"
+            f"CPU Usage                : {cpu_usage_str}\n"
+            f"CPU Cores                : {cpu_cores_str}\n\n"
+            f"RAM Usage                : {ram_usage_str}\n"
+            f"RAM Used                 : {ram_used_str}\n"
+            f"RAM Available            : {ram_avail_str}\n"
+            f"RAM Total                : {ram_total_str}\n\n"
+            f"Disk Usage               : {disk_usage_str}\n"
+            f"Disk Used                : {disk_used_str}\n"
+            f"Disk Free                : {disk_free_str}\n"
+            f"Disk Total               : {disk_total_str}\n\n"
+            "==================================================\n"
+            "ADDITIONAL DETAILS\n"
+            "==================================================\n\n"
+            f"Username                 : {user.get('username', 'N/A')}\n"
+            f"Company Code             : {user.get('company_code', 'N/A')}\n"
+            f"Role                     : {user.get('role', 'N/A')}\n"
+            f"OS User                  : {device.get('os_user', 'N/A')}\n"
+            f"WorkPulse State          : {context.get('workpulse_status', 'Unknown')}\n"
+            f"Update State             : {context.get('update_status', 'Unknown')}\n"
+            f"Python Version           : {python_version}\n\n"
             "--- Traceback ---\n"
             f"{context.get('traceback') or 'No traceback available.'}\n\n"
             "--- Extra Context ---\n"
@@ -468,7 +609,7 @@ class ErrorReportService:
             "--- Recent Application Logs (Tail) ---\n"
             f"{context.get('recent_logs')}\n\n"
             "==================================================\n"
-            "End of Error Report\n"
+            "End of Support Report\n"
             "==================================================\n"
         )
 
@@ -480,6 +621,7 @@ class ErrorReportService:
 
         emp_name = user.get("full_name") or "Not Available"
         emp_code = user.get("employee_code") or user.get("employee_id") or "Not Available"
+        emp_id = user.get("employee_id") or emp_code
         hostname = device.get("hostname") or "Unknown"
 
         error_type = context.get("error_type", "ERROR_REPORT")
@@ -519,6 +661,9 @@ class ErrorReportService:
         app_name = context.get("app_name", APP_NAME)
         app_version = context.get("app_version", get_running_app_version())
 
+        network_status = context.get("network_status", "Unknown")
+        net_badge_color = "#188038" if network_status.lower() == "online" else "#ea4335"
+
         return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -533,9 +678,10 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helv
 .section:last-child {{ border-bottom: none; }}
 .section-title {{ font-size: 14px; font-weight: 700; color: #1F4E79; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }}
 .badge {{ display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; background: #ea4335; color: #ffffff; }}
+.badge-net {{ display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; background: {net_badge_color}; color: #ffffff; }}
 table.meta-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
 table.meta-table td {{ padding: 6px 0; vertical-align: top; }}
-table.meta-table td.label {{ width: 170px; color: #5f6368; font-weight: 600; }}
+table.meta-table td.label {{ width: 190px; color: #5f6368; font-weight: 600; }}
 table.meta-table td.val {{ color: #202124; font-family: inherit; }}
 pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; font-family: 'Consolas', 'Courier New', monospace; line-height: 1.4; }}
 .footer {{ background: #f8f9fa; padding: 12px 24px; font-size: 12px; color: #70757a; text-align: center; border-top: 1px solid #eeeeee; }}
@@ -544,29 +690,41 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 <body>
 <div class="container">
   <div class="header">
-    <h1>WORKPULSE ERROR REPORT</h1>
-    <p>Application Diagnostics & Automated Support Dispatch</p>
+    <h1>WORKPULSE SUPPORT REPORT</h1>
+    <p>Application Diagnostics & Network/Sync Failure Incident Report</p>
   </div>
   
   <div class="section">
-    <div class="section-title">Employee Information</div>
+    <div class="section-title">Employee & Device Information</div>
     <table class="meta-table">
       <tr><td class="label">Employee Name</td><td class="val"><strong>{emp_name}</strong></td></tr>
-      <tr><td class="label">Employee Code</td><td class="val"><strong>{emp_code}</strong></td></tr>
-      <tr><td class="label">Host Name</td><td class="val"><code>{hostname}</code></td></tr>
+      <tr><td class="label">Employee Code / ID</td><td class="val"><strong>{emp_code}</strong> (ID: {emp_id})</td></tr>
+      <tr><td class="label">Device / Host Name</td><td class="val"><code>{hostname}</code></td></tr>
+      <tr><td class="label">OS / Platform</td><td class="val">{os_name} {os_version} ({architecture})</td></tr>
+      <tr><td class="label">Workpulse Version</td><td class="val"><strong>v{app_version}</strong></td></tr>
     </table>
   </div>
 
   <div class="section">
-    <div class="section-title">Error Details</div>
+    <div class="section-title">Connectivity & Sync Diagnostics</div>
+    <table class="meta-table">
+      <tr><td class="label">Network Status</td><td class="val"><span class="badge-net">{network_status}</span></td></tr>
+      <tr><td class="label">Sync Status</td><td class="val"><strong>{context.get('sync_status', 'Unknown')}</strong></td></tr>
+      <tr><td class="label">Last Successful Sync Time</td><td class="val">{context.get('last_successful_sync_time', 'Never')}</td></tr>
+      <tr><td class="label">Current Failure Time</td><td class="val">{context.get('sync_failure_time', date_time_str)}</td></tr>
+      <tr><td class="label">Current Date & Time</td><td class="val">{date_time_str}</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Error & Failure Details</div>
     <table class="meta-table">
       <tr><td class="label">Error Type</td><td class="val"><span class="badge">{error_type}</span></td></tr>
-      <tr><td class="label">Error Message</td><td class="val" style="color: #c5221f; font-weight: 600;">{error_message}</td></tr>
-      <tr><td class="label">Module</td><td class="val">{module_str}</td></tr>
-      <tr><td class="label">API / Action</td><td class="val"><code>{api_action}</code></td></tr>
+      <tr><td class="label">Error / Failure Reason</td><td class="val" style="color: #c5221f; font-weight: 600;">{error_message}</td></tr>
+      <tr><td class="label">Module Origin</td><td class="val">{module_str}</td></tr>
+      <tr><td class="label">API Endpoint / Action</td><td class="val"><code>{api_action}</code></td></tr>
       <tr><td class="label">HTTP Status</td><td class="val">{context.get('http_status', 'N/A')}</td></tr>
-      <tr><td class="label">Response Error</td><td class="val">{context.get('response_error', 'N/A')}</td></tr>
-      <tr><td class="label">Date & Time</td><td class="val">{date_time_str}</td></tr>
+      <tr><td class="label">Response Details</td><td class="val">{context.get('response_error', 'N/A')}</td></tr>
     </table>
   </div>
 
@@ -583,11 +741,6 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
       <tr><td class="label">Disk Used</td><td class="val">{disk_used_str}</td></tr>
       <tr><td class="label">Disk Free</td><td class="val">{disk_free_str}</td></tr>
       <tr><td class="label">Disk Total</td><td class="val">{disk_total_str}</td></tr>
-      <tr><td class="label">Operating System</td><td class="val">{os_name}</td></tr>
-      <tr><td class="label">OS Version</td><td class="val">{os_version}</td></tr>
-      <tr><td class="label">Architecture</td><td class="val">{architecture}</td></tr>
-      <tr><td class="label">Python Version</td><td class="val">{python_version}</td></tr>
-      <tr><td class="label">Workpulse Version</td><td class="val"><strong>v{app_version}</strong></td></tr>
     </table>
   </div>
 
@@ -600,8 +753,8 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
       <tr><td class="label">Role</td><td class="val">{user.get('role', 'N/A')}</td></tr>
       <tr><td class="label">OS User</td><td class="val">{device.get('os_user', 'N/A')}</td></tr>
       <tr><td class="label">WorkPulse State</td><td class="val">{context.get('workpulse_status', 'Unknown')}</td></tr>
-      <tr><td class="label">Sync State</td><td class="val">{context.get('sync_status', 'Unknown')}</td></tr>
       <tr><td class="label">Update State</td><td class="val">{context.get('update_status', 'Unknown')}</td></tr>
+      <tr><td class="label">Python Version</td><td class="val">{python_version}</td></tr>
     </table>
     
     <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Traceback:</div>
@@ -619,7 +772,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 </html>"""
 
     # ==============================================================
-    # DELIVERY — DIRECT SECURE SMTP DISPATCH
+    # DELIVERY — DIRECT SECURE SMTP DISPATCH & OFFLINE QUEUE
     # ==============================================================
 
     def _dispatch_via_smtp(self, context: dict[str, Any]) -> bool:
@@ -739,18 +892,32 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
     def _dispatch_report(self, context: dict[str, Any]) -> None:
         """
-        Deliver the error report via SMTP with automatic local-file fallback.
+        Deliver the error report via SMTP or queue locally if network is offline.
 
-        Delivery order:
-          1. Direct SMTP transmission to ``SUPPORT_EMAIL``.
-          2. If SMTP delivery fails (offline, auth error, timeout), append to local ``error_reports.log``.
+        Delivery workflow:
+          1. Check network reachability.
+          2. If offline, queue locally in ``queued_reports.json`` and log to ``error_reports.log``.
+          3. If online, attempt direct SMTP transmission. If SMTP fails, queue and log.
         """
+        is_online = True
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            is_online = NetworkReachabilityMonitor().is_online
+        except Exception:
+            is_online = True
+
+        if not is_online:
+            logger.info("ErrorReportService: Network is offline. Queuing support report locally without attempting SMTP.")
+            self._queue_report(context)
+            self._dispatch_to_local_log(context)
+            return
+
         delivered = self._dispatch_via_smtp(context)
         if not delivered:
             logger.info(
-                "ErrorReportService: SMTP delivery unavailable; "
-                "falling back to local log file."
+                "ErrorReportService: SMTP delivery unavailable; queuing report for retry and logging locally."
             )
+            self._queue_report(context)
             self._dispatch_to_local_log(context)
 
     # --------------------------------------------------------------
@@ -773,6 +940,33 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
     # PUBLIC API
     # ==============================================================
 
+    def report_sync_failure(
+        self,
+        error_message: str,
+        endpoint: str = "/workpulse/save_activity_batch",
+        http_status: int | str | None = None,
+        response_error: Any = None,
+        exc: Exception | None = None,
+        extra_context: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Record and report a sync failure against backend APIs.
+        Dispatches report via SMTP if online, or queues in local storage if offline.
+        """
+        ctx = dict(extra_context or {})
+        ctx["endpoint"] = endpoint
+        if http_status is not None:
+            ctx["http_status"] = str(http_status)
+        if response_error is not None:
+            ctx["response_error"] = str(response_error)
+
+        self.report_error(
+            error_type="SYNC_FAILURE",
+            error_message=error_message,
+            exc=exc,
+            extra_context=ctx,
+        )
+
     def report_error(
         self,
         error_type: str,
@@ -781,7 +975,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         extra_context: dict[str, Any] | None = None,
     ) -> None:
         """
-        Record and dispatch an error report to the support email address via SMTP.
+        Record and dispatch an error report to the support email address via SMTP or offline queue.
 
         Runs asynchronously on a background daemon thread so it NEVER blocks caller
         execution, UI rendering, workpulse, or network sync.

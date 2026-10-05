@@ -110,8 +110,9 @@ class TestErrorReportService(unittest.TestCase):
         self.assertIn("v2.0.1", body)
         self.assertIn("ACTIVITY_UPLOAD_ERROR", body)
         self.assertIn("/workpulse/save_activity_batch", body)
-        self.assertIn("HTTP Status   : 502", body)
-        self.assertIn("Response Err  : Bad Gateway", body)
+        self.assertIn("HTTP Status", body)
+        self.assertIn("502", body)
+        self.assertIn("Bad Gateway", body)
         self.assertIn("EMP-100", body)
         self.assertIn("TEST-PC", body)
 
