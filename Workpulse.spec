@@ -188,11 +188,11 @@ pyz = PYZ(a.pure)
 
 # Filter out genuinely unused Qt6 dynamic libraries and plugins
 excluded_bin_patterns = (
-    'Qt6Quick', 'Qt6Qml', 'Qt6Pdf', 'Qt6OpenGL', 'Qt6Sensors',
+    'Qt6Quick', 'Qt6Qml', 'Qt6Pdf', 'Qt6Sensors',
     'Qt6SerialPort', 'Qt6Positioning', 'Qt6Location', 'Qt6Bluetooth',
     'Qt6Nfc', 'Qt6SpatialAudio', 'Qt6Charts', 'Qt6DataVisualization',
     'Qt6VirtualKeyboard', 'Qt6RemoteObjects', 'Qt6Scxml', 'Qt6Multimedia',
-    'Qt63D', 'QtQuick', 'QtQml', 'QtPdf', 'QtOpenGL'
+    'Qt63D', 'QtQuick', 'QtQml', 'QtPdf'
 )
 
 filtered_binaries = [

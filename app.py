@@ -113,6 +113,13 @@ def main() -> int:
     import multiprocessing
     multiprocessing.freeze_support()
 
+    # Stabilize working directory for frozen / auto-started processes
+    if getattr(sys, "frozen", False):
+        try:
+            os.chdir(os.path.dirname(sys.executable))
+        except Exception:
+            pass
+
     _setup_exception_hook()
     _set_windows_app_identity()
 
@@ -160,8 +167,27 @@ def main() -> int:
     # conflicting on SQLite database locks and system resources.
     lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
     lock_file = QLockFile(lock_path)
-    lock_file.setStaleLockTime(30000)
+    lock_file.setStaleLockTime(15000)
+
     if not lock_file.tryLock(100):
+        # Check if the lock was left behind by a terminated or dead process
+        is_stale = False
+        try:
+            import psutil
+            pid, hostname, appname = lock_file.getLockInfo()
+            if pid and not psutil.pid_exists(pid):
+                is_stale = True
+        except Exception:
+            pass
+
+        if is_stale:
+            try:
+                lock_file.removeStaleLockFile()
+                lock_file.tryLock(100)
+            except Exception:
+                pass
+
+    if not lock_file.isLocked():
         logger.warning(
             "Another instance of %s is already running. Exiting gracefully.",
             APP_NAME,
@@ -177,6 +203,7 @@ def main() -> int:
                     if win32gui.IsWindow(hwnd):
                         title = win32gui.GetWindowText(hwnd)
                         if "Workpulse" in title or "iHRMS Monitor" in title:
+                            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                             win32gui.SetForegroundWindow(hwnd)
                             found_hwnds.append(hwnd)
@@ -226,25 +253,23 @@ def main() -> int:
         logger.info("Found saved session for user: %s (company: %s)", saved_session.get("username"), saved_session.get("company_code"))
         
         try:
-            # Restore the company context
+            # Restore the company context immediately from cached session to guarantee zero UI startup delay
             api_config = ApiConfig()
             company_code = saved_session.get("company_code")
             base_url = saved_session.get("base_url")
             company_id = saved_session.get("company_id")
 
-            # Try online verification; if network error occurs, fall back to cached config
-            try:
-                api_config.load(company_code=company_code, force=False)
-            except Exception as net_err:
-                logger.warning("Could not reach verification service online: %s. Using cached configuration.", net_err)
-                if base_url:
-                    api_config.set_cached_configuration(
-                        company_code=company_code,
-                        base_url=base_url,
-                        company_id=company_id,
-                    )
-                else:
-                    raise
+            if company_code and base_url:
+                api_config.set_cached_configuration(
+                    company_code=company_code,
+                    base_url=base_url,
+                    company_id=company_id,
+                )
+            elif company_code:
+                try:
+                    api_config.load(company_code=company_code, force=False)
+                except Exception as net_err:
+                    logger.warning("Could not reach verification service online on startup: %s", net_err)
 
             # Restore the session
             SessionService().restore_session(
@@ -263,17 +288,6 @@ def main() -> int:
             )
 
             logger.info("Session restored successfully for user: %s", saved_session.get("username"))
-
-            # Record device heartbeat with current running app version
-            try:
-                from services.device_registry_service import DeviceRegistryService
-                DeviceRegistryService().record_heartbeat(
-                    employee_id=saved_session.get("employee_id"),
-                    username=saved_session.get("username"),
-                    device_token=saved_session.get("device_token"),
-                )
-            except Exception as reg_err:
-                logger.debug("Could not record device heartbeat on session restore: %s", reg_err)
 
             # Open main window directly and display the Dashboard
             from ui.main_window import MainWindow
@@ -300,6 +314,8 @@ def main() -> int:
     # No valid session found, show login window
     login_window = LoginWindow()
     login_window.show()
+    login_window.raise_()
+    login_window.activateWindow()
 
     return app.exec()
 

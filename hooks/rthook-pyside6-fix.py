@@ -39,6 +39,24 @@ try:
         except Exception:
             pass
 
+        # Ensure Qt platform and imageformat plugin paths are correctly resolved
+        plugins_candidates = [
+            pyside_dir / "plugins",
+            base_dir / "plugins",
+            base_dir / "PySide6" / "plugins",
+        ]
+        for pl_dir in plugins_candidates:
+            if pl_dir.is_dir():
+                os.environ["QT_PLUGIN_PATH"] = str(pl_dir)
+                platforms_dir = pl_dir / "platforms"
+                if platforms_dir.is_dir():
+                    os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platforms_dir)
+                break
+
+        # High-DPI and stable rendering environment variables
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+        os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+
         # Clean any invalid CA bundle environment variables from previous sessions / other machines
         for env_var in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
             val = os.environ.get(env_var)

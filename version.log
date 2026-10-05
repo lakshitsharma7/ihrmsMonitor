@@ -5,6 +5,22 @@ Maintained automatically. Add a new block at the top for each release.
 Do not duplicate version entries. Preserve all previous entries below.
 ================================================================================
 
+Version 1.1
+Date: 05-10-2026
+
+New Features & Improvements:
+- Native macOS & Windows production distribution updated to Version 1.1.
+- Enhanced Startup & Automatic Start:
+    * Zero-blocking UI initialization on saved session startup without network delay.
+    * Active single-instance lock recovery for stale locks and proper foreground window activation.
+    * Working directory normalization on automatic system startup.
+- Attendance & Leave Balance:
+    * Missed Punch calendar status styling updated to distinct green theme.
+    * Dynamic CSV-format leave quota parsing for accurate balances.
+- Full multi-platform release and auto-update verification.
+
+--------------------------------------------------------------------------------
+
 Version 1.0
 Date: 28-09-2026
 

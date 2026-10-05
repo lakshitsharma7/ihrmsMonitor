@@ -30,9 +30,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 CloseApplications=force
-RestartApplications=no
-SignTool=signtool
+#ifdef SignToolName
+SignTool={#SignToolName}
 SignedUninstaller=yes
+#endif
 
 [Files]
 Source: "dist\Workpulse\Workpulse.exe"; DestDir: "{app}"; Flags: ignoreversion

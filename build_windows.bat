@@ -85,7 +85,8 @@ if exist "installer\WorkpulseSetup.exe" (
 if exist "dist\Windows\WorkpulseSetup.exe" (
     copy /y "dist\Windows\WorkpulseSetup.exe" "dist\Windows\Workpulse-Setup-%APP_VER%.exe"
     if exist "scripts\sign_windows.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\Windows\WorkpulseSetup.exe", "dist\Windows\Workpulse-Setup-%APP_VER%.exe"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\Windows\WorkpulseSetup.exe"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\Windows\Workpulse-Setup-%APP_VER%.exe"
     )
 )
 

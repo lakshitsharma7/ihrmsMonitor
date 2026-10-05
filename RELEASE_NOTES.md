@@ -1,10 +1,10 @@
-# Workpulse v2.0.2 Release Notes
+# Workpulse v1.1 Release Notes
 
-We are excited to release **Workpulse v2.0.2**, introducing native macOS distribution, enhanced cross-platform auto-updates, resilient TLS CA certificate handling, and secure dynamic HRMS single-sign-on integration.
+We are excited to release **Workpulse v1.1**, introducing native macOS & Windows distribution updates, instant non-blocking startup flow, green Missed Punch calendar indicators, and dynamic leave balance synchronization.
 
 ---
 
-### What's New in v2.0.2
+### What's New in v1.1
 
 #### 🍎 Native macOS Support
 - **Native macOS Application (`Workpulse.app`)**: 64-bit Mach-O executable built with Apple Silicon and Intel compatibility.
