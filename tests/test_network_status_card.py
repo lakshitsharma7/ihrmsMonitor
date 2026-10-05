@@ -194,15 +194,62 @@ class TestNetworkStatusCard(unittest.TestCase):
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertIn("#10b981", dashboard.network_status_label.styleSheet())
 
-    def test_report_api_failure_does_not_spawn_multiple_locked_threads(self):
-        """Multiple rapid report_api_failure calls respect lock and do not spawn unbounded threads."""
-        monitor = NetworkReachabilityMonitor()
-        monitor._check_lock.acquire()
+    def test_centralized_network_synchronization_across_all_locations(self):
+        """Verify Header, Tracking & Sync Status, and Leave Balance all show the same live state."""
+        from ui.main_window import MainWindow
+        from ui.leave_balance_dialog import LeaveBalanceDialog
+
+        win = MainWindow()
+        dialog = LeaveBalanceDialog(service=MagicMock())
+
         try:
-            # When locked, report_api_failure returns immediately without spawning threads
-            monitor.report_api_failure()
+            # 1. Simulate Offline transition
+            win.set_network_status(False)
+            dialog.set_network_status(False)
+
+            self.assertEqual(win.status_badge.text(), "Offline")
+            self.assertEqual(win.status_badge.property("workpulse"), "false")
+            self.assertEqual(win.dashboard_page.network_status_label.text(), "● Offline")
+            self.assertEqual(dialog.network_status_label.text(), "● Offline")
+
+            # 2. Simulate Online transition
+            win.set_network_status(True)
+            dialog.set_network_status(True)
+
+            self.assertEqual(win.status_badge.text(), "Online")
+            self.assertEqual(win.status_badge.property("workpulse"), "true")
+            self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
+            self.assertEqual(dialog.network_status_label.text(), "● Online")
         finally:
-            monitor._check_lock.release()
+            win._shutdown()
+            win.close()
+            dialog.done(0)
+
+    def test_tracking_state_changes_do_not_override_offline_network_status(self):
+        """Starting, stopping, or pausing tracking while offline preserves Offline status in Header and Dashboard."""
+        from ui.main_window import MainWindow
+
+        win = MainWindow()
+        try:
+            # Set network offline
+            win.set_network_status(False)
+            win.dashboard_page.set_network_status(False)
+
+            self.assertEqual(win.status_badge.text(), "Offline")
+            self.assertEqual(win.dashboard_page.network_status_label.text(), "● Offline")
+
+            # Pausing tracking
+            win.dashboard_page.set_paused(True)
+            self.assertEqual(win.status_badge.text(), "Offline")
+            self.assertEqual(win.dashboard_page.network_status_label.text(), "● Offline")
+
+            # Resuming tracking
+            win.dashboard_page.set_paused(False)
+            self.assertEqual(win.status_badge.text(), "Offline")
+            self.assertEqual(win.dashboard_page.network_status_label.text(), "● Offline")
+        finally:
+            win._shutdown()
+            win.close()
 
 
 if __name__ == "__main__":

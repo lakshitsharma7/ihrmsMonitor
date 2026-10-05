@@ -32,22 +32,18 @@ class TestAppControllerVersionApi(unittest.TestCase):
         ApiConfig().reset()
 
     def test_case_1_api_version_equals_current_version(self):
-        """Case 1: When API version == current version (1.0 vs 1), no update is triggered."""
-        current = get_running_app_version()  # "1.0"
-        server_ver = "1"
-        self.assertFalse(is_newer_version(server_ver, current))
-
-        # Test with string equal
-        self.assertFalse(is_newer_version("1.0", current))
-        self.assertFalse(is_newer_version("v1.0", current))
+        """Case 1: When API version == current version, no update is triggered."""
+        current = get_running_app_version()
+        self.assertFalse(is_newer_version(current, current))
+        self.assertFalse(is_newer_version(f"v{current}", current))
 
     def test_case_2_api_version_greater_than_current_version(self):
-        """Case 2: When API version > current version (e.g. 1.1 or 2), update is detected."""
-        current = get_running_app_version()  # "1.0"
-        self.assertTrue(is_newer_version("1.1", current))
+        """Case 2: When API version > current version (e.g. 1.2 or 2), update is detected."""
+        current = get_running_app_version()
+        self.assertTrue(is_newer_version("1.2", current))
         self.assertTrue(is_newer_version("2", current))
         self.assertTrue(is_newer_version("2.0.0", current))
-        self.assertTrue(is_newer_version("v1.0.1", current))
+        self.assertTrue(is_newer_version("v2.1.0", current))
 
     def test_case_3_api_version_less_than_current_version(self):
         """Case 3: When API version < current version, no downgrade occurs."""

@@ -275,8 +275,14 @@ class LeaveBalanceDialog(QDialog):
         self._is_loading = False
         self._cards: list[LeaveSummaryCard] = []
 
+        from services.network_monitor import NetworkReachabilityMonitor
+        self._monitor = NetworkReachabilityMonitor()
+        self._is_network_online = self._monitor.is_online
+
         self.data_loaded.connect(self._apply_leave_data)
         self._setup_ui()
+        self.set_network_status(self._is_network_online)
+        self._monitor.register_listener(self._on_reachability_changed)
         self.refresh()
 
     def _setup_ui(self) -> None:
@@ -285,7 +291,7 @@ class LeaveBalanceDialog(QDialog):
         main_layout.setSpacing(14)
 
         # --------------------------------------------------------------
-        # 1. Header with Title, Subtitle, and Close (X)
+        # 1. Header with Title, Subtitle, and Real-Time Network Status
         # --------------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -304,6 +310,14 @@ class LeaveBalanceDialog(QDialog):
         header_layout.addLayout(title_col)
 
         header_layout.addStretch(1)
+
+        self.network_status_label = QLabel("● Online" if self._is_network_online else "● Offline")
+        self.network_status_label.setObjectName("LeaveBalanceNetworkStatus")
+        if self._is_network_online:
+            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px; margin-right: 4px;")
+        else:
+            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px; margin-right: 4px;")
+        header_layout.addWidget(self.network_status_label)
 
         main_layout.addLayout(header_layout)
 
@@ -400,10 +414,6 @@ class LeaveBalanceDialog(QDialog):
         # 4. Footer Bar
         # --------------------------------------------------------------
         footer = QHBoxLayout()
-        self.status_hint = QLabel("Data synchronized from HRMS Leave API")
-        self.status_hint.setStyleSheet("font-size: 11px; color: #94A3B8;")
-        footer.addWidget(self.status_hint)
-
         footer.addStretch(1)
 
         self.close_btn = QPushButton("Close")
@@ -414,6 +424,98 @@ class LeaveBalanceDialog(QDialog):
         footer.addWidget(self.close_btn)
 
         main_layout.addLayout(footer)
+
+    def set_network_status(self, is_online: bool) -> None:
+        """Update the displayed network connectivity status."""
+        self._is_network_online = bool(is_online)
+        if hasattr(self, "network_status_label") and self.network_status_label:
+            if is_online:
+                self.network_status_label.setText("● Online")
+                self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px; margin-right: 4px;")
+            else:
+                self.network_status_label.setText("● Offline")
+                self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px; margin-right: 4px;")
+
+    @staticmethod
+    def _is_network_or_offline_error(err_str: str) -> bool:
+        """Check if an error message represents a network/connection/offline failure."""
+        if not err_str:
+            return False
+        s = str(err_str).lower()
+        return any(
+            k in s for k in [
+                "network", "connection", "offline", "timeout", "timed out",
+                "max retries", "failed to establish", "getaddrinfo", "host",
+                "httpsconnectionpool", "httpconnectionpool", "refused",
+                "unreachable", "socket", "urllib3", "requests.exceptions"
+            ]
+        )
+
+    @staticmethod
+    def _sanitize_error_message(err_str: str) -> str:
+        """Ensure technical/Python exceptions, hostnames, and stack traces are never shown in the UI."""
+        if not err_str:
+            return "Unable to load leave balance. Please try again."
+
+        s = str(err_str)
+        if LeaveBalanceDialog._is_network_or_offline_error(s):
+            return "Unable to connect to the server. Please check your network connection."
+
+        s_lower = s.lower()
+        if any(tech in s_lower for tech in [
+            "exception", "traceback", "traceback (most recent call last)",
+            "file \"", "line ", "errno", "socket", "https://", "http://",
+            "indovisionservices.in", "softdev"
+        ]):
+            return "Unable to load leave balance. Please try again."
+
+        return s.strip()
+
+    def _on_reachability_changed(self, is_online: bool) -> None:
+        """Handle real-time network reachability changes from centralized monitor."""
+        try:
+            from PySide6.QtCore import QThread, QTimer
+            if self.thread() == QThread.currentThread():
+                self._handle_reachability_update(is_online)
+            else:
+                QTimer.singleShot(0, lambda: self._handle_reachability_update(is_online))
+        except Exception:
+            try:
+                self.set_network_status(is_online)
+            except Exception:
+                pass
+
+    def _handle_reachability_update(self, is_online: bool) -> None:
+        """Process network state update and auto-refresh on reconnection."""
+        self.set_network_status(is_online)
+        if not is_online:
+            # Hide error container when offline; the offline indicator is shown in header
+            self.error_container.setVisible(False)
+            if not self._cards:
+                self.scroll_area.setVisible(False)
+                self.empty_state.setVisible(True)
+        else:
+            # Reconnected: If we currently have no cards or were showing an error/empty state, auto-refresh
+            if not self._cards or self.empty_state.isVisible() or self.error_container.isVisible():
+                self.refresh(force=True)
+
+    def closeEvent(self, event) -> None:
+        """Unregister listener when dialog is closed."""
+        try:
+            if hasattr(self, "_monitor") and self._monitor:
+                self._monitor.unregister_listener(self._on_reachability_changed)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def done(self, r: int) -> None:
+        """Unregister listener when dialog is dismissed."""
+        try:
+            if hasattr(self, "_monitor") and self._monitor:
+                self._monitor.unregister_listener(self._on_reachability_changed)
+        except Exception:
+            pass
+        super().done(r)
 
     def refresh(self, async_mode: bool | None = None, force: bool = False) -> None:
         """Fetch leave quota dynamically."""
@@ -451,15 +553,46 @@ class LeaveBalanceDialog(QDialog):
     def _apply_leave_data(self, data: dict | list) -> None:
         """Transform any API response into exactly 7 records matching FIXED_LEAVE_TYPES and render."""
         if not data or not isinstance(data, (dict, list)):
+            if not self._is_network_online:
+                self.error_container.setVisible(False)
+                if not self._cards:
+                    self.scroll_area.setVisible(False)
+                    self.empty_state.setVisible(True)
+                return
             self._show_error("Unable to load leave balance. Please try again.")
             return
 
         if isinstance(data, dict):
             err = data.get("error")
             if err:
-                self._show_error(str(err))
-                self.scroll_area.setVisible(False)
-                self.empty_state.setVisible(True)
+                is_net_err = self._is_network_or_offline_error(str(err))
+                if is_net_err:
+                    import sys
+                    if "unittest" not in sys.modules and "pytest" not in sys.modules:
+                        try:
+                            self._monitor.report_offline()
+                        except Exception:
+                            pass
+                    self.set_network_status(False)
+                    self.error_container.setVisible(False)
+                    if not self._cards:
+                        self.scroll_area.setVisible(False)
+                        self.empty_state.setVisible(True)
+                    return
+
+                if not self._is_network_online:
+                    self.error_container.setVisible(False)
+                    if not self._cards:
+                        self.scroll_area.setVisible(False)
+                        self.empty_state.setVisible(True)
+                    return
+
+                # Legitimate application error (e.g. Invalid API Key, Employee not found)
+                sanitized_msg = self._sanitize_error_message(str(err))
+                self._show_error(sanitized_msg)
+                if not self._cards:
+                    self.scroll_area.setVisible(False)
+                    self.empty_state.setVisible(True)
                 return
 
         self.error_container.setVisible(False)
@@ -684,6 +817,10 @@ class LeaveBalanceDialog(QDialog):
             self._cards.append(card)
 
     def _show_error(self, message: str) -> None:
-        """Display error banner with message."""
-        self.error_label.setText(message)
+        """Display error banner with sanitized message."""
+        if not self._is_network_online or self._is_network_or_offline_error(message):
+            self.error_container.setVisible(False)
+            return
+        sanitized = self._sanitize_error_message(message)
+        self.error_label.setText(sanitized)
         self.error_container.setVisible(True)

@@ -52,17 +52,19 @@ class NetworkReachabilityMonitor:
 
     def report_online(self) -> None:
         """Explicitly notify monitor that a network/API operation succeeded."""
-        if not self._is_online:
+        was_online = self._is_online
+        self._is_online = True
+        if not was_online:
             logger.info("Network connectivity confirmed active (reported Online)")
-            self._is_online = True
-            self._notify_listeners(True)
+        self._notify_listeners(True)
 
     def report_offline(self) -> None:
         """Explicitly notify monitor that network connectivity was lost."""
-        if self._is_online:
+        was_online = self._is_online
+        self._is_online = False
+        if was_online:
             logger.info("Network connectivity lost (reported Offline)")
-            self._is_online = False
-            self._notify_listeners(False)
+        self._notify_listeners(False)
 
     def report_api_failure(self) -> None:
         """Called when an API request fails; quickly confirms reachability before marking offline."""
@@ -149,7 +151,7 @@ class NetworkReachabilityMonitor:
         return targets
 
     @staticmethod
-    def _probe_socket_target(host: str, port: int, timeout: float = 1.5) -> bool:
+    def _probe_socket_target(host: str, port: int, timeout: float = 1.2) -> bool:
         """Attempt a direct TCP socket connection to a single (host, port)."""
         try:
             with socket.create_connection((host, port), timeout=timeout):
@@ -157,7 +159,7 @@ class NetworkReachabilityMonitor:
         except Exception:
             return False
 
-    def check_reachability(self, timeout: float = 1.5) -> bool:
+    def check_reachability(self, timeout: float = 1.2) -> bool:
         """
         Perform a reachability check against the configured backend endpoint.
         Returns True if the backend server is reachable, False otherwise.
@@ -168,7 +170,7 @@ class NetworkReachabilityMonitor:
                 return True
         return False
 
-    def _perform_check(self, timeout: float = 1.5) -> bool:
+    def _perform_check(self, timeout: float = 1.2) -> bool:
         """Internal helper to execute a check, update state, and notify listeners."""
         with self._check_lock:
             try:
@@ -179,6 +181,9 @@ class NetworkReachabilityMonitor:
                 return current_state
             except Exception as e:
                 logger.debug("NetworkReachabilityMonitor check error: %s", e)
+                if self._is_online:
+                    self._is_online = False
+                    self._notify_listeners(False)
                 return False
 
     def start_monitoring(self, interval: float = 2.0) -> None:

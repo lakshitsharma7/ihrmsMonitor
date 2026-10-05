@@ -122,11 +122,11 @@ class TestPauseResumeBehavior(unittest.TestCase):
                 self.assertIs(win._tracker, tracker_instance, "Must use existing tracker instance")
                 self.assertTrue(win.dashboard_page.is_paused())
                 self.assertTrue(self.store.is_workpulse_paused())
-                self.assertEqual(win.status_badge.text(), "Paused")
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Resume")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Paused")
 
-                # Tracker state updates while paused preserve Paused status badge
+                # Tracker state updates while paused preserve Online network status badge
                 active_state = TrackerState(
                     is_workpulse=True,
                     is_idle=False,
@@ -135,7 +135,7 @@ class TestPauseResumeBehavior(unittest.TestCase):
                     idle_seconds=0.0,
                 )
                 win._on_tracker_state_changed(active_state)
-                self.assertEqual(win.status_badge.text(), "Paused")
+                self.assertEqual(win.status_badge.text(), "Online")
 
                 # User clicks "Resume"
                 win.dashboard_page.workpulse_toggle_button.click()

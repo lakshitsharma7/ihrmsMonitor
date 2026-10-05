@@ -129,7 +129,7 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
 
                 self.assertTrue(win._tracker.is_workpulse)
                 self.assertTrue(self.store.is_workpulse_paused())
-                self.assertEqual(win.status_badge.text(), "Paused")
+                self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Paused")
                 self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Resume")
 

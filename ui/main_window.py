@@ -11,7 +11,7 @@ import time
 import webbrowser
 
 from PySide6.QtCore import QMetaObject, QSize, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -492,6 +492,16 @@ class MainWindow(QMainWindow):
         # Listen for dynamic permission updates pushed from backend
         from services.session_service import SessionService
         SessionService().register_permission_listener(self._apply_rbac_permissions)
+
+        # Centralized real-time network connectivity monitor for Header & Window
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            self._network_monitor = NetworkReachabilityMonitor()
+            self._is_network_online = self._network_monitor.is_online
+            self._network_monitor.register_listener(self._on_reachability_changed)
+            self.set_network_status(self._is_network_online)
+        except Exception:
+            self._is_network_online = True
 
         # Ensure startup registration matches settings
         initial_settings = self._settings_service.get_settings()
@@ -1174,30 +1184,17 @@ class MainWindow(QMainWindow):
             self.user_label.setText(f"Welcome, {display_name}")
 
     def _update_status_icon(self) -> None:
-        """Update the Shield+Pulse icon based on the current workpulse/idle state."""
+        """Update the Shield+Pulse icon based on real-time network reachability."""
         if not hasattr(self, "status_icon") or not self.status_icon:
             return
             
         from services.session_service import SessionService
         session = SessionService().current_user
-        if session and not session.workpulse_permitted:
+        if session and not getattr(session, "workpulse_permitted", True):
             self.status_icon.hide()
             return
 
-        is_active = False
-        is_idle = False
-        is_paused = False
-        
-        # Check current state from status badge property
-        workpulse_prop = self.status_badge.property("workpulse")
-        if workpulse_prop == "true":
-            is_active = True
-        elif workpulse_prop == "idle":
-            is_active = True
-            is_idle = True
-        elif workpulse_prop == "paused":
-            is_active = True
-            is_paused = True
+        is_online = getattr(self, "_is_network_online", True)
             
         from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
         from PySide6.QtCore import Qt
@@ -1208,14 +1205,11 @@ class MainWindow(QMainWindow):
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Set color based on state
-        if is_active:
-            if is_paused or is_idle:
-                color = QColor("#b06000") # Idle / Paused (amber)
-            else:
-                color = QColor("#137333") # Active (green)
+        # Real-time network reachability: Online = Green, Offline = Red
+        if is_online:
+            color = QColor("#137333")  # Green
         else:
-            color = QColor("#a50e0e") # Inactive (red)
+            color = QColor("#a50e0e")  # Red
             
         # Draw Shield Path
         path = QPainterPath()
@@ -1245,6 +1239,34 @@ class MainWindow(QMainWindow):
         self.status_icon.setPixmap(pixmap)
         self.status_icon.show()
 
+    def set_network_status(self, is_online: bool) -> None:
+        """Update header network connectivity badge and shield icon from centralized monitor."""
+        self._is_network_online = bool(is_online)
+        if hasattr(self, "status_badge") and self.status_badge:
+            if is_online:
+                self.status_badge.setText("Online")
+                self.status_badge.setProperty("workpulse", "true")
+                self.status_badge.setToolTip("Network: Online")
+            else:
+                self.status_badge.setText("Offline")
+                self.status_badge.setProperty("workpulse", "false")
+                self.status_badge.setToolTip("Network: Offline")
+            self._refresh_badge_style()
+
+    def _on_reachability_changed(self, is_online: bool) -> None:
+        """Handle real-time centralized network reachability changes for header."""
+        try:
+            from PySide6.QtCore import QThread, QTimer
+            if self.thread() == QThread.currentThread():
+                self.set_network_status(is_online)
+            else:
+                QTimer.singleShot(0, lambda: self.set_network_status(is_online))
+        except Exception:
+            try:
+                self.set_network_status(is_online)
+            except Exception:
+                pass
+
     # ==========================================================
     # TRACKING CONTROL
     # ==========================================================
@@ -1266,14 +1288,7 @@ class MainWindow(QMainWindow):
         store.set_workpulse_manually_stopped(False)
         store.set_workpulse_active(True)
 
-        # Update UI state immediately to show Active or Paused
-        if store.is_workpulse_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
-            self.status_badge.setText("Paused")
-            self.status_badge.setProperty("workpulse", "paused")
-        else:
-            self.status_badge.setText("Online")
-            self.status_badge.setProperty("workpulse", "true")
-        self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         if hasattr(self, "tray") and self.tray:
@@ -1323,10 +1338,7 @@ class MainWindow(QMainWindow):
             store.set_workpulse_manually_stopped(True)
             store.set_workpulse_active(False)
 
-        # Update UI state immediately to show Inactive
-        self.status_badge.setText("Offline")
-        self.status_badge.setProperty("workpulse", "false")
-        self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         if hasattr(self, "tray") and self.tray:
@@ -1355,14 +1367,7 @@ class MainWindow(QMainWindow):
             logger.debug("Stale workpulse_started signal received while workpulse is marked stopped; ignoring")
             return
 
-        if store.is_workpulse_paused() or (hasattr(self, "dashboard_page") and getattr(self.dashboard_page, "_is_paused", False)):
-            self.status_badge.setText("Paused")
-            self.status_badge.setProperty("workpulse", "paused")
-        else:
-            self.status_badge.setText("Online")
-            self.status_badge.setProperty("workpulse", "true")
-
-        self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
 
         self.start_button.setEnabled(
             False
@@ -1390,16 +1395,7 @@ class MainWindow(QMainWindow):
             logger.debug("Stale workpulse_stopped signal received while workpulse is active; ignoring")
             return
 
-        self.status_badge.setText(
-            "Offline"
-        )
-
-        self.status_badge.setProperty(
-            "workpulse",
-            "false",
-        )
-
-        self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
 
         self.start_button.setEnabled(
             True
@@ -1438,52 +1434,7 @@ class MainWindow(QMainWindow):
             state
         )
 
-        if getattr(self.dashboard_page, "_is_paused", False) or store.is_workpulse_paused():
-            self.status_badge.setText(
-                "Paused"
-            )
-
-            self.status_badge.setProperty(
-                "workpulse",
-                "paused",
-            )
-
-            self._refresh_badge_style()
-
-        elif state.is_idle:
-            self.status_badge.setText(
-                "Idle"
-            )
-
-            self.status_badge.setProperty(
-                "workpulse",
-                "idle",
-            )
-
-            self._refresh_badge_style()
-
-        elif state.is_workpulse:
-            self.status_badge.setText(
-                "Online"
-            )
-
-            self.status_badge.setProperty(
-                "workpulse",
-                "true",
-            )
-
-            self._refresh_badge_style()
-        else:
-            self.status_badge.setText(
-                "Offline"
-            )
-
-            self.status_badge.setProperty(
-                "workpulse",
-                "false",
-            )
-
-            self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
 
         now_ts = time.time()
         last_refresh_ts = getattr(self, "_last_table_refresh_ts", 0)
@@ -1518,46 +1469,74 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _on_pause_state_changed(self, is_paused: bool) -> None:
-        """Update top bar status badge when pause status changes without stopping background workers."""
+        """Update tracker pause status without modifying header network connectivity."""
         from services.secure_session import SessionStore
         SessionStore().set_workpulse_paused(is_paused)
-        if is_paused:
-            self.status_badge.setText("Paused")
-            self.status_badge.setProperty("workpulse", "paused")
-        else:
-            if hasattr(self, "_tracker") and self._tracker.is_workpulse:
-                if hasattr(self, "_last_rendered_idle") and self._last_rendered_idle:
-                    self.status_badge.setText("Idle")
-                    self.status_badge.setProperty("workpulse", "idle")
-                else:
-                    self.status_badge.setText("Online")
-                    self.status_badge.setProperty("workpulse", "true")
-            else:
-                self.status_badge.setText("Offline")
-                self.status_badge.setProperty("workpulse", "false")
-        self._refresh_badge_style()
+        self.set_network_status(getattr(self, "_is_network_online", True))
 
     def _on_status_badge_clicked(self, event=None) -> None:
-        """Allow clicking the status badge to start/resume workpulse if currently inactive."""
-        from services.session_service import SessionService
-        session = SessionService().current_user
-        if session and not session.workpulse_permitted:
+        """Allow clicking the status badge / network indicator to re-check connectivity."""
+        try:
+            from services.network_monitor import NetworkReachabilityMonitor
+            NetworkReachabilityMonitor().report_api_failure()
+        except Exception:
+            pass
+
+    def _on_reachability_changed(self, is_online: bool) -> None:
+        """Slot invoked from NetworkReachabilityMonitor on network state change."""
+        self.set_network_status(is_online)
+
+    def set_network_status(self, is_online: bool) -> None:
+        """Update header badge, icon, and propagate reachability state to dashboard."""
+        self._is_network_online = is_online
+        if hasattr(self, "status_badge") and self.status_badge:
+            self.status_badge.setText("Online" if is_online else "Offline")
+            self.status_badge.setProperty("workpulse", "true" if is_online else "false")
+            self.status_badge.style().unpolish(self.status_badge)
+            self.status_badge.style().polish(self.status_badge)
+            self.status_badge.setToolTip(f"Network: {'Online' if is_online else 'Offline'}")
+
+        self._update_status_icon()
+
+        if hasattr(self, "dashboard_page") and self.dashboard_page:
+            try:
+                self.dashboard_page.set_network_status(is_online)
+            except Exception:
+                pass
+
+    def _update_status_icon(self) -> None:
+        """Render Workpulse logo/icon in header (green when online, red when offline)."""
+        if not hasattr(self, "status_icon") or not self.status_icon:
             return
 
-        is_workpulse = False
-        if hasattr(self, "_tracker") and self._tracker.is_workpulse:
-            is_workpulse = True
-        elif self.status_badge.property("workpulse") in ("true", "idle", "paused"):
-            is_workpulse = True
+        is_online = getattr(self, "_is_network_online", True)
+        icon_name = "shield_active" if is_online else "shield_inactive"
+        icon = _load_icon(icon_name)
+        if not icon.isNull():
+            self.status_icon.setPixmap(icon.pixmap(24, 24))
+            return
 
-        if not is_workpulse:
-            logger.info("Status badge clicked while inactive; resuming workpulse.")
-            self.start_workpulse()
+        # Fallback to shield icon with tinting if specific assets are unavailable
+        shield_icon = _load_icon("shield")
+        if not shield_icon.isNull():
+            base_pixmap = shield_icon.pixmap(20, 20)
+            tinted_pixmap = QPixmap(base_pixmap.size())
+            tinted_pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(tinted_pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.drawPixmap(0, 0, base_pixmap)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            color = QColor("#137333") if is_online else QColor("#a50e0e")
+            painter.fillRect(tinted_pixmap.rect(), color)
+            painter.end()
+            self.status_icon.setPixmap(tinted_pixmap)
 
     def _refresh_badge_style(
         self,
     ) -> None:
         """Refresh workpulse status styling."""
+        if not hasattr(self, "status_badge") or not self.status_badge:
+            return
 
         self.status_badge.style().unpolish(
             self.status_badge
@@ -1567,15 +1546,11 @@ class MainWindow(QMainWindow):
             self.status_badge
         )
 
-        workpulse_prop = self.status_badge.property("workpulse")
-        if workpulse_prop == "true":
-            self.status_badge.setToolTip("WorkPulse is active")
-        elif workpulse_prop == "paused":
-            self.status_badge.setToolTip("Status: Paused")
-        elif workpulse_prop == "idle":
-            self.status_badge.setToolTip("Currently idle")
+        is_online = getattr(self, "_is_network_online", True)
+        if is_online:
+            self.status_badge.setToolTip("Network: Online")
         else:
-            self.status_badge.setToolTip("Click to start workpulse")
+            self.status_badge.setToolTip("Network: Offline")
 
         self._update_status_icon()
 
@@ -1786,6 +1761,8 @@ class MainWindow(QMainWindow):
                     self._pipeline_worker.wait(2000)
             from services.session_service import SessionService
             SessionService().unregister_permission_listener(self._apply_rbac_permissions)
+            if hasattr(self, "_network_monitor") and self._network_monitor:
+                self._network_monitor.unregister_listener(self._on_reachability_changed)
         except Exception as e:
             logger.debug("Error stopping timers/listeners during shutdown: %s", e)
 

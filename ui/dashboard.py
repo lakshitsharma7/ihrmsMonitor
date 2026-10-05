@@ -488,11 +488,11 @@ class DashboardPage(QWidget):
         top_row.addWidget(attendance_group, stretch=1)
 
         # --------------------------------------------------------------
-        # 3. Online & Sync Status
-        # Contains: Online Status, Idle Time, Version, Records Uploaded,
-        # Status, Last Successful Sync, and Start/Stop WorkPulse button
+        # 3. Tracking & Sync Status
+        # Contains: Network Status (● Online / ● Offline), Idle Time, Version, Records Uploaded,
+        # Status, Last Successful Sync, and WorkPulse button
         # --------------------------------------------------------------
-        status_group = QGroupBox("Online && Sync Status")
+        status_group = QGroupBox("Tracking && Sync Status")
         status_grid = QGridLayout(status_group)
         status_grid.setContentsMargins(14, 12, 14, 12)
         status_grid.setHorizontalSpacing(18)

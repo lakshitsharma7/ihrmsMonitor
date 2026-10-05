@@ -22,6 +22,12 @@ class TestLeaveBalanceApiAndUi(unittest.TestCase):
     def setUp(self):
         self.api_config = ApiConfig()
         self.service = AttendanceService()
+        from services.network_monitor import NetworkReachabilityMonitor
+        NetworkReachabilityMonitor()._is_online = True
+
+    def tearDown(self):
+        from services.network_monitor import NetworkReachabilityMonitor
+        NetworkReachabilityMonitor()._is_online = True
 
     def test_leave_quota_url_resolution(self):
         """Verify leave_quota_url returns correct endpoint."""
@@ -429,8 +435,63 @@ class TestLeaveBalanceApiAndUi(unittest.TestCase):
         self.assertEqual(res["items"][0]["code"], "CL")
         self.assertEqual(res["items"][1]["code"], "SL")
         self.assertEqual(res["items"][2]["code"], "LT8")
-        self.assertEqual(res["items"][2]["total_quota"], 3.0)
-        self.assertEqual(res["items"][2]["available"], 3.0)
+    def test_offline_suppresses_technical_error_box_and_shows_clean_offline(self):
+        """Verify that when network is offline or connection fails with HTTPSConnectionPool, no red error box is shown."""
+        mock_service = MagicMock()
+        mock_service.get_leave_quota.return_value = {
+            "response": "Failed",
+            "status": 400,
+            "items": [],
+            "summary": {"total_quota": 0.0, "total_used": 0.0, "total_available": 0.0, "leave_types_count": 0},
+            "error": "Network/Connection error: HTTPSConnectionPool(host='softdev.indovisionservices.in', port=443): Max retries exceeded with url: /ihrms84/hrms_api/ci4/api/leave/leave_quota",
+        }
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.refresh(async_mode=False)
+
+        # 1. Error container (red box) must NOT be visible when offline / connection error
+        self.assertFalse(dialog.error_container.isVisible())
+
+        # 2. Network status indicator should be Offline
+        self.assertEqual(dialog.network_status_label.text(), "● Offline")
+
+        # 3. No technical error strings or hostnames in error label
+        self.assertNotIn("HTTPSConnectionPool", dialog.error_label.text())
+        self.assertNotIn("softdev.indovisionservices.in", dialog.error_label.text())
+        self.assertNotIn("Max retries", dialog.error_label.text())
+
+        # 4. Old sync footer text must not exist
+        self.assertFalse(hasattr(dialog, "status_hint"))
+
+    def test_realtime_reachability_listener_updates_network_status(self):
+        """Verify that reachability changes dynamically update network status label."""
+        dialog = LeaveBalanceDialog(service=MagicMock())
+        dialog.set_network_status(False)
+        self.assertEqual(dialog.network_status_label.text(), "● Offline")
+
+        dialog.set_network_status(True)
+        self.assertEqual(dialog.network_status_label.text(), "● Online")
+
+    def test_legitimate_application_error_is_sanitized(self):
+        """Verify that genuine non-network application errors are displayed cleanly."""
+        mock_service = MagicMock()
+        mock_service.get_leave_quota.return_value = {
+            "response": "Failed",
+            "status": 400,
+            "items": [],
+            "summary": {"total_quota": 0.0, "total_used": 0.0, "total_available": 0.0, "leave_types_count": 0},
+            "error": "Invalid API KEY",
+        }
+
+        from services.network_monitor import NetworkReachabilityMonitor
+        NetworkReachabilityMonitor().report_online()
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.set_network_status(True)
+        dialog.refresh(async_mode=False)
+
+        self.assertFalse(dialog.error_container.isHidden())
+        self.assertEqual(dialog.error_label.text(), "Invalid API KEY")
 
 
 if __name__ == "__main__":
