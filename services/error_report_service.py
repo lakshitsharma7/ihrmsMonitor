@@ -52,6 +52,8 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from config.settings import APP_NAME, APP_VERSION, get_running_app_version
 from utils.logger import get_logger
 from utils.paths import get_log_file_path
@@ -213,7 +215,8 @@ class ErrorReportService:
     def flush_queued_reports(self) -> int:
         """
         Process and transmit any locally queued reports when internet connection is restored.
-        Returns the number of successfully sent reports.
+        Retries both Error Reporting API and SMTP support email independently based on their delivery flags.
+        Returns the number of completely sent reports.
         """
         try:
             from services.network_monitor import NetworkReachabilityMonitor
@@ -233,14 +236,26 @@ class ErrorReportService:
             sent_count = 0
 
             for report in reports:
-                try:
-                    success = self._dispatch_via_smtp(report)
-                    if success:
-                        sent_count += 1
-                    else:
-                        remaining.append(report)
-                except Exception as dispatch_err:
-                    logger.debug("ErrorReportService: Failed to dispatch queued report: %s", dispatch_err)
+                # 1. Flush API if not yet sent
+                if not report.get("_api_sent", False):
+                    try:
+                        report["_api_sent"] = self._dispatch_via_api(report)
+                    except Exception as api_err:
+                        logger.debug("ErrorReportService: Failed to dispatch queued API report: %s", api_err)
+                        report["_api_sent"] = False
+
+                # 2. Flush SMTP if not yet sent
+                if not report.get("_smtp_sent", False):
+                    try:
+                        report["_smtp_sent"] = self._dispatch_via_smtp(report)
+                    except Exception as smtp_err:
+                        logger.debug("ErrorReportService: Failed to dispatch queued SMTP report: %s", smtp_err)
+                        report["_smtp_sent"] = False
+
+                # If both delivered, count as success and do not keep in queue
+                if report.get("_api_sent", False) and report.get("_smtp_sent", False):
+                    sent_count += 1
+                else:
                     remaining.append(report)
 
             self._save_queued_reports(remaining)
@@ -487,6 +502,7 @@ class ErrorReportService:
             "system_health": system_health,
             "recent_logs": sanitize_text(recent_logs),
             "extra_context": sanitize_text(str(extra_context or {})),
+            "extra_context_dict": dict(extra_context or {}),
         }
 
     def _get_recent_logs(self, max_lines: int = 60) -> str:
@@ -869,11 +885,306 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
         return False
 
+    # ==============================================================
+    # ERROR REPORTING API DISPATCH
+    # ==============================================================
+
+    def _resolve_api_url(self) -> str:
+        """Resolve the Error Reporting API endpoint URL."""
+        env_url = os.environ.get("IHRMS_REPORT_ERROR_API_URL", "").strip()
+        if env_url:
+            return env_url
+
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if cfg.is_verified:
+                return cfg.report_error_url
+        except Exception:
+            pass
+
+        try:
+            from services.secure_session import SessionStore
+            session = SessionStore().load_session()
+            if session and isinstance(session, dict):
+                base_url = session.get("base_url")
+                if base_url:
+                    return f"{str(base_url).rstrip('/')}/workpulse/report_error"
+        except Exception:
+            pass
+
+        try:
+            from PySide6.QtCore import QSettings
+            st = QSettings("Indovision", "iHRMSMonitor")
+            cached_url = st.value("ApiConfig/last_base_url")
+            if cached_url:
+                return f"{str(cached_url).rstrip('/')}/workpulse/report_error"
+        except Exception:
+            pass
+
+        return "https://info.indovisionservices.in/dev/v15/hrms_api/ci4/api/workpulse/report_error"
+
+    def _resolve_device_token(self, context: dict[str, Any]) -> str:
+        """Resolve the enrolled device token dynamically."""
+        extra = context.get("extra_context_dict") or {}
+        if extra.get("device_token"):
+            return str(extra["device_token"]).strip()
+
+        try:
+            from services.session_service import SessionService
+            svc = SessionService()
+            if getattr(svc, "device_token", None):
+                return str(svc.device_token).strip()
+            if getattr(svc, "current_user", None) and getattr(svc.current_user, "device_token", None):
+                return str(svc.current_user.device_token).strip()
+        except Exception:
+            pass
+
+        try:
+            from services.secure_session import SessionStore
+            session = SessionStore().load_session()
+            if session and isinstance(session, dict):
+                tok = session.get("device_token")
+                if tok:
+                    return str(tok).strip()
+        except Exception:
+            pass
+
+        try:
+            from config.api_config import get_device_id
+            dev_id = get_device_id()
+            if dev_id:
+                return str(dev_id).strip()
+        except Exception:
+            pass
+
+        try:
+            from utils.device import get_device_identifier
+            return get_device_identifier() or "UNKNOWN_DEVICE"
+        except Exception:
+            return "UNKNOWN_DEVICE"
+
+    def _derive_severity(self, error_type: str, extra: dict[str, Any]) -> str:
+        """Derive severity level ('critical', 'error', 'warning', 'info')."""
+        if extra.get("severity"):
+            sev = str(extra["severity"]).strip().lower()
+            if sev in ("critical", "error", "warning", "info"):
+                return sev
+
+        et_upper = error_type.upper()
+        if any(k in et_upper for k in ("CRASH", "CRITICAL", "FATAL", "UNINSTALLED", "CORRUPT")):
+            return "critical"
+        if any(k in et_upper for k in ("WARN", "WARNING", "DEPRECATED")):
+            return "warning"
+        if any(k in et_upper for k in ("INFO", "NOTIFICATION", "HEARTBEAT")):
+            return "info"
+        return "error"
+
+    def _derive_category(
+        self,
+        error_type: str,
+        endpoint: str,
+        operation: str,
+        extra: dict[str, Any],
+    ) -> str:
+        """Derive category ('upload', 'sync', 'auth', 'update', 'tracking', 'attendance', 'network', 'general')."""
+        if extra.get("error_category"):
+            return str(extra["error_category"]).strip().lower()
+        if extra.get("category"):
+            return str(extra["category"]).strip().lower()
+
+        combined = f"{error_type} {endpoint} {operation} {extra.get('action', '')}".lower()
+
+        if any(k in combined for k in ("screenshot", "upload", "s3", "storage")):
+            return "upload"
+        if any(k in combined for k in ("sync", "batch", "activity")):
+            return "sync"
+        if any(k in combined for k in ("login", "auth", "token", "enroll", "credential", "unauthorized")):
+            return "auth"
+        if any(k in combined for k in ("update", "installer", "version", "download")):
+            return "update"
+        if any(k in combined for k in ("track", "window", "idle", "hook", "keyboard", "mouse", "capture")):
+            return "tracking"
+        if any(k in combined for k in ("attendance", "punch", "leave", "timesheet", "kra")):
+            return "attendance"
+        if any(k in combined for k in ("network", "connection", "dns", "socket", "timeout", "offline", "unreachable")):
+            return "network"
+        return "general"
+
+    def _derive_agent_endpoint(self, context: dict[str, Any], extra: dict[str, Any]) -> str:
+        """Derive clean agent_endpoint string."""
+        if extra.get("agent_endpoint"):
+            return str(extra["agent_endpoint"]).strip()
+
+        endpoint = context.get("endpoint")
+        if endpoint and endpoint != "N/A":
+            clean = endpoint.strip().lstrip("/")
+            if "/" in clean:
+                clean = clean.split("/")[-1]
+            return clean
+
+        operation = context.get("operation")
+        if operation and operation != "N/A":
+            return operation.strip()
+
+        calling_module = context.get("calling_module")
+        if calling_module and calling_module != "N/A":
+            return calling_module.strip()
+
+        return "workpulse"
+
+    def _build_error_payload(self, context: dict[str, Any]) -> str:
+        """Construct JSON string representation for error_payload parameter."""
+        user = context.get("user_details", {})
+        device = context.get("device_details", {})
+        extra = context.get("extra_context_dict", {})
+
+        payload: dict[str, Any] = {}
+
+        # 1. Diagnostic metrics
+        if context.get("http_status") and context.get("http_status") != "N/A":
+            try:
+                payload["http_status"] = int(context["http_status"])
+            except ValueError:
+                payload["http_status"] = context["http_status"]
+
+        if context.get("response_error") and context.get("response_error") != "N/A":
+            payload["response_error"] = context["response_error"]
+
+        if context.get("calling_module") and context.get("calling_module") != "N/A":
+            payload["calling_module"] = context["calling_module"]
+
+        if context.get("calling_function") and context.get("calling_function") != "N/A":
+            payload["calling_function"] = context["calling_function"]
+
+        # 2. Employee / user context
+        if user.get("employee_code") and user.get("employee_code") != "Not Available":
+            payload["employee_code"] = user["employee_code"]
+        if user.get("employee_id") and user.get("employee_id") != "Not Available":
+            payload["employee_id"] = user["employee_id"]
+        if user.get("username") and user.get("username") != "Not Available":
+            payload["username"] = user["username"]
+        if user.get("company_code") and user.get("company_code") != "Not Available":
+            payload["company_code"] = user["company_code"]
+
+        # 3. Hostname & health
+        if device.get("hostname") and device.get("hostname") != "Unknown":
+            payload["hostname"] = device["hostname"]
+
+        if context.get("system_health"):
+            payload["system_health"] = context["system_health"]
+
+        # 4. Status details
+        payload["network_status"] = context.get("network_status", "Unknown")
+        payload["sync_status"] = context.get("sync_status", "Unknown")
+        payload["workpulse_status"] = context.get("workpulse_status", "Unknown")
+
+        if context.get("traceback"):
+            payload["traceback"] = context["traceback"]
+
+        # 5. Merge any additional extra keys (e.g. retry, file_size, session_id, etc.)
+        for k, v in extra.items():
+            if k in ("device_token", "password", "auth_token", "bearer", "api_key", "secret", "token"):
+                continue
+            if k not in payload:
+                if isinstance(v, str):
+                    payload[k] = sanitize_text(v)
+                else:
+                    payload[k] = v
+
+        try:
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception as e:
+            logger.debug("Failed to serialize error_payload: %s", e)
+            return json.dumps({"error": "Failed to serialize payload"}, ensure_ascii=False)
+
+    def _dispatch_via_api(self, context: dict[str, Any]) -> bool:
+        """
+        Transmit the error details to the Workpulse Error Reporting API:
+        POST /hrms_api/ci4/api/workpulse/report_error
+
+        Returns True on successful delivery (HTTP 200/201), False otherwise.
+        """
+        url = self._resolve_api_url()
+        device_token = self._resolve_device_token(context)
+        error_type = context.get("error_type", "ERROR_REPORT")
+        error_msg = context.get("error_message", "N/A")
+        extra = context.get("extra_context_dict", {})
+
+        severity = self._derive_severity(error_type, extra)
+        category = self._derive_category(
+            error_type,
+            str(context.get("endpoint", "")),
+            str(context.get("operation", "")),
+            extra,
+        )
+        agent_endpoint = self._derive_agent_endpoint(context, extra)
+        app_version = context.get("app_version", get_running_app_version())
+        platform_name = context.get("device_details", {}).get("platform") or platform.system()
+        occurred_at = context.get("timestamp_local") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        error_payload = self._build_error_payload(context)
+
+        post_data = {
+            "device_token": device_token,
+            "error_code": error_type,
+            "error_message": error_msg,
+            "severity": severity,
+            "error_category": category,
+            "agent_endpoint": agent_endpoint,
+            "app_version": app_version,
+            "platform": platform_name,
+            "occurred_at": occurred_at,
+            "error_payload": error_payload,
+        }
+
+        masked_token = f"{device_token[:4]}***{device_token[-4:]}" if len(device_token) >= 8 else "***"
+        logger.info(
+            "Error Reporting API request started: url=%s, error_code=%s, severity=%s, category=%s, endpoint=%s, device_token=%s",
+            url, error_type, severity, category, agent_endpoint, masked_token,
+        )
+
+        try:
+            response = requests.post(
+                url,
+                data=post_data,
+                timeout=10,
+                headers={"User-Agent": f"Workpulse/{app_version}"},
+            )
+
+            status_code = response.status_code
+            try:
+                res_json = response.json()
+            except Exception:
+                res_json = {}
+
+            if status_code in (200, 201):
+                logger.info(
+                    "Error Reporting API request succeeded: status=%d, error_code=%s",
+                    status_code, error_type,
+                )
+                return True
+            else:
+                safe_body = sanitize_text(response.text[:200]) if response.text else "N/A"
+                logger.warning(
+                    "Error Reporting API returned error status %d: %s",
+                    status_code, safe_body,
+                )
+                return False
+
+        except requests.exceptions.Timeout:
+            logger.warning("Error Reporting API request timed out for url: %s", url)
+        except requests.exceptions.ConnectionError as conn_err:
+            logger.warning("Error Reporting API connection failed for url %s: %s", url, conn_err)
+        except Exception as api_err:
+            logger.warning("Error Reporting API dispatch failed for url %s: %s", url, api_err)
+
+        return False
+
     def _dispatch_to_local_log(self, context: dict[str, Any]) -> None:
         """
         Append the full error report to a local ``error_reports.log`` file.
 
-        This is the last-resort fallback when SMTP delivery fails or the network is offline.
+        This is the last-resort fallback when delivery fails or the network is offline.
         """
         try:
             log_dir = get_log_file_path().parent
@@ -894,12 +1205,12 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
     def _dispatch_report(self, context: dict[str, Any]) -> None:
         """
-        Deliver the error report via SMTP or queue locally if network is offline.
+        Deliver the error report via BOTH direct SMTP (support email) and Error Reporting API.
 
-        Delivery workflow:
-          1. Check network reachability.
-          2. If offline, queue locally in ``queued_reports.json`` and log to ``error_reports.log``.
-          3. If online, attempt direct SMTP transmission. If SMTP fails, queue and log.
+        Failure Isolation:
+          - If SMTP fails, Error API is still attempted.
+          - If Error API fails, support email was still attempted/sent.
+          - If either fails, remaining undelivered channel(s) are queued locally in queued_reports.json.
         """
         is_online = True
         try:
@@ -909,16 +1220,45 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             is_online = True
 
         if not is_online:
-            logger.info("ErrorReportService: Network is offline. Queuing support report locally without attempting SMTP.")
+            logger.info("ErrorReportService: Network is offline. Queuing support report locally without attempting network transmission.")
+            context["_smtp_sent"] = False
+            context["_api_sent"] = False
             self._queue_report(context)
             self._dispatch_to_local_log(context)
             return
 
-        delivered = self._dispatch_via_smtp(context)
-        if not delivered:
+        # 1. Attempt SMTP Support Email
+        smtp_sent = False
+        if not context.get("_smtp_sent"):
+            try:
+                smtp_sent = self._dispatch_via_smtp(context)
+            except Exception as smtp_err:
+                logger.warning("ErrorReportService: SMTP dispatch error: %s", smtp_err)
+                smtp_sent = False
+        else:
+            smtp_sent = True
+
+        # 2. Attempt Error Reporting API
+        api_sent = False
+        if not context.get("_api_sent"):
+            try:
+                api_sent = self._dispatch_via_api(context)
+            except Exception as api_err:
+                logger.warning("ErrorReportService: API dispatch error: %s", api_err)
+                api_sent = False
+        else:
+            api_sent = True
+
+        # 3. Check delivery status
+        if smtp_sent and api_sent:
+            logger.info("ErrorReportService: Report successfully delivered via both SMTP and API.")
+        else:
             logger.info(
-                "ErrorReportService: SMTP delivery unavailable; queuing report for retry and logging locally."
+                "ErrorReportService: Partial or failed delivery (SMTP=%s, API=%s); queuing remaining for retry.",
+                smtp_sent, api_sent,
             )
+            context["_smtp_sent"] = smtp_sent
+            context["_api_sent"] = api_sent
             self._queue_report(context)
             self._dispatch_to_local_log(context)
 
@@ -935,8 +1275,8 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         return self._dispatch_via_smtp(context)
 
     def _dispatch_via_backend(self, context: dict[str, Any]) -> bool:
-        """Compatibility alias routing legacy backend dispatch calls to SMTP."""
-        return self._dispatch_via_smtp(context)
+        """Alias for dispatching report via Error API."""
+        return self._dispatch_via_api(context)
 
     # ==============================================================
     # PUBLIC API

@@ -228,8 +228,163 @@ class TestErrorReportService(unittest.TestCase):
             result = service._dispatch_via_smtp(context)
             self.assertFalse(result, "Auth failure must return False.")
 
+    def test_dispatch_via_api_success_and_parameter_mapping(self):
+        """Verify that _dispatch_via_api formats and sends all required parameters correctly."""
+        import json
+        service = self.service
+        context = service._collect_context(
+            error_type="UPLOAD_FAILED",
+            error_message="HTTP 500 from upload_screenshot",
+            extra_context={
+                "device_token": "ENROLLED_DEVICE_TOKEN_123",
+                "severity": "error",
+                "error_category": "upload",
+                "agent_endpoint": "upload_screenshot",
+                "http_status": 500,
+                "retry": 3,
+                "file_size": 482113,
+            },
+        )
+
+        with patch("requests.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"response": "Success", "status": 200, "message": "Error logged"}
+            mock_post.return_value = mock_response
+
+            result = service._dispatch_via_api(context)
+            self.assertTrue(result, "API dispatch should return True on HTTP 200.")
+            mock_post.assert_called_once()
+
+            call_kwargs = mock_post.call_args[1]
+            data = call_kwargs["data"]
+
+            # Verify exact required parameter names
+            self.assertEqual(data["device_token"], "ENROLLED_DEVICE_TOKEN_123")
+            self.assertEqual(data["error_code"], "UPLOAD_FAILED")
+            self.assertEqual(data["error_message"], "HTTP 500 from upload_screenshot")
+            self.assertEqual(data["severity"], "error")
+            self.assertEqual(data["error_category"], "upload")
+            self.assertEqual(data["agent_endpoint"], "upload_screenshot")
+            self.assertTrue(bool(data["app_version"]))
+            self.assertTrue(bool(data["platform"]))
+            self.assertTrue(bool(data["occurred_at"]))
+
+            # Verify error_payload JSON parsing and contents
+            payload = json.loads(data["error_payload"])
+            self.assertEqual(payload["http_status"], 500)
+            self.assertEqual(payload["retry"], 3)
+            self.assertEqual(payload["file_size"], 482113)
+
+    def test_dispatch_via_api_handles_server_error_and_timeout(self):
+        """Verify that _dispatch_via_api returns False on HTTP 500 or timeout without crashing."""
+        import requests
+        service = self.service
+        context = service._collect_context(
+            error_type="SYNC_FAILURE",
+            error_message="Server error during sync",
+        )
+
+        # 1. HTTP 500
+        with patch("requests.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            mock_response.text = "Internal Server Error"
+            mock_post.return_value = mock_response
+
+            result = service._dispatch_via_api(context)
+            self.assertFalse(result)
+
+        # 2. Timeout
+        with patch("requests.post", side_effect=requests.exceptions.Timeout("Timed out")):
+            result = service._dispatch_via_api(context)
+            self.assertFalse(result)
+
+    def test_dual_dispatch_failure_isolation_api_fails_email_still_sent(self):
+        """Failure isolation: If Error API fails, support email must still be attempted and sent."""
+        service = self.service
+        context = service._collect_context(
+            error_type="API_FAIL_ISOLATION",
+            error_message="API is down but SMTP should work",
+        )
+
+        with patch.object(service, "_dispatch_via_api", return_value=False) as mock_api, \
+             patch.object(service, "_dispatch_via_smtp", return_value=True) as mock_smtp, \
+             patch.object(service, "_queue_report") as mock_queue:
+
+            service._dispatch_report(context)
+
+            mock_api.assert_called_once()
+            mock_smtp.assert_called_once()
+            # Partial success (API failed, SMTP sent) queues report with flags
+            mock_queue.assert_called_once()
+            queued_ctx = mock_queue.call_args[0][0]
+            self.assertFalse(queued_ctx.get("_api_sent"))
+            self.assertTrue(queued_ctx.get("_smtp_sent"))
+
+    def test_dual_dispatch_failure_isolation_email_fails_api_still_sent(self):
+        """Failure isolation: If support email fails, Error API must still be attempted and sent."""
+        service = self.service
+        context = service._collect_context(
+            error_type="SMTP_FAIL_ISOLATION",
+            error_message="SMTP is down but API should work",
+        )
+
+        with patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
+             patch.object(service, "_dispatch_via_smtp", return_value=False) as mock_smtp, \
+             patch.object(service, "_queue_report") as mock_queue:
+
+            service._dispatch_report(context)
+
+            mock_api.assert_called_once()
+            mock_smtp.assert_called_once()
+            # Partial success (API sent, SMTP failed) queues report with flags
+            mock_queue.assert_called_once()
+            queued_ctx = mock_queue.call_args[0][0]
+            self.assertTrue(queued_ctx.get("_api_sent"))
+            self.assertFalse(queued_ctx.get("_smtp_sent"))
+
+    def test_dual_dispatch_both_succeed_no_queueing(self):
+        """When both API and SMTP succeed, report is not queued."""
+        service = self.service
+        context = service._collect_context(
+            error_type="FULL_SUCCESS_TEST",
+            error_message="Both channels succeed",
+        )
+
+        with patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
+             patch.object(service, "_dispatch_via_smtp", return_value=True) as mock_smtp, \
+             patch.object(service, "_queue_report") as mock_queue:
+
+            service._dispatch_report(context)
+
+            mock_api.assert_called_once()
+            mock_smtp.assert_called_once()
+            mock_queue.assert_not_called()
+
+    def test_deduplication_prevents_duplicate_dispatches(self):
+        """Verify report_error suppresses duplicate error dispatches within cooldown."""
+        service = self.service
+        unique_sig = f"DEDUP_TEST_{time.time()}"
+
+        with patch.object(service, "_dispatch_report") as mock_dispatch:
+            service.report_error(
+                error_type=unique_sig,
+                error_message="Duplicate test error",
+            )
+            # Second identical error
+            service.report_error(
+                error_type=unique_sig,
+                error_message="Duplicate test error",
+            )
+
+            # Wait briefly for thread execution
+            time.sleep(0.1)
+            self.assertEqual(mock_dispatch.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
