@@ -45,7 +45,7 @@ Name: "{autoprograms}\Workpulse"; Filename: "{app}\Workpulse.exe"; WorkingDir: "
 Name: "{autodesktop}\Workpulse"; Filename: "{app}\Workpulse.exe"; WorkingDir: "{app}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Workpulse"; ValueData: """{app}\Workpulse.exe"""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Workpulse"; ValueData: """{app}\Workpulse.exe"" --startup"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\Workpulse.exe"; Description: "Launch Workpulse"; Flags: nowait postinstall skipifsilent; WorkingDir: "{app}"

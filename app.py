@@ -146,6 +146,14 @@ def main() -> int:
     if os.path.isfile(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
+    is_startup = any(
+        arg in sys.argv for arg in ("--startup", "--minimized", "--background", "--autostart", "-s")
+    )
+    if is_startup:
+        logger.info("Workpulse launched through Windows startup / background mode (%s)", sys.argv)
+    else:
+        logger.info("Workpulse launched manually by user (%s)", sys.argv)
+
     if not is_supported_platform():
         QMessageBox.critical(
             None,
@@ -192,7 +200,7 @@ def main() -> int:
             "Another instance of %s is already running. Exiting gracefully.",
             APP_NAME,
         )
-        if sys.platform.startswith("win"):
+        if not is_startup and sys.platform.startswith("win"):
             try:
                 import win32gui
                 import win32con
@@ -200,9 +208,9 @@ def main() -> int:
                 found_hwnds = []
 
                 def _enum_windows_cb(hwnd, _):
-                    if win32gui.IsWindow(hwnd):
+                    if win32gui.IsWindow(hwnd) and not win32gui.GetParent(hwnd):
                         title = win32gui.GetWindowText(hwnd)
-                        if "Workpulse" in title or "iHRMS Monitor" in title:
+                        if ("Workpulse" in title or "iHRMS Monitor" in title) and not found_hwnds:
                             win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                             win32gui.SetForegroundWindow(hwnd)
@@ -230,6 +238,18 @@ def main() -> int:
             "Could not initialize the local database. Check the log file for details.",
         )
         return 1
+
+    # Auto-start registration check & sync with user preferences
+    try:
+        from database.database import get_session
+        from services.settings_service import SettingsService
+        from system import startup
+
+        app_settings = SettingsService(get_session).get_settings()
+        if app_settings.start_with_system:
+            startup.ensure_startup_registered()
+    except Exception as auto_reg_err:
+        logger.warning("Error checking auto-start registration on startup: %s", auto_reg_err)
 
     # Verify whether an auto-update just occurred and prevent restart loops
     try:
@@ -289,18 +309,29 @@ def main() -> int:
 
             logger.info("Session restored successfully for user: %s", saved_session.get("username"))
 
-            # Open main window directly and display the Dashboard
+            # Open main window and handle background vs foreground startup
             from ui.main_window import MainWindow
             main_window = MainWindow(login_window=None)
             app.aboutToQuit.connect(main_window._shutdown)
-            main_window.show()
-            main_window.raise_()
-            main_window.activateWindow()
-            if hasattr(main_window, "tray") and main_window.tray:
-                main_window.tray.show_message(
-                    APP_NAME,
-                    f"{APP_NAME} has started."
-                )
+
+            if is_startup:
+                logger.info("Workpulse started silently in the background / system tray.")
+                main_window.hide()
+                if hasattr(main_window, "tray") and main_window.tray:
+                    main_window.tray.show()
+                    main_window.tray.show_message(
+                        APP_NAME,
+                        f"{APP_NAME} is active in the background.",
+                    )
+            else:
+                main_window.show()
+                main_window.raise_()
+                main_window.activateWindow()
+                if hasattr(main_window, "tray") and main_window.tray:
+                    main_window.tray.show_message(
+                        APP_NAME,
+                        f"{APP_NAME} has started."
+                    )
             
             return app.exec()
 
@@ -312,6 +343,7 @@ def main() -> int:
                 session_store.clear_session()
 
     # No valid session found, show login window
+    logger.info("No saved session found; displaying login window.")
     login_window = LoginWindow()
     login_window.show()
     login_window.raise_()

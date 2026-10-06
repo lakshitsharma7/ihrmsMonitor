@@ -60,7 +60,7 @@ class Settings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idle_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
-    start_with_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    start_with_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     workpulse_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     track_window_titles: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     screenshot_interval_type: Mapped[str] = mapped_column(String(50), nullable=False, default="3_min")

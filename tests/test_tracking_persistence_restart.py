@@ -291,7 +291,7 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
                     startup.APP_NAME,
                     0,
                     1,  # REG_SZ
-                    '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe"',
+                    '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe" --startup',
                 )
 
 
