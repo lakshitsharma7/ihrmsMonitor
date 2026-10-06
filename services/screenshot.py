@@ -112,12 +112,10 @@ def is_workstation_locked() -> bool:
 
 def _grab_screen_image() -> Image.Image | None:
     """
-    Grab the screen using a robust multi-tiered fallback chain:
-    1. PySide6 QGuiApplication with direct QImage memory reading & multi-monitor support.
-       Works across Windows 10/11, high-DPI scaling, and requires zero external Qt plugins.
-    2. PIL ImageGrab (with all_screens=True).
-    3. Win32 GDI BitBlt (virtual desktop covering all monitors).
-    4. mss (cross-platform desktop grab).
+    Grab the screen using a robust multi-tiered fallback chain without creating windows:
+    1. PIL ImageGrab (with all_screens=True covering all connected monitors cleanly).
+    2. Win32 GDI BitBlt (virtual desktop covering all monitors directly from Desktop DC).
+    3. mss (cross-platform desktop grab).
     """
     errors = []
 
@@ -126,56 +124,7 @@ def _grab_screen_image() -> Image.Image | None:
         logger.info("Windows session is locked. Screenshot capture deferred until session is unlocked.")
         return None
 
-    # Tier 1: PySide6 QGuiApplication (Only safe on main GUI thread; non-GUI threads use PIL/Win32)
-    try:
-        from PySide6.QtCore import QThread
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtGui import QGuiApplication, QPainter, QPixmap, QImage
-
-        app = QApplication.instance()
-        is_main_thread = False
-        if app is not None:
-            try:
-                is_main_thread = (QThread.currentThread() == app.thread())
-            except Exception:
-                is_main_thread = False
-
-        if is_main_thread:
-            screens = QGuiApplication.screens()
-            if screens:
-                if len(screens) == 1:
-                    primary = QGuiApplication.primaryScreen() or screens[0]
-                    pixmap = primary.grabWindow(0)
-                else:
-                    # Multi-monitor virtual desktop calculation
-                    min_x = min(s.geometry().x() for s in screens)
-                    min_y = min(s.geometry().y() for s in screens)
-                    max_x = max(s.geometry().x() + s.geometry().width() for s in screens)
-                    max_y = max(s.geometry().y() + s.geometry().height() for s in screens)
-                    total_w = max_x - min_x
-                    total_h = max_y - min_y
-                    pixmap = QPixmap(total_w, total_h)
-                    painter = QPainter(pixmap)
-                    for s in screens:
-                        spix = s.grabWindow(0)
-                        painter.drawPixmap(s.geometry().x() - min_x, s.geometry().y() - min_y, spix)
-                    painter.end()
-
-                if not pixmap.isNull() and pixmap.width() > 0 and pixmap.height() > 0:
-                    # Direct memory extraction (does NOT depend on Qt image format plugins or DLLs)
-                    qimage = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-                    width = qimage.width()
-                    height = qimage.height()
-                    bpl = qimage.bytesPerLine()
-                    raw_bytes = bytes(qimage.constBits())[:bpl * height]
-                    img = Image.frombuffer("RGBA", (width, height), raw_bytes, "raw", "RGBA", bpl, 1).convert("RGB")
-                    if img.size[0] > 0 and img.size[1] > 0:
-                        return img
-    except Exception as e:
-        errors.append(f"Tier 1 (PySide6) failed: {e}")
-        logger.debug("Tier 1 (PySide6) screen capture failed: %s", e)
-
-    # Tier 2: PIL.ImageGrab
+    # Tier 1: PIL.ImageGrab (multi-monitor windowless screen capture)
     try:
         _ensure_dpi_awareness()
         try:
@@ -185,10 +134,9 @@ def _grab_screen_image() -> Image.Image | None:
         if img is not None and img.size[0] > 0 and img.size[1] > 0:
             return img.convert("RGB")
     except Exception as e:
-        errors.append(f"Tier 2 (PIL.ImageGrab) failed: {e}")
-        logger.debug("Tier 2 (PIL.ImageGrab) screen capture failed: %s", e)
-
-    # Tier 3: Win32 GDI BitBlt
+        errors.append(f"Tier 1 (PIL.ImageGrab) failed: {e}")
+        logger.debug("Tier 1 (PIL.ImageGrab) screen capture failed: %s", e)
+    # Tier 2: Win32 GDI BitBlt (virtual desktop across all monitors directly from desktop DC)
     try:
         import win32gui
         import win32ui
@@ -221,10 +169,10 @@ def _grab_screen_image() -> Image.Image | None:
         if img is not None and img.size[0] > 0 and img.size[1] > 0:
             return img
     except Exception as e:
-        errors.append(f"Tier 3 (Win32 GDI) failed: {e}")
-        logger.debug("Tier 3 (Win32 GDI) screen capture failed: %s", e)
+        errors.append(f"Tier 2 (Win32 GDI) failed: {e}")
+        logger.debug("Tier 2 (Win32 GDI) screen capture failed: %s", e)
 
-    # Tier 4: mss
+    # Tier 3: mss
     try:
         import mss
         with mss.mss() as sct:
@@ -233,8 +181,8 @@ def _grab_screen_image() -> Image.Image | None:
             if sct_img:
                 return Image.frombytes("RGB", sct_img.size, sct_img.rgb)
     except Exception as e:
-        errors.append(f"Tier 4 (mss) failed: {e}")
-        logger.debug("Tier 4 (mss) screen capture failed: %s", e)
+        errors.append(f"Tier 3 (mss) failed: {e}")
+        logger.debug("Tier 3 (mss) screen capture failed: %s", e)
 
     logger.error("All screen capture tiers failed. Errors: %s", "; ".join(errors))
     return None

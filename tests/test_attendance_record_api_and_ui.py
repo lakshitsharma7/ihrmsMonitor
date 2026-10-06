@@ -491,15 +491,15 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                 force=True,
             )
 
-            # Day 5 (1st Saturday, no record in API) -> Empty status
+            # Day 5 (1st Saturday, no record in API) -> Working day without punch -> Absent
             day_5 = res["days"][4]
             self.assertEqual(day_5["date"], "2026-09-05")
-            self.assertEqual(day_5["status_label"], "")
+            self.assertEqual(day_5["status_label"], "Absent")
 
-            # Day 12 (2nd Saturday, no record in API) -> Empty status (Week Off only when explicitly in API)
+            # Day 12 (2nd Saturday, no record in API) -> Working day without punch -> Absent
             day_12 = res["days"][11]
             self.assertEqual(day_12["date"], "2026-09-12")
-            self.assertEqual(day_12["status_label"], "")
+            self.assertEqual(day_12["status_label"], "Absent")
 
             # Day 19 (3rd Saturday, with both punches in API) -> Present
             day_19 = res["days"][18]
@@ -507,10 +507,10 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             self.assertEqual(day_19["status_label"], "Present")
             self.assertEqual(day_19["details"], "Punch: 09:30:00 - 18:00:00")
 
-            # Day 26 (4th Saturday, no record in API) -> Empty status
+            # Day 26 (4th Saturday, no record in API) -> Working day without punch -> Absent
             day_26 = res["days"][25]
             self.assertEqual(day_26["date"], "2026-09-26")
-            self.assertEqual(day_26["status_label"], "")
+            self.assertEqual(day_26["status_label"], "Absent")
 
     def test_12_real_world_last_update_date_keyed_response(self):
         """Verify real API payload with lastUpdate keys (e.g. 09-09-2026 and 18-09-2026) maps correctly."""
@@ -560,10 +560,10 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                 force=True,
             )
 
-            # Day 1 (01-09-2026) has no record -> Empty status (not Absent)
+            # Day 1 (01-09-2026) has no punch on a working day -> Absent
             day_1 = res["days"][0]
             self.assertEqual(day_1["date"], "2026-09-01")
-            self.assertEqual(day_1["status_label"], "")
+            self.assertEqual(day_1["status_label"], "Absent")
             self.assertIsNone(day_1["details"])
 
             # Day 9 (09-09-2026 single punch) should be Missed Punch
@@ -1180,13 +1180,94 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             # 10. UI Calendar Rendering verification:
             page = AttendancePage(service=self.service)
             page._apply_attendance_data(res)
-            # Ensure unrecorded day cards have hidden status badge and empty content
+            # Ensure unrecorded future day cards have hidden status badge and empty content
             day_7_card = page._day_cards[6]
             self.assertFalse(day_7_card.status_badge.isVisible())
 
             day_8_card = page._day_cards[7]
             self.assertFalse(day_8_card.status_badge.isVisible())
 
+    def test_24_july_2026_working_days_no_punch_shows_absent(self):
+        """Verify July 2026 actual API structure: 1 Present day, 8 Week Offs, 1 Leave, 22 Absent working days."""
+        july_payload = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {
+                        "punchTime": "12:45:57,13:05:07",
+                        "lastUpdate": "30-07-2026"
+                    }
+                ],
+                "leave_days": [
+                    {
+                        "from_date": "2026-07-19 16:00:00",
+                        "to_date": "2026-07-19 16:00:00",
+                        "leave_type": "Leave"
+                    }
+                ],
+                "weekoff": [
+                    {"date": "2026-07-04"},
+                    {"date": "2026-07-05"},
+                    {"date": "2026-07-11"},
+                    {"date": "2026-07-12"},
+                    {"date": "2026-07-18"},
+                    {"date": "2026-07-19"},
+                    {"date": "2026-07-25"},
+                    {"date": "2026-07-26"},
+                ]
+            },
+            "freezed": "0"
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = july_payload
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="July",
+                year=2026,
+                indo_code="EC-098",
+                key="testapikey111",
+                force=True,
+            )
+
+            self.assertEqual(len(res["days"]), 31)
+
+            # July 30: Present + Punch times
+            day_30 = res["days"][29]
+            self.assertEqual(day_30["date"], "2026-07-30")
+            self.assertEqual(day_30["status_label"], "Present")
+            self.assertEqual(day_30["details"], "Punch: 12:45:57 - 13:05:07")
+
+            # July 4: Week Off
+            day_4 = res["days"][3]
+            self.assertEqual(day_4["date"], "2026-07-04")
+            self.assertEqual(day_4["status_label"], "Week Off")
+
+            # July 19: Leave or Week Off
+            day_19 = res["days"][18]
+            self.assertEqual(day_19["date"], "2026-07-19")
+            self.assertIn(day_19["status_label"], ("Week Off", "Leave"))
+
+            # July 1: Working day with NO punch -> MUST show "Absent"
+            day_1 = res["days"][0]
+            self.assertEqual(day_1["date"], "2026-07-01")
+            self.assertEqual(day_1["status_label"], "Absent")
+            self.assertEqual(day_1["status_code"], "A")
+            self.assertEqual(day_1["status_badge"], "A")
+            self.assertEqual(day_1["color"], "#dc2626")
+
+            # Summary verification
+            summary = res["summary"]
+            self.assertEqual(summary["total_days"], 31)
+            self.assertEqual(summary["present"], 1)
+            self.assertEqual(summary["absent"], 22)
+
 
 if __name__ == "__main__":
     unittest.main()
+

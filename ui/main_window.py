@@ -363,7 +363,7 @@ class UserDeviceDialog(QDialog):
         tabs = QTabWidget(self)
 
         # --- Tab 1: Current Laptop ---
-        tab_current = QWidget()
+        tab_current = QWidget(tabs)
         current_layout = QVBoxLayout(tab_current)
         current_layout.setContentsMargins(15, 15, 15, 15)
         current_layout.setSpacing(10)

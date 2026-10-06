@@ -207,7 +207,7 @@ class LeaveSummaryCard(QFrame):
         # --------------------------------------------------------------
         # 4. Divider Line
         # --------------------------------------------------------------
-        divider = QFrame()
+        divider = QFrame(self)
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setFixedHeight(1)
         divider.setStyleSheet("background-color: #E2E8F0; border: none;")
@@ -322,18 +322,18 @@ class LeaveBalanceDialog(QDialog):
         main_layout.addLayout(header_layout)
 
         # Error Banner
-        self.error_container = QWidget()
+        self.error_container = QWidget(self)
         err_layout = QHBoxLayout(self.error_container)
         err_layout.setContentsMargins(12, 10, 12, 10)
         err_layout.setSpacing(10)
         self.error_container.setStyleSheet(
             "QWidget { background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; }"
         )
-        self.error_label = QLabel("Unable to load leave balance. Please try again.")
+        self.error_label = QLabel("Unable to load leave balance. Please try again.", self.error_container)
         self.error_label.setStyleSheet("color: #DC2626; font-size: 12px; font-weight: 500; border: none; background: transparent;")
         err_layout.addWidget(self.error_label, 1)
 
-        self.retry_btn = QPushButton("Retry")
+        self.retry_btn = QPushButton("Retry", self.error_container)
         self.retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.retry_btn.setStyleSheet(
             "QPushButton { background: #DC2626; color: white; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: 600; border: none; }"
@@ -351,28 +351,28 @@ class LeaveBalanceDialog(QDialog):
         stats_row.setSpacing(12)
 
         # Total Quota Card
-        quota_card = QGroupBox("Total Allotted")
+        quota_card = QGroupBox("Total Allotted", self)
         quota_layout = QVBoxLayout(quota_card)
         quota_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_quota_val = QLabel("0 Days")
+        self.total_quota_val = QLabel("0 Days", quota_card)
         self.total_quota_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #2563EB;")
         quota_layout.addWidget(self.total_quota_val)
         stats_row.addWidget(quota_card)
 
         # Total Used Card
-        used_card = QGroupBox("Total Availed / Used")
+        used_card = QGroupBox("Total Availed / Used", self)
         used_layout = QVBoxLayout(used_card)
         used_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_used_val = QLabel("0 Days")
+        self.total_used_val = QLabel("0 Days", used_card)
         self.total_used_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #DC2626;")
         used_layout.addWidget(self.total_used_val)
         stats_row.addWidget(used_card)
 
         # Total Available Card
-        avail_card = QGroupBox("Available Balance")
+        avail_card = QGroupBox("Available Balance", self)
         avail_layout = QVBoxLayout(avail_card)
         avail_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_avail_val = QLabel("0 Days")
+        self.total_avail_val = QLabel("0 Days", avail_card)
         self.total_avail_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #16A34A;")
         avail_layout.addWidget(self.total_avail_val)
         stats_row.addWidget(avail_card)
@@ -382,13 +382,13 @@ class LeaveBalanceDialog(QDialog):
         # --------------------------------------------------------------
         # 3. Card-Based Leave Summary Section (Scrollable 2-Column Grid)
         # --------------------------------------------------------------
-        self.scroll_area = QScrollArea()
+        self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        self.cards_container = QWidget()
+        self.cards_container = QWidget(self.scroll_area)
         self.cards_container.setObjectName("LeaveCardsContainer")
         self.cards_grid = QGridLayout(self.cards_container)
         self.cards_grid.setContentsMargins(4, 4, 4, 8)
@@ -400,11 +400,11 @@ class LeaveBalanceDialog(QDialog):
         main_layout.addWidget(self.scroll_area, 1)
 
         # Empty State
-        self.empty_state = QWidget()
+        self.empty_state = QWidget(self)
         empty_l = QVBoxLayout(self.empty_state)
         empty_l.setContentsMargins(10, 30, 10, 30)
         empty_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label = QLabel("No leave balance data available.")
+        self.empty_label = QLabel("No leave balance data available.", self.empty_state)
         self.empty_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748B;")
         empty_l.addWidget(self.empty_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.empty_state.setVisible(False)

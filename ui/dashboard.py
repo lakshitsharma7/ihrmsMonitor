@@ -302,14 +302,14 @@ class DashboardPage(QWidget):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
-        content = QWidget()
+        content = QWidget(scroll)
         root = QVBoxLayout(content)
         root.setContentsMargins(16, 12, 16, 16)
         root.setSpacing(12)

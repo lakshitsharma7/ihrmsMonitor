@@ -146,29 +146,29 @@ class LoginWindow(QMainWindow):
 
     # ── UI construction ───────────────────────────────────────────
     def _build_ui(self) -> None:
-        central = QWidget()
+        central = QWidget(self)
         central.setObjectName("LoginBackground")
         layout = QHBoxLayout(central)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Card split into a dark hero panel and the white form panel
-        card = QFrame()
+        card = QFrame(central)
         card.setObjectName("LoginCard")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         card.setFixedSize(780, 545)
         card_layout = QHBoxLayout(card)
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
-        card_layout.addWidget(self._build_hero_panel())
-        card_layout.addWidget(self._build_form_panel())
+        card_layout.addWidget(self._build_hero_panel(card))
+        card_layout.addWidget(self._build_form_panel(card))
 
         layout.addWidget(card)
         self.setCentralWidget(central)
 
-    def _build_hero_panel(self) -> QWidget:
+    def _build_hero_panel(self, parent: QWidget | None = None) -> QWidget:
         """Dark branded panel: app mark, tagline and three bullet points."""
-        hero = QFrame()
+        hero = QFrame(parent)
         hero.setObjectName("LoginHero")
         hero.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         hero.setFixedWidth(320)
@@ -178,7 +178,7 @@ class LoginWindow(QMainWindow):
         hero_layout.setSpacing(0)
 
         # Hero illustration / App Icon (big iHRMS star logo)
-        icon_label = QLabel()
+        icon_label = QLabel(hero)
         icon_label.setFixedSize(LOGO_BOX_SIZE, LOGO_BOX_SIZE)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet(
@@ -218,19 +218,19 @@ class LoginWindow(QMainWindow):
         )
         hero_layout.addSpacing(18)
 
-        brand_name = QLabel("Workpulse")
+        brand_name = QLabel("Workpulse", hero)
         brand_name.setObjectName("LoginBrandName")
         brand_name.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(brand_name)
 
         hero_layout.addSpacing(6)
-        tagline = QLabel("Smart Workspace Productivity Monitoring")
+        tagline = QLabel("Smart Workspace Productivity Monitoring", hero)
         tagline.setObjectName("LoginTagline")
         tagline.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(tagline)
 
         hero_layout.addSpacing(26)
-        rule = QFrame()
+        rule = QFrame(hero)
         rule.setObjectName("LoginHeroRule")
         rule.setFixedHeight(1)
         hero_layout.addWidget(rule)
@@ -241,7 +241,7 @@ class LoginWindow(QMainWindow):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(12)
             row.addWidget(_icon_label(icon_name, 18), 0, Qt.AlignmentFlag.AlignTop)
-            bullet = QLabel(text)
+            bullet = QLabel(text, hero)
             bullet.setObjectName("LoginBullet")
             bullet.setWordWrap(True)
             row.addWidget(bullet, 1)
@@ -252,7 +252,7 @@ class LoginWindow(QMainWindow):
 
         # Application version display on hero panel
         from config.settings import get_running_app_version
-        self.hero_version_label = QLabel(f"Version {get_running_app_version()}")
+        self.hero_version_label = QLabel(f"Version {get_running_app_version()}", hero)
         self.hero_version_label.setObjectName("LoginHeroVersion")
         self.hero_version_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.hero_version_label.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 500;")
@@ -270,9 +270,9 @@ class LoginWindow(QMainWindow):
         if hasattr(self, "hero_version_label") and self.hero_version_label:
             self.hero_version_label.setText(f"Version {clean_v}")
 
-    def _build_form_panel(self) -> QWidget:
+    def _build_form_panel(self, parent: QWidget | None = None) -> QWidget:
         """White panel holding the brand logo and the credential form."""
-        panel = QFrame()
+        panel = QFrame(parent)
         panel.setObjectName("LoginFormPanel")
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -281,7 +281,7 @@ class LoginWindow(QMainWindow):
         panel_layout.setSpacing(0)
 
         # ── Brand logo (Centered) ──────────────────────────────────
-        self.brand_logo_label = QLabel()
+        self.brand_logo_label = QLabel(panel)
         self.brand_logo_label.setObjectName("LoginLogo")
         self.brand_logo_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
@@ -290,14 +290,14 @@ class LoginWindow(QMainWindow):
         panel_layout.addWidget(self.brand_logo_label)
 
         panel_layout.addSpacing(20)
-        caption = QLabel("Enter Company code & Sign in to continue")
+        caption = QLabel("Enter Company code & Sign in to continue", panel)
         caption.setObjectName("LoginCaption")
         panel_layout.addWidget(caption)
 
         panel_layout.addSpacing(26)
 
         # ── Company Code ──────────────────────────────────────────
-        self.company_code_input = QLineEdit()
+        self.company_code_input = QLineEdit(panel)
         self.company_code_input.setObjectName("CompanyCodeInput")
         self.company_code_input.setPlaceholderText("Enter Company Code")
         self.company_code_input.setMinimumHeight(42)
@@ -316,7 +316,7 @@ class LoginWindow(QMainWindow):
         # Hidden until a company code is verified, and cleared again the
         # moment the code changes, so one company's details can never be
         # shown alongside another company's code.
-        self.company_details = QWidget()
+        self.company_details = QWidget(panel)
         self.company_details.setObjectName("CompanyDetails")
         self.company_details.setAttribute(
             Qt.WidgetAttribute.WA_StyledBackground, True
@@ -326,12 +326,12 @@ class LoginWindow(QMainWindow):
         details_layout.setContentsMargins(10, 8, 10, 8)
         details_layout.setSpacing(10)
 
-        self.company_logo_label = QLabel()
+        self.company_logo_label = QLabel(self.company_details)
         self.company_logo_label.setFixedSize(30, 30)
         self.company_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         details_layout.addWidget(self.company_logo_label)
 
-        self.company_name_label = QLabel()
+        self.company_name_label = QLabel(self.company_details)
         self.company_name_label.setObjectName("CompanyDetailsText")
         self.company_name_label.setWordWrap(True)
         details_layout.addWidget(self.company_name_label, 1)
@@ -340,7 +340,7 @@ class LoginWindow(QMainWindow):
         panel_layout.addWidget(self.company_details)
 
         # Container for the step 2 credential fields
-        self.credentials_container = QWidget()
+        self.credentials_container = QWidget(panel)
         self.credentials_container.setObjectName("CredentialsContainer")
         self.credentials_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         credentials_layout = QVBoxLayout(self.credentials_container)
@@ -348,7 +348,7 @@ class LoginWindow(QMainWindow):
         credentials_layout.setSpacing(12)
 
         # ── Username (Employee ID / Username / Email) ──────────────────────────────────────────────
-        self.username_input = QLineEdit()
+        self.username_input = QLineEdit(self.credentials_container)
         self.username_input.setPlaceholderText("Employee ID / Username / Email")
         self.username_input.setMinimumHeight(42)
         # Prevent autofill
@@ -359,7 +359,7 @@ class LoginWindow(QMainWindow):
         credentials_layout.addWidget(self.username_input)
 
         # ── Password (eye icon replaces the old "Show password" box) ──
-        self.password_input = QLineEdit()
+        self.password_input = QLineEdit(self.credentials_container)
         self.password_input.setPlaceholderText("Password")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setMinimumHeight(42)
@@ -392,13 +392,13 @@ class LoginWindow(QMainWindow):
         self.company_code_input.textChanged.connect(self._on_company_code_changed)
 
         # Error label (auto-collapses to 0 height when empty)
-        self.error_label = _LoginErrorLabel("")
+        self.error_label = _LoginErrorLabel("", panel)
         self.error_label.setObjectName("LoginError")
         self.error_label.setWordWrap(True)
         panel_layout.addWidget(self.error_label)
 
         # ── Consent (must be accepted before logging in) ──────────
-        consent_row = QWidget()
+        consent_row = QWidget(panel)
         consent_row.setObjectName("LoginConsentRow")
         # The panel behind it is white; without this the row inherits the
         # global window background and shows a grey patch.

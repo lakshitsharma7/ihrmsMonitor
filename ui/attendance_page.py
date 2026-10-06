@@ -321,12 +321,12 @@ class AttendancePage(QWidget):
         page_layout.setSpacing(0)
 
         # Main Scroll Area
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        content = QWidget()
+        content = QWidget(scroll)
         content.setObjectName("AttendanceContent")
         self.root_layout = QVBoxLayout(content)
         self.root_layout.setContentsMargins(16, 14, 16, 16)
@@ -525,7 +525,7 @@ class AttendancePage(QWidget):
         calendar_layout.addLayout(weekdays_row)
 
         # --- Calendar Days Grid Container ---
-        self.calendar_grid_container = QWidget()
+        self.calendar_grid_container = QWidget(self.calendar_group)
         self.calendar_grid_container.setMinimumWidth(560)
         self.calendar_grid = QGridLayout(self.calendar_grid_container)
         self.calendar_grid.setContentsMargins(0, 4, 0, 4)
@@ -535,11 +535,11 @@ class AttendancePage(QWidget):
         calendar_layout.addWidget(self.calendar_grid_container)
 
         # Empty State Widget
-        self.empty_state = QWidget()
+        self.empty_state = QWidget(self.calendar_group)
         empty_layout = QVBoxLayout(self.empty_state)
         empty_layout.setContentsMargins(20, 40, 20, 40)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label = QLabel("No attendance records found.")
+        self.empty_label = QLabel("No attendance records found.", self.empty_state)
         self.empty_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748B;")
         empty_layout.addWidget(self.empty_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.empty_state.setVisible(False)

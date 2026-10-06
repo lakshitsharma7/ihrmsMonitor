@@ -90,7 +90,7 @@ class UpdateDialog(QDialog):
         layout.addLayout(header_layout)
 
         # Separator
-        line = QFrame()
+        line = QFrame(self)
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
         line.setStyleSheet("color: #e0e0e0; background-color: #e0e0e0; max-height: 1px;")
@@ -100,12 +100,13 @@ class UpdateDialog(QDialog):
         self.status_label = QLabel(
             "An update has been downloaded and is ready to install."
             if self._installer_path
-            else "Preparing update in background..."
+            else "Preparing update in background...",
+            self,
         )
         self.status_label.setStyleSheet("font-size: 13px; color: #3c4043; background: transparent;")
         layout.addWidget(self.status_label)
 
-        self.progress_bar = QProgressBar()
+        self.progress_bar = QProgressBar(self)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if self._installer_path else 0)
         self.progress_bar.setTextVisible(True)

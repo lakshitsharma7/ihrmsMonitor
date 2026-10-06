@@ -1092,6 +1092,28 @@ class AttendanceService:
                     leave_set.add(k)
                     leave_name_map[k] = "Leave"
 
+        # Absent Days (absent_days / absent / absents / absent_records / absent_list)
+        absent_days_raw = (
+            result.get("absent_days")
+            or result.get("absent")
+            or result.get("absents")
+            or result.get("absent_records")
+            or result.get("absent_list")
+            or result.get("absents_list")
+        )
+        absent_days_list = _collect_items(absent_days_raw)
+        absent_set = set()
+        for a in absent_days_list:
+            if isinstance(a, dict):
+                raw_d = a.get("date") or a.get("day") or a.get("lastUpdate") or a.get("attendance_date") or a.get("att_date")
+                k = _normalize_date_key(raw_d, resolved_year, resolved_month_num)
+                if k:
+                    absent_set.add(k)
+            elif isinstance(a, str):
+                k = _normalize_date_key(a, resolved_year, resolved_month_num)
+                if k:
+                    absent_set.add(k)
+
         # Comp Offs
         comp_off_days = _collect_items(result.get("comp_off_days") or result.get("comp_offs") or result.get("compoffs"))
         comp_off_set = set()
@@ -1311,11 +1333,18 @@ class AttendanceService:
 
             raw_upper = raw_status_str.upper() if raw_status_str else ""
 
-            # Saturday / Sunday business rules (used only when API weekoff is not explicitly provided)
-            is_sunday = (day_date.weekday() == 6)
-            is_saturday = (day_date.weekday() == 5)
-            sat_idx = (day_idx - 1) // 7 + 1 if is_saturday else 0
-            is_working_saturday = (is_saturday and sat_idx in (1, 3))
+            # Check if an API record actually exists for this date
+            has_api_record = bool(
+                val is not None
+                or date_str in present_days_by_date
+                or date_str in punches_by_date
+                or date_str in absent_set
+                or date_str in mispunch_set
+                or date_str in holiday_map
+                or date_str in weekoff_set
+                or date_str in leave_set
+                or date_str in comp_off_set
+            )
 
             # Status Precedence Resolution per exact priority:
             # 1. Holiday from API (holiday_map or raw status) -> Holiday
@@ -1324,13 +1353,15 @@ class AttendanceService:
             # 4. Both Punches Exist -> Present (or Half Day / Late)
             # 5. Only One Punch Exists -> Missed Punch
             # 6. Explicit API Absent status -> Absent
-            # 7. No API Record -> Empty (Show only Date)
+            # 7. Working Day with NO punch -> Absent (for past/current dates)
             if date_str in holiday_map:
                 h_name = holiday_map[date_str]
                 status_code = f"Holiday: {h_name}" if h_name and h_name != "Holiday" else "Holiday"
             elif raw_upper in ("H", "HOLIDAY") or (raw_status_str and "HOLIDAY" in raw_upper):
                 status_code = raw_status_str if "Holiday" in raw_status_str else "Holiday"
             elif date_str in weekoff_set or raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
+                status_code = "Week Off"
+            elif not weekoff_set and day_date.weekday() == 6:
                 status_code = "Week Off"
             elif date_str in leave_set:
                 status_code = leave_name_map.get(date_str) or "Leave"
@@ -1349,17 +1380,21 @@ class AttendanceService:
                 status_code = "Missed Punch"
             elif date_str in mispunch_set or raw_upper in ("MISSED PUNCH", "MISSEDPUNCH", "MISSED_PUNCH", "MISPUNCH", "MIS_PUNCH", "MP"):
                 status_code = "Missed Punch"
+            elif raw_upper in ("A", "ABSENT") or date_str in absent_set:
+                status_code = "A"
             elif raw_upper in ("P", "PRESENT"):
+                # If API explicitly marked as Present without punch timestamps
                 status_code = "P"
             elif raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
                 status_code = "Half Day"
             elif raw_upper in ("LATE", "L"):
                 status_code = "Late"
-            elif raw_upper in ("A", "ABSENT"):
-                status_code = "A"
-            else:
-                # No record or no punches with unspecified status -> Empty (No status)
+            elif day_date.date() > now.date():
+                # Future date beyond today with no record
                 status_code = ""
+            else:
+                # Working day with NO punch -> MUST show "Absent"
+                status_code = "A"
 
             # Map status code to human readable label & color tokens
             code_upper = status_code.upper() if status_code else ""
