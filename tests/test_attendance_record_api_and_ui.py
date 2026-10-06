@@ -233,22 +233,22 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         self.assertTrue(page.calendar_grid_container.isHidden())
 
     def test_06b_month_navigation_and_today(self):
-        """Verify Previous Month and Today navigation with past/current bounds, and no Next Month button."""
+        """Verify Previous Month, removal of Next Month, and Today navigation with no future dates."""
         page = AttendancePage(service=self.service)
         now = datetime.now()
 
-        # 1. Verify Next Month button does not exist
+        # 1. Verify Next Month button does not exist, but Previous Month and Today exist
         self.assertFalse(hasattr(page, "next_month_btn"))
+        self.assertTrue(hasattr(page, "prev_month_btn"))
+        self.assertTrue(hasattr(page, "today_btn"))
 
-        # 2. Verify year selector has no future years
+        # 2. Verify year combo does not allow future years
         year_items = [int(page.year_combo.itemText(i)) for i in range(page.year_combo.count())]
         self.assertTrue(all(yr <= now.year for yr in year_items))
+        self.assertEqual(max(year_items), now.year)
 
-        # 3. Verify current year month selector only has months up to current month
-        page.year_combo.setCurrentText(str(now.year))
-        month_items_cur_year = [page.month_combo.itemText(i) for i in range(page.month_combo.count())]
-        self.assertEqual(len(month_items_cur_year), now.month)
-        self.assertEqual(month_items_cur_year[-1], page.month_combo.itemText(now.month - 1))
+        # 3. Verify month combo for current year only allows months up to current month
+        self.assertEqual(page.month_combo.count(), now.month)
 
         # 4. Navigate within past year (all 12 months available)
         past_year = now.year - 1
@@ -261,8 +261,20 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         self.assertEqual(page.month_combo.currentText(), "January")
         self.assertEqual(page.year_combo.currentText(), str(past_year))
 
-        # 5. Today button jumps to current year and current month
+        # Test January -> December of previous year navigation
+        page._on_prev_month()
+        self.assertEqual(page.month_combo.currentText(), "December")
+        self.assertEqual(page.year_combo.currentText(), str(past_year - 1))
+
+        # 5. Today button jumps dynamically to current year and current month
         page._on_today()
+        self.assertEqual(page.year_combo.currentText(), str(now.year))
+        self.assertEqual(page.month_combo.currentIndex(), now.month - 1)
+
+        # 6. Future state clamping protection in refresh()
+        page.year_combo.addItem(str(now.year + 1))
+        page.year_combo.setCurrentText(str(now.year + 1))
+        page.refresh(async_mode=False)
         self.assertEqual(page.year_combo.currentText(), str(now.year))
         self.assertEqual(page.month_combo.currentIndex(), now.month - 1)
 
@@ -405,7 +417,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             self.assertIn("11:35:11 - 11:38:19", day_2["details"])
 
     def test_10_multiple_punch_formats_and_identical_punches(self):
-        """Verify punch string with identical punch times formats as comma-separated list."""
+        """Verify punch string with identical punch times formats as Missed Punch with single available punch."""
         mock_response_data = {
             "response": 200,
             "status": 1,
@@ -437,15 +449,16 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
 
             day_1 = res["days"][0]
             self.assertEqual(day_1["date"], "2026-09-01")
-            self.assertEqual(day_1["status_label"], "Present")
-            self.assertEqual(day_1["details"], "Punch: 11:37:19, 11:37:19")
+            self.assertEqual(day_1["status_label"], "Missed Punch")
+            self.assertIn("Punch In: 11:37:19", day_1["details"])
+            self.assertIn("Punch Out: Not Available", day_1["details"])
 
     def test_11_saturday_working_rules_1st_and_3rd_saturday(self):
         """Verify 1st and 3rd Saturdays are working days and non-working Saturdays are Week Offs."""
         # September 2026:
-        # Day 5 (Sat) -> 1st Saturday -> Working Day (Absent if past & no punch)
+        # Day 5 (Sat) -> 1st Saturday -> Working Day (no record -> "-")
         # Day 12 (Sat) -> 2nd Saturday -> Week Off
-        # Day 19 (Sat) -> 3rd Saturday -> Working Day (Present if punch exists)
+        # Day 19 (Sat) -> 3rd Saturday -> Working Day (Present if both punches exist)
         # Day 26 (Sat) -> 4th Saturday -> Week Off
         mock_response_data = {
             "response": 200,
@@ -478,26 +491,26 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                 force=True,
             )
 
-            # Day 5 (1st Saturday, no punch, past date) -> Absent
+            # Day 5 (1st Saturday, no record in API) -> Empty status
             day_5 = res["days"][4]
             self.assertEqual(day_5["date"], "2026-09-05")
-            self.assertEqual(day_5["status_label"], "Absent")
+            self.assertEqual(day_5["status_label"], "")
 
-            # Day 12 (2nd Saturday, no punch) -> Week Off
+            # Day 12 (2nd Saturday, no record in API) -> Empty status (Week Off only when explicitly in API)
             day_12 = res["days"][11]
             self.assertEqual(day_12["date"], "2026-09-12")
-            self.assertEqual(day_12["status_label"], "Week Off")
+            self.assertEqual(day_12["status_label"], "")
 
-            # Day 19 (3rd Saturday, with punch) -> Present
+            # Day 19 (3rd Saturday, with both punches in API) -> Present
             day_19 = res["days"][18]
             self.assertEqual(day_19["date"], "2026-09-19")
             self.assertEqual(day_19["status_label"], "Present")
-            self.assertIn("09:30:00 - 18:00:00", day_19["details"])
+            self.assertEqual(day_19["details"], "Punch: 09:30:00 - 18:00:00")
 
-            # Day 26 (4th Saturday, no punch) -> Week Off
+            # Day 26 (4th Saturday, no record in API) -> Empty status
             day_26 = res["days"][25]
             self.assertEqual(day_26["date"], "2026-09-26")
-            self.assertEqual(day_26["status_label"], "Week Off")
+            self.assertEqual(day_26["status_label"], "")
 
     def test_12_real_world_last_update_date_keyed_response(self):
         """Verify real API payload with lastUpdate keys (e.g. 09-09-2026 and 18-09-2026) maps correctly."""
@@ -516,8 +529,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                     }
                 ],
                 "mispunch_days": [
-                    "09-09-2026",
-                    "18-09-2026"
+                    "09-09-2026"
                 ],
                 "weekoff": [
                     {"date": "2026-09-05"},
@@ -548,22 +560,23 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                 force=True,
             )
 
-            # Day 1 (01-09-2026) should NOT get Day 9's punch
+            # Day 1 (01-09-2026) has no record -> Empty status (not Absent)
             day_1 = res["days"][0]
             self.assertEqual(day_1["date"], "2026-09-01")
-            self.assertEqual(day_1["status_label"], "Absent")
+            self.assertEqual(day_1["status_label"], "")
             self.assertIsNone(day_1["details"])
 
-            # Day 9 (09-09-2026 in mispunch_days) should be Missed Punch with 11:37:19, 11:37:19
+            # Day 9 (09-09-2026 single punch) should be Missed Punch
             day_9 = res["days"][8]
             self.assertEqual(day_9["date"], "2026-09-09")
             self.assertEqual(day_9["status_label"], "Missed Punch")
-            self.assertEqual(day_9["details"], "Punch: 11:37:19, 11:37:19")
+            self.assertIn("Punch In: 11:37:19", day_9["details"])
+            self.assertIn("Punch Out: Not Available", day_9["details"])
 
-            # Day 18 (18-09-2026 in mispunch_days) should be Missed Punch with 11:35:11 - 11:38:19
+            # Day 18 (18-09-2026 both punches exist: 11:35:11 - 11:38:19) should be Present
             day_18 = res["days"][17]
             self.assertEqual(day_18["date"], "2026-09-18")
-            self.assertEqual(day_18["status_label"], "Missed Punch")
+            self.assertEqual(day_18["status_label"], "Present")
             self.assertEqual(day_18["details"], "Punch: 11:35:11 - 11:38:19")
 
     def test_13_invalid_punch_sentinels_ignored(self):
@@ -653,7 +666,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             "date": "2026-09-19",
             "status_label": "Present",
             "status_code": "P",
-            "details": "Punch: 09:30:00",
+            "details": "Punch: 09:30:00 - 18:00:00",
             "is_today": True,
         })
         self.assertIn("background-color: #F0FDF4", today_present_card.styleSheet())
@@ -671,6 +684,20 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         })
         self.assertIn("background-color: #FEF2F2", today_absent_card.styleSheet())
         self.assertIn("border: 2px solid #DC2626", today_absent_card.styleSheet())
+
+        # 6. Unrecorded Day -> Neutral white card with empty status badge hidden
+        unrecorded_card = CalendarDayCard(day_data={
+            "day_num": 7,
+            "day_name": "Wed",
+            "date": "2026-10-07",
+            "status_label": "",
+            "status_code": "",
+            "details": None,
+            "is_today": False,
+        })
+        self.assertIn("background-color: #FFFFFF", unrecorded_card.styleSheet())
+        self.assertIn("border: 1px solid #E2E8F0", unrecorded_card.styleSheet())
+        self.assertFalse(unrecorded_card.status_badge.isVisible())
 
     def test_16_august_15_days_records_mapping(self):
         """Verify August with 15 non-contiguous attendance days and diverse date formats maps each day accurately."""
@@ -726,26 +753,30 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             )
 
             self.assertEqual(len(res["days"]), 31)
-            # Day 1: Aug 1
+            # Day 1: Aug 1 (both punches) -> Present
             self.assertEqual(res["days"][0]["date"], "2025-08-01")
             self.assertEqual(res["days"][0]["status_label"], "Present")
-            self.assertIn("09:00:00 - 18:00:00", res["days"][0]["details"])
+            self.assertEqual(res["days"][0]["details"], "Punch: 09:00:00 - 18:00:00")
 
             # Day 3: Aug 3 (Sunday - Week Off)
             self.assertEqual(res["days"][2]["date"], "2025-08-03")
             self.assertEqual(res["days"][2]["status_label"], "Week Off")
 
-            # Day 4: Aug 4
+            # Day 4: Aug 4 (both punches) -> Present
             self.assertEqual(res["days"][3]["date"], "2025-08-04")
             self.assertEqual(res["days"][3]["status_label"], "Present")
+
+            # Day 5: Aug 5 (single punch) -> Missed Punch
+            self.assertEqual(res["days"][4]["date"], "2025-08-05")
+            self.assertEqual(res["days"][4]["status_label"], "Missed Punch")
 
             # Day 15: Aug 15 (Holiday)
             self.assertEqual(res["days"][14]["date"], "2025-08-15")
             self.assertIn("Independence Day", res["days"][14]["status_label"])
 
-            # Day 19: Aug 19
+            # Day 19: Aug 19 (single punch) -> Missed Punch
             self.assertEqual(res["days"][18]["date"], "2025-08-19")
-            self.assertEqual(res["days"][18]["status_label"], "Present")
+            self.assertEqual(res["days"][18]["status_label"], "Missed Punch")
 
             # UI Population verification
             page = AttendancePage(service=self.service)
@@ -758,14 +789,14 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             "response": 200,
             "status": 1,
             "result": {
-                "present_days": [{"date": "2025-08-01", "punch_in": "09:00:00"}]
+                "present_days": [{"date": "2025-08-01", "punch_in": "09:00:00", "punch_out": "18:00:00"}]
             }
         }
         mock_aug_2026 = {
             "response": 200,
             "status": 1,
             "result": {
-                "present_days": [{"date": "2026-08-01", "punch_in": "10:30:00"}]
+                "present_days": [{"date": "2026-08-01", "punch_in": "10:30:00", "punch_out": "19:30:00"}]
             }
         }
 
@@ -781,8 +812,8 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
 
             self.assertEqual(res_2025["year"], 2025)
             self.assertEqual(res_2026["year"], 2026)
-            self.assertIn("09:00:00", res_2025["days"][0]["details"])
-            self.assertIn("10:30:00", res_2026["days"][0]["details"])
+            self.assertIn("09:00:00 - 18:00:00", res_2025["days"][0]["details"])
+            self.assertIn("10:30:00 - 19:30:00", res_2026["days"][0]["details"])
 
     def test_18_flexible_month_inputs(self):
         """Verify resolution of abbreviations, string numbers, and 0-indexed month inputs."""
@@ -831,7 +862,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
 
             res = self.service.get_monthly_attendance_record(month="August", year=2025, force=True)
             self.assertEqual(res["days"][0]["status_label"], "Present")
-            self.assertEqual(res["days"][1]["status_label"], "Present")
+            self.assertEqual(res["days"][1]["status_label"], "Missed Punch")
             self.assertIn("Independence Day", res["days"][14]["status_label"])
 
     def test_20_may_2026_screenshot_reference_comparison(self):
@@ -850,7 +881,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
                     {"date": "2026-05-28", "punchTime": "10:20:00,10:20:00"},
                 ],
                 "mispunch_days": [
-                    "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-14",
+                    "2026-05-04", "2026-05-05", "2026-05-14",
                     "2026-05-25", "2026-05-27", "2026-05-28"
                 ],
                 "leave_days": [
@@ -884,11 +915,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
 
             self.assertEqual(len(res["days"]), 31)
 
-            # Check specific days from screenshot:
-            # May 1 (Fri): Absent
-            self.assertEqual(res["days"][0]["date"], "2026-05-01")
-            self.assertEqual(res["days"][0]["status_label"], "Absent")
-
+            # Check specific days:
             # May 2 (Sat): Week Off
             self.assertEqual(res["days"][1]["date"], "2026-05-02")
             self.assertEqual(res["days"][1]["status_label"], "Week Off")
@@ -900,7 +927,13 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             # May 4 (Mon): Missed Punch
             self.assertEqual(res["days"][3]["date"], "2026-05-04")
             self.assertEqual(res["days"][3]["status_label"], "Missed Punch")
-            self.assertEqual(res["days"][3]["details"], "Punch: 12:19:25, 12:19:25")
+            self.assertIn("Punch In: 12:19:25", res["days"][3]["details"])
+            self.assertIn("Punch Out: Not Available", res["days"][3]["details"])
+
+            # May 6 (Wed): Present (both punches exist)
+            self.assertEqual(res["days"][5]["date"], "2026-05-06")
+            self.assertEqual(res["days"][5]["status_label"], "Present")
+            self.assertEqual(res["days"][5]["details"], "Punch: 11:08:24 - 11:25:00")
 
             # May 16 (Sat): Week Off
             self.assertEqual(res["days"][15]["date"], "2026-05-16")
@@ -915,14 +948,244 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             self.assertEqual(summary["total_days"], 31)
             self.assertEqual(summary["week_off"], 10)
             self.assertEqual(summary["leave"], 1)
-            self.assertEqual(summary["missed_punch"], 7)
+            self.assertEqual(summary["missed_punch"], 6)
+            self.assertEqual(summary["present"], 1)
 
             # UI rendering check
             page = AttendancePage(service=self.service)
             page._apply_attendance_data(res)
             self.assertEqual(page.weekoff_val_label.text(), "10 Days")
             self.assertEqual(page.leave_val_label.text(), "1 Days")
-            self.assertEqual(page.missed_punch_val_label.text(), "7 Days")
+            self.assertEqual(page.missed_punch_val_label.text(), "6 Days")
+            self.assertEqual(page.present_val_label.text(), "1 Days")
+
+    def test_21_august_september_october_2026_required_logic(self):
+        """Verify dynamic loading and exact required status logic across August, September, and October 2026."""
+        # 1. October 2026: Present with both punches, Missed Punch with only in, Missed Punch with only out, Holiday Gandhi Jayanti & Dussehra
+        oct_response = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    {"date": "2026-10-01", "punch_in": "09:45:55", "punch_out": "18:31:16"},
+                    {"date": "2026-10-03", "punch_in": "09:45:55"},
+                    {"date": "2026-10-05", "punch_out": "18:31:16"},
+                    {"date": "2026-10-06", "status": "Absent"},
+                ],
+                "holiday_days": [
+                    {"name": "Gandhi Jayanti", "date": "2026-10-02"},
+                    {"name": "Dussehra", "date": "2026-10-20"},
+                ],
+                "leave_days": [
+                    {"date": "2026-10-07", "leave_type": "CL"},
+                    {"date": "2026-10-08", "leave_type": "EL"},
+                ],
+                "weekoff": [
+                    {"date": "2026-10-04"},
+                    {"date": "2026-10-11"},
+                ]
+            }
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = oct_response
+            mock_post.return_value = mock_resp
+
+            res_oct = self.service.get_monthly_attendance_record(
+                month="October",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            # Oct 1: Present (Punch: 09:45:55 - 18:31:16)
+            day_1 = res_oct["days"][0]
+            self.assertEqual(day_1["status_label"], "Present")
+            self.assertEqual(day_1["details"], "Punch: 09:45:55 - 18:31:16")
+
+            # Oct 2: Holiday: Gandhi Jayanti
+            day_2 = res_oct["days"][1]
+            self.assertEqual(day_2["status_label"], "Holiday: Gandhi Jayanti")
+
+            # Oct 3: Missed Punch (Punch In: 09:45:55, Punch Out: Not Available)
+            day_3 = res_oct["days"][2]
+            self.assertEqual(day_3["status_label"], "Missed Punch")
+            self.assertIn("Punch In: 09:45:55", day_3["details"])
+            self.assertIn("Punch Out: Not Available", day_3["details"])
+
+            # Oct 4: Week Off
+            day_4 = res_oct["days"][3]
+            self.assertEqual(day_4["status_label"], "Week Off")
+
+            # Oct 5: Missed Punch (Punch In: Not Available, Punch Out: 18:31:16)
+            day_5 = res_oct["days"][4]
+            self.assertEqual(day_5["status_label"], "Missed Punch")
+            self.assertIn("Punch In: Not Available", day_5["details"])
+            self.assertIn("Punch Out: 18:31:16", day_5["details"])
+
+            # Oct 6: Absent (explicitly marked by API)
+            day_6 = res_oct["days"][5]
+            self.assertEqual(day_6["status_label"], "Absent")
+
+            # Oct 7: Leave (CL)
+            day_7 = res_oct["days"][6]
+            self.assertEqual(day_7["status_label"], "Leave (CL)")
+
+            # Oct 8: Leave (EL)
+            day_8 = res_oct["days"][7]
+            self.assertEqual(day_8["status_label"], "Leave (EL)")
+
+            # Oct 20: Holiday: Dussehra
+            day_20 = res_oct["days"][19]
+            self.assertEqual(day_20["status_label"], "Holiday: Dussehra")
+
+            # Oct 9: No API Record -> Empty status (not Absent)
+            day_9 = res_oct["days"][8]
+            self.assertEqual(day_9["status_label"], "")
+            self.assertEqual(day_9["status_code"], "")
+
+    def test_22_session_switch_cache_invalidation(self):
+        """Verify user logout flushes attendance cache completely so new user loads fresh data."""
+        mock_user1_res = {
+            "response": 200, "status": 1,
+            "result": {"present_days": [{"date": "2026-10-01", "punch_in": "09:00:00", "punch_out": "18:00:00"}]}
+        }
+        mock_user2_res = {
+            "response": 200, "status": 1,
+            "result": {"present_days": [{"date": "2026-10-01", "punch_in": "10:15:00", "punch_out": "19:15:00"}]}
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.side_effect = [mock_user1_res, mock_user2_res]
+            mock_post.return_value = mock_resp
+
+            # User 1 fetches October 2026
+            u1_data = self.service.get_monthly_attendance_record(month="October", year=2026, indo_code="EC-001", force=True)
+            self.assertIn("09:00:00 - 18:00:00", u1_data["days"][0]["details"])
+
+            # Logout clears cache
+            SessionService().logout()
+
+            # User 2 fetches October 2026
+            u2_data = self.service.get_monthly_attendance_record(month="October", year=2026, indo_code="EC-002", force=True)
+            self.assertIn("10:15:00 - 19:15:00", u2_data["days"][0]["details"])
+
+    def test_23_october_2026_working_days_no_punch_shows_absent_never_dash(self):
+        """Verify October 2026 working days with no punches display Absent and never '—'."""
+        oct_payload = {
+            "response": 200,
+            "status": 1,
+            "result": {
+                "present_days": [
+                    # Day 1: Working day + Punch In + Punch Out -> Present
+                    {"date": "2026-10-01", "punch_in": "09:30:00", "punch_out": "18:30:00"},
+                    # Day 5: Working day + Punch In only -> Missed Punch
+                    {"date": "2026-10-05", "punch_in": "09:40:00"},
+                    # Day 6: Working day + Punch Out only -> Missed Punch
+                    {"date": "2026-10-06", "punch_out": "18:45:00"},
+                    # Days 07, 08, 09, 12, 13, 14 etc. have NO punches and NO special record
+                ],
+                "holiday_days": [
+                    {"name": "Gandhi Jayanti", "date": "2026-10-02"},
+                ],
+                "leave_days": [
+                    {"date": "2026-10-15", "leave_type": "CL"},
+                ],
+                "weekoff": [
+                    {"date": "2026-10-04"},
+                    {"date": "2026-10-10"},
+                    {"date": "2026-10-11"},
+                    {"date": "2026-10-18"},
+                    {"date": "2026-10-24"},
+                    {"date": "2026-10-25"},
+                ]
+            }
+        }
+
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"response": 200}'
+            mock_resp.json.return_value = oct_payload
+            mock_post.return_value = mock_resp
+
+            res = self.service.get_monthly_attendance_record(
+                month="October",
+                year=2026,
+                indo_code="EC-100",
+                key="testapikey111",
+                force=True,
+            )
+
+            # 1. Oct 1 (Thu) - Working day + Punch In + Punch Out -> Present
+            day_1 = res["days"][0]
+            self.assertEqual(day_1["date"], "2026-10-01")
+            self.assertEqual(day_1["status_label"], "Present")
+            self.assertEqual(day_1["details"], "Punch: 09:30:00 - 18:30:00")
+
+            # 2. Oct 2 (Fri) - Holiday -> Gandhi Jayanti
+            day_2 = res["days"][1]
+            self.assertEqual(day_2["date"], "2026-10-02")
+            self.assertEqual(day_2["status_label"], "Holiday: Gandhi Jayanti")
+
+            # 3. Oct 4 (Sun) - Week Off -> Week Off
+            day_4 = res["days"][3]
+            self.assertEqual(day_4["date"], "2026-10-04")
+            self.assertEqual(day_4["status_label"], "Week Off")
+
+            # 4. Oct 5 (Mon) - Working day + Punch In only -> Missed Punch
+            day_5 = res["days"][4]
+            self.assertEqual(day_5["date"], "2026-10-05")
+            self.assertEqual(day_5["status_label"], "Missed Punch")
+            self.assertIn("Punch In: 09:40:00", day_5["details"])
+            self.assertIn("Punch Out: Not Available", day_5["details"])
+
+            # 5. Oct 6 (Tue) - Working day + Punch Out only -> Missed Punch
+            day_6 = res["days"][5]
+            self.assertEqual(day_6["date"], "2026-10-06")
+            self.assertEqual(day_6["status_label"], "Missed Punch")
+            self.assertIn("Punch In: Not Available", day_6["details"])
+            self.assertIn("Punch Out: 18:45:00", day_6["details"])
+
+            # 6. Oct 7 (Wed) - No API record -> Empty status (not Absent)
+            day_7 = res["days"][6]
+            self.assertEqual(day_7["date"], "2026-10-07")
+            self.assertEqual(day_7["status_label"], "")
+            self.assertEqual(day_7["status_code"], "")
+
+            # 7. Oct 8 (Thu) - No API record -> Empty status (not Absent)
+            day_8 = res["days"][7]
+            self.assertEqual(day_8["date"], "2026-10-08")
+            self.assertEqual(day_8["status_label"], "")
+            self.assertEqual(day_8["status_code"], "")
+
+            # 8. Oct 9 (Fri) - No API record -> Empty status (not Absent)
+            day_9 = res["days"][8]
+            self.assertEqual(day_9["date"], "2026-10-09")
+            self.assertEqual(day_9["status_label"], "")
+            self.assertEqual(day_9["status_code"], "")
+
+            # 9. Oct 15 (Thu) - Leave -> Leave (CL)
+            day_15 = res["days"][14]
+            self.assertEqual(day_15["date"], "2026-10-15")
+            self.assertEqual(day_15["status_label"], "Leave (CL)")
+
+            # 10. UI Calendar Rendering verification:
+            page = AttendancePage(service=self.service)
+            page._apply_attendance_data(res)
+            # Ensure unrecorded day cards have hidden status badge and empty content
+            day_7_card = page._day_cards[6]
+            self.assertFalse(day_7_card.status_badge.isVisible())
+
+            day_8_card = page._day_cards[7]
+            self.assertFalse(day_8_card.status_badge.isVisible())
 
 
 if __name__ == "__main__":

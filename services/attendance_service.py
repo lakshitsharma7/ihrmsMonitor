@@ -114,8 +114,18 @@ class AttendanceService:
         except Exception as write_err:
             logger.debug("Could not write attendance_state.json: %s", write_err)
 
+    def clear_cache(self) -> None:
+        """Clear cached monthly attendance and punch responses."""
+        if hasattr(self, "_monthly_cache"):
+            self._monthly_cache.clear()
+        if hasattr(self, "_monthly_cache_ts"):
+            self._monthly_cache_ts.clear()
+        if hasattr(self, "_last_punch_fetch_ts"):
+            self._last_punch_fetch_ts.clear()
+
     def clear_state(self, date_str: str | None = None) -> None:
         """Clear state for a specific date or all dates (used during resets / tests)."""
+        self.clear_cache()
         with self._state_lock:
             if date_str:
                 state = self._load_state()
@@ -828,18 +838,22 @@ class AttendanceService:
             date_str: str,
             local_punch: dict | None = None,
             api_punch: Any = None,
-        ) -> tuple[str | None, str | None, list[str]]:
-            """Extract clean punch display string, details line, and raw punch times list from API and local store."""
-            punches: list[str] = []
+        ) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+            """Extract punch timestamps, formatted display, and details string.
+            Returns:
+                (punch_in_time, punch_out_time, punch_display, details_str, working_hrs)
+            """
+            p_in: str | None = None
+            p_out: str | None = None
             working_hrs: str | None = None
 
             def _inspect_dict(d: dict) -> None:
-                nonlocal punches, working_hrs
+                nonlocal p_in, p_out, working_hrs
                 if not isinstance(d, dict):
                     return
 
                 # 1. Direct punch in / out fields
-                p_in = (
+                raw_in = (
                     d.get("punch_in")
                     or d.get("punchIn")
                     or d.get("punch_in_time")
@@ -862,7 +876,7 @@ class AttendanceService:
                     or d.get("timeIn")
                     or d.get("in")
                 )
-                p_out = (
+                raw_out = (
                     d.get("punch_out")
                     or d.get("punchOut")
                     or d.get("punch_out_time")
@@ -886,15 +900,15 @@ class AttendanceService:
                     or d.get("out")
                 )
 
-                c_in = _clean_time_str(p_in)
-                c_out = _clean_time_str(p_out)
-                if c_in and c_in not in punches:
-                    punches.append(c_in)
-                if c_out and c_out != c_in and c_out not in punches:
-                    punches.append(c_out)
+                c_in = _clean_time_str(raw_in)
+                c_out = _clean_time_str(raw_out)
+                if c_in and not p_in:
+                    p_in = c_in
+                if c_out and not p_out:
+                    p_out = c_out
 
                 # 2. punch_time / punchTime / punch / punches / attendance_time
-                p_time = (
+                raw_p_time = (
                     d.get("punchTime")
                     or d.get("punch_time")
                     or d.get("punch_times")
@@ -908,22 +922,34 @@ class AttendanceService:
                     or d.get("clock_in")
                     or d.get("clock_out")
                 )
-                if isinstance(p_time, list):
-                    for item in p_time:
-                        c = _clean_time_str(item)
-                        if c and c not in punches:
-                            punches.append(c)
-                elif isinstance(p_time, str) and _is_valid_punch_time(p_time):
-                    if "," in p_time:
-                        parts = [_clean_time_str(p) for p in p_time.split(",") if _is_valid_punch_time(p)]
-                        punches = [p for p in parts if p]
-                    elif " - " in p_time:
-                        parts = [_clean_time_str(p) for p in p_time.split(" - ") if _is_valid_punch_time(p)]
-                        punches = [p for p in parts if p]
-                    elif not punches:
-                        c = _clean_time_str(p_time)
-                        if c:
-                            punches.append(c)
+                if isinstance(raw_p_time, list):
+                    items = [_clean_time_str(x) for x in raw_p_time if _clean_time_str(x)]
+                    if items:
+                        if not p_in:
+                            p_in = items[0]
+                        if not p_out and len(items) > 1:
+                            p_out = items[-1]
+                elif isinstance(raw_p_time, str) and _is_valid_punch_time(raw_p_time):
+                    if "," in raw_p_time:
+                        parts = [_clean_time_str(p) for p in raw_p_time.split(",") if _clean_time_str(p)]
+                        if len(parts) >= 2:
+                            if not p_in:
+                                p_in = parts[0]
+                            if not p_out:
+                                p_out = parts[-1]
+                        elif len(parts) == 1 and not p_in:
+                            p_in = parts[0]
+                    elif " - " in raw_p_time:
+                        parts = [_clean_time_str(p) for p in raw_p_time.split(" - ") if _clean_time_str(p)]
+                        if len(parts) >= 2:
+                            if not p_in:
+                                p_in = parts[0]
+                            if not p_out:
+                                p_out = parts[-1]
+                        elif len(parts) == 1 and not p_in:
+                            p_in = parts[0]
+                    elif not p_in:
+                        p_in = _clean_time_str(raw_p_time)
 
                 # 3. working hours
                 w_hrs = d.get("working_hours") or d.get("work_duration") or d.get("hours") or d.get("total_hours") or d.get("work_hours")
@@ -934,54 +960,61 @@ class AttendanceService:
                 _inspect_dict(val)
             elif isinstance(val, str) and _is_valid_punch_time(val):
                 if "," in val:
-                    parts = [_clean_time_str(p) for p in val.split(",") if _is_valid_punch_time(p)]
-                    punches = [p for p in parts if p]
+                    parts = [_clean_time_str(p) for p in val.split(",") if _clean_time_str(p)]
+                    if len(parts) >= 2:
+                        p_in, p_out = parts[0], parts[-1]
+                    elif len(parts) == 1:
+                        p_in = parts[0]
                 elif " - " in val:
-                    parts = [_clean_time_str(p) for p in val.split(" - ") if _is_valid_punch_time(p)]
-                    punches = [p for p in parts if p]
-                elif not punches:
-                    c = _clean_time_str(val)
-                    if c:
-                        punches.append(c)
+                    parts = [_clean_time_str(p) for p in val.split(" - ") if _clean_time_str(p)]
+                    if len(parts) >= 2:
+                        p_in, p_out = parts[0], parts[-1]
+                    elif len(parts) == 1:
+                        p_in = parts[0]
+                else:
+                    p_in = _clean_time_str(val)
 
             # Inspect separate API punch record if present for this date
             if isinstance(api_punch, dict):
                 _inspect_dict(api_punch)
             elif isinstance(api_punch, str) and _is_valid_punch_time(api_punch):
                 c = _clean_time_str(api_punch)
-                if c and c not in punches:
-                    punches.append(c)
+                if not p_in:
+                    p_in = c
+                elif not p_out and c != p_in:
+                    p_out = c
 
             # 4. Merge local store punch if available for date
             if local_punch and isinstance(local_punch, dict):
                 l_in = _clean_time_str(local_punch.get("punch_in"))
                 l_out = _clean_time_str(local_punch.get("punch_out"))
-                if l_in and l_in not in punches:
-                    punches.insert(0, l_in)
-                if l_out and l_out not in punches:
-                    punches.append(l_out)
+                if l_in and not p_in:
+                    p_in = l_in
+                if l_out and not p_out:
+                    p_out = l_out
 
-            # Build punch display string
+            # Build punch display string per user specification:
             punch_display: str | None = None
-            if len(punches) == 2:
-                if punches[0] == punches[1]:
-                    punch_display = f"Punch: {punches[0]}, {punches[1]}"
-                else:
-                    punch_display = f"Punch: {punches[0]} - {punches[1]}"
-            elif len(punches) == 1:
-                punch_display = f"Punch: {punches[0]}"
-            elif len(punches) > 2:
-                punch_display = f"Punch: {', '.join(punches)}"
+            has_in = bool(p_in and _is_valid_punch_time(p_in))
+            has_out = bool(p_out and _is_valid_punch_time(p_out))
 
-            # Detail parts
+            if has_in and has_out and p_in != p_out:
+                punch_display = f"Punch: {p_in} - {p_out}"
+            elif has_in and not has_out:
+                punch_display = f"Punch In: {p_in}\nPunch Out: Not Available"
+            elif has_out and not has_in:
+                punch_display = f"Punch In: Not Available\nPunch Out: {p_out}"
+            elif has_in and has_out and p_in == p_out:
+                punch_display = f"Punch In: {p_in}\nPunch Out: Not Available"
+
             detail_parts = []
             if punch_display:
                 detail_parts.append(punch_display)
             if working_hrs:
                 detail_parts.append(f"Hrs: {working_hrs}")
 
-            details_str = " | ".join(detail_parts) if detail_parts else None
-            return punch_display, details_str, punches
+            details_str = "\n".join(detail_parts) if detail_parts else None
+            return p_in, p_out, punch_display, details_str, working_hrs
 
         def _collect_items(raw_val: Any) -> list:
             """Ensure dictionary or list collection is returned as list of items."""
@@ -1243,16 +1276,16 @@ class AttendanceService:
             # Extract punch times and details (from day record, separate punch record, and local punch)
             api_punch = punches_by_date.get(date_str)
             local_punch = local_state_map.get(date_str)
-            punch_display, day_detail, punches = _extract_punch_and_details(
+            p_in, p_out, punch_display, day_detail, working_hrs = _extract_punch_and_details(
                 val=val,
                 date_str=date_str,
                 local_punch=local_punch,
                 api_punch=api_punch,
             )
-            has_valid_punch = bool(punch_display)
-            is_single_or_same_punch = (
-                len(punches) == 1 or (len(punches) == 2 and punches[0] == punches[1])
-            )
+            has_in = bool(p_in and _is_valid_punch_time(p_in))
+            has_out = bool(p_out and _is_valid_punch_time(p_out))
+            has_both_distinct_punches = bool(has_in and has_out and p_in != p_out)
+            has_single_punch = bool((has_in and not has_out) or (has_out and not has_in) or (has_in and has_out and p_in == p_out))
 
             # Extract raw API status
             raw_status = None
@@ -1284,55 +1317,52 @@ class AttendanceService:
             sat_idx = (day_idx - 1) // 7 + 1 if is_saturday else 0
             is_working_saturday = (is_saturday and sat_idx in (1, 3))
 
-            # Status Precedence Resolution:
-            # 1. Holiday from API
-            # 2. Explicit Leave / Comp Off from API
-            # 3. Explicit Missed Punch (from API mispunch_days or raw status)
-            # 4. Explicit Week Off from API
-            # 5. Valid punch / attendance detected -> Present (or Half Day / Late / Missed Punch)
-            # 6. Fallback Week Off (Sunday, 2nd/4th/5th Sat when API weekoff list is omitted)
-            # 7. Explicit Absent from API
-            # 8. Past / today working day with no attendance -> Absent
-            # 9. Future working day -> "-"
+            # Status Precedence Resolution per exact priority:
+            # 1. Holiday from API (holiday_map or raw status) -> Holiday
+            # 2. Week Off from API (weekoff_set or raw status) -> Week Off
+            # 3. Leave from API (leave_set, raw status, comp off) -> Leave
+            # 4. Both Punches Exist -> Present (or Half Day / Late)
+            # 5. Only One Punch Exists -> Missed Punch
+            # 6. Explicit API Absent status -> Absent
+            # 7. No API Record -> Empty (Show only Date)
             if date_str in holiday_map:
-                status_code = f"Holiday: {holiday_map[date_str]}"
+                h_name = holiday_map[date_str]
+                status_code = f"Holiday: {h_name}" if h_name and h_name != "Holiday" else "Holiday"
+            elif raw_upper in ("H", "HOLIDAY") or (raw_status_str and "HOLIDAY" in raw_upper):
+                status_code = raw_status_str if "Holiday" in raw_status_str else "Holiday"
+            elif date_str in weekoff_set or raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
+                status_code = "Week Off"
             elif date_str in leave_set:
                 status_code = leave_name_map.get(date_str) or "Leave"
             elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
                 status_code = raw_status_str if raw_status_str else "Leave"
             elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
                 status_code = "Comp Off"
-            elif date_str in mispunch_set or raw_upper in ("MISSED PUNCH", "MISSEDPUNCH", "MISSED_PUNCH", "MISPUNCH", "MIS_PUNCH", "MP"):
-                status_code = "Missed Punch"
-            elif date_str in weekoff_set:
-                status_code = "Week Off"
-            elif has_valid_punch or raw_upper in ("P", "PRESENT"):
+            elif has_both_distinct_punches:
                 if raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
                     status_code = "Half Day"
                 elif raw_upper in ("LATE", "L"):
                     status_code = "Late"
-                elif date_str in mispunch_set:
-                    status_code = "Missed Punch"
                 else:
                     status_code = "P"
-            elif raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
-                status_code = "Week Off"
-            elif not weekoff_set and (is_sunday or (is_saturday and not is_working_saturday)):
-                status_code = "Week Off"
+            elif has_single_punch:
+                status_code = "Missed Punch"
+            elif date_str in mispunch_set or raw_upper in ("MISSED PUNCH", "MISSEDPUNCH", "MISSED_PUNCH", "MISPUNCH", "MIS_PUNCH", "MP"):
+                status_code = "Missed Punch"
+            elif raw_upper in ("P", "PRESENT"):
+                status_code = "P"
+            elif raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
+                status_code = "Half Day"
+            elif raw_upper in ("LATE", "L"):
+                status_code = "Late"
             elif raw_upper in ("A", "ABSENT"):
                 status_code = "A"
-            elif is_working_saturday and not weekoff_set:
-                if day_date.date() <= now.date():
-                    status_code = "A"
-                else:
-                    status_code = "-"
-            elif day_date.date() <= now.date():
-                status_code = "A"
             else:
-                status_code = "-"
+                # No record or no punches with unspecified status -> Empty (No status)
+                status_code = ""
 
             # Map status code to human readable label & color tokens
-            code_upper = status_code.upper() if status_code else "-"
+            code_upper = status_code.upper() if status_code else ""
             if code_upper in ("P", "PRESENT"):
                 status_label = "Present"
                 status_badge = "P"
@@ -1387,9 +1417,14 @@ class AttendanceService:
                 color = "#b45309"
                 bg_color = "#fef3c7"
                 present_cnt += 1
+            elif not code_upper or code_upper in ("-", "—", "NONE", "NULL"):
+                status_label = ""
+                status_badge = ""
+                color = "#64748b"
+                bg_color = "#ffffff"
             else:
-                status_label = status_code if status_code != "-" else "—"
-                status_badge = "-" if status_code == "-" else status_code[:2]
+                status_label = status_code
+                status_badge = status_code[:2]
                 color = "#64748b"
                 bg_color = "#f1f5f9"
 
@@ -1398,18 +1433,18 @@ class AttendanceService:
                 "Attendance Status Resolution: Date: %s (%s) | API Record: %s | API Status: %s | Punch: %s | Detected Attendance: %s | Final Status: %s",
                 date_str,
                 day_name,
-                val is not None,
+                bool(val is not None or date_str in holiday_map or date_str in weekoff_set or date_str in leave_set or date_str in mispunch_set or date_str in punches_by_date),
                 raw_status_str,
                 punch_display,
-                has_valid_punch,
-                status_label,
+                bool(punch_display),
+                status_label or "No Record",
             )
 
             parsed_days.append({
                 "day_num": day_idx,
                 "date": date_str,
                 "day_name": day_name,
-                "status_code": status_code or "—",
+                "status_code": status_code if status_label else "",
                 "status_label": status_label,
                 "status_badge": status_badge,
                 "color": color,

@@ -277,6 +277,11 @@ class SessionService:
     def logout(self) -> None:
         self._current_user = None
         self.device_token = None
+        try:
+            from services.attendance_service import AttendanceService
+            AttendanceService().clear_cache()
+        except Exception:
+            pass
         self.notify_permission_listeners()
 
     def clear(self) -> None:

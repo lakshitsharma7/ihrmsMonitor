@@ -362,13 +362,13 @@ class AssignedTasksTable(QTableWidget):
             self.setItem(row, 6, done_item)
 
             # ── Col 7: Task Completed — editable numeric QLineEdit ────────────
-            comp_container = QWidget()
+            comp_container = QWidget(self)
             comp_layout = QHBoxLayout(comp_container)
             comp_layout.setContentsMargins(6, 4, 6, 4)
             comp_layout.setSpacing(0)
             comp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            completed_edit = QLineEdit(task_completed)
+            completed_edit = QLineEdit(task_completed, comp_container)
             completed_edit.setPlaceholderText("0")
             completed_edit.setValidator(QRegularExpressionValidator(num_regex, completed_edit))
             completed_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -383,12 +383,12 @@ class AssignedTasksTable(QTableWidget):
             self.setCellWidget(row, 7, comp_container)
 
             # ── Col 8: Comment — editable text QLineEdit ──────────────────────
-            comment_container = QWidget()
+            comment_container = QWidget(self)
             comment_layout = QHBoxLayout(comment_container)
             comment_layout.setContentsMargins(6, 4, 6, 4)
             comment_layout.setSpacing(0)
 
-            comment_edit = QLineEdit(comment)
+            comment_edit = QLineEdit(comment, comment_container)
             comment_edit.setPlaceholderText("Enter comments / work details...")
             comment_edit.setStyleSheet(_LE_NORMAL)
             comment_edit.setSizePolicy(
@@ -401,12 +401,12 @@ class AssignedTasksTable(QTableWidget):
             self.setCellWidget(row, 8, comment_container)
 
             # ── Col 9: Action — Save button ───────────────────────────────────
-            action_container = QWidget()
+            action_container = QWidget(self)
             action_layout = QHBoxLayout(action_container)
             action_layout.setContentsMargins(6, 4, 6, 4)
             action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            save_btn = QPushButton("Save")
+            save_btn = QPushButton("Save", action_container)
             save_btn.setToolTip("Save timesheet entry for this KRA task")
             save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             save_btn.setStyleSheet(self._save_btn_style_default())

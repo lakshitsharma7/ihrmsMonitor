@@ -162,6 +162,8 @@ class ErrorReportService:
 
     def _get_queue_file_path(self) -> Path:
         """Return the path to the persistent offline queued reports file."""
+        if getattr(self, "_custom_queue_file", None):
+            return Path(self._custom_queue_file)
         log_dir = get_log_file_path().parent
         return log_dir / "queued_reports.json"
 

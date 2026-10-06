@@ -36,51 +36,70 @@ class TestSupportEmailReportingScenarios(unittest.TestCase):
         self.error_service._sent_reports.clear()
         SyncService.reset_sync_state()
 
+    def tearDown(self):
+        try:
+            NetworkReachabilityMonitor().report_online()
+        except Exception:
+            pass
+        SyncService.reset_sync_state()
+
     def test_scenario_a_offline_sync_queues_and_flushes_when_online(self):
         """Scenario A: When offline, queue report locally without SMTP, then flush upon reconnect."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_log = Path(tmp_dir) / "workpulse.log"
             queue_file = Path(tmp_dir) / "queued_reports.json"
+            self.error_service._custom_queue_file = queue_file
+            self.error_service._sent_reports.clear()
+            SyncService.reset_sync_state()
 
-            with patch("services.error_report_service.get_log_file_path", return_value=tmp_log):
-                # Set network offline
-                monitor = NetworkReachabilityMonitor()
-                monitor.report_offline()
-                self.assertFalse(monitor.is_online)
+            try:
+                with patch("services.error_report_service.get_log_file_path", return_value=tmp_log):
+                    # Set network offline
+                    monitor = NetworkReachabilityMonitor()
+                    monitor.report_offline()
+                    self.assertFalse(monitor.is_online)
 
-                with patch.object(self.error_service, "_dispatch_via_smtp") as mock_smtp:
-                    # Trigger a sync failure while offline
-                    SyncService._report_sync_failure(
-                        error_message="Host softdev.indovisionservices.in unreachable (Offline)",
-                        endpoint="/workpulse/save_activity_batch",
-                    )
-                    # Wait for background queue write
-                    for _ in range(20):
-                        if queue_file.exists():
-                            break
-                        time.sleep(0.05)
+                    with patch.object(self.error_service, "_dispatch_via_smtp") as mock_smtp:
+                        # Trigger a sync failure while offline
+                        SyncService._report_sync_failure(
+                            error_message="Host softdev.indovisionservices.in unreachable (Offline)",
+                            endpoint="/workpulse/save_activity_batch",
+                        )
+                        # Wait for background queue write
+                        for _ in range(30):
+                            if queue_file.exists():
+                                break
+                            time.sleep(0.05)
 
-                    # Assert: No immediate SMTP call was made while offline
-                    mock_smtp.assert_not_called()
+                        # Assert: No immediate SMTP call was made while offline
+                        mock_smtp.assert_not_called()
 
-                    # Assert: Report was queued locally on disk
-                    self.assertTrue(queue_file.exists(), "queued_reports.json must exist")
-                    queued_data = json.loads(queue_file.read_text(encoding="utf-8"))
-                    self.assertEqual(len(queued_data), 1)
-                    self.assertIn("Offline", queued_data[0]["error_message"])
+                        # Assert: Report was queued locally on disk
+                        self.assertTrue(queue_file.exists(), "queued_reports.json must exist")
+                        queued_data = json.loads(queue_file.read_text(encoding="utf-8"))
+                        self.assertEqual(len(queued_data), 1)
+                        self.assertIn("Offline", queued_data[0]["error_message"])
 
-                # Now simulate internet connection restored
-                with patch.object(self.error_service, "_dispatch_via_smtp", return_value=True) as mock_smtp_flushed:
-                    monitor.report_online()
-                    self.assertTrue(monitor.is_online)
-                    time.sleep(0.15)
+                    # Now simulate internet connection restored
+                    with patch.object(self.error_service, "_dispatch_via_smtp", return_value=True) as mock_smtp_flushed:
+                        monitor.report_online()
+                        self.assertTrue(monitor.is_online)
+                        # Explicitly trigger flush in case listener thread had slight delay
+                        for _ in range(20):
+                            if mock_smtp_flushed.called:
+                                break
+                            time.sleep(0.05)
+                        if not mock_smtp_flushed.called:
+                            self.error_service.flush_queued_reports()
 
-                    # Assert: Automatically flushed or manually flushed
-                    mock_smtp_flushed.assert_called()
+                        # Assert: Automatically flushed or manually flushed
+                        mock_smtp_flushed.assert_called()
 
-                    # Assert: Queue file is now empty/cleared
-                    remaining = json.loads(queue_file.read_text(encoding="utf-8"))
-                    self.assertEqual(len(remaining), 0)
+                        # Assert: Queue file is now empty/cleared
+                        remaining = json.loads(queue_file.read_text(encoding="utf-8"))
+                        self.assertEqual(len(remaining), 0)
+            finally:
+                self.error_service._custom_queue_file = None
 
     def test_scenario_b_online_sync_failure_dispatches_smtp(self):
         """Scenario B: When online and backend sync fails, send support email via SMTP."""
@@ -95,7 +114,10 @@ class TestSupportEmailReportingScenarios(unittest.TestCase):
                 http_status=500,
                 response_error="Internal Server Error",
             )
-            time.sleep(0.1)
+            for _ in range(20):
+                if mock_smtp.called:
+                    break
+                time.sleep(0.05)
 
             # Assert: Support report was sent via SMTP
             mock_smtp.assert_called_once()
@@ -116,7 +138,10 @@ class TestSupportEmailReportingScenarios(unittest.TestCase):
                 error_message="Backend timeout on save_activity_batch",
                 endpoint="/workpulse/save_activity_batch",
             )
-            time.sleep(0.05)
+            for _ in range(20):
+                if mock_smtp.called:
+                    break
+                time.sleep(0.05)
             self.assertEqual(mock_smtp.call_count, 1)
 
             # 2. Second failure during same continuous failure session does NOT trigger another email

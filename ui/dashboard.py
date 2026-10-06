@@ -327,23 +327,25 @@ class DashboardPage(QWidget):
         # 1. Today's Time
         # Shows Active Time (HH:MM:SS) and Weekly Timeline button
         # --------------------------------------------------------------
-        today_group = QGroupBox("Today's Time")
+        today_group = QGroupBox("Today's Time", content)
         today_layout = QVBoxLayout(today_group)
         today_layout.setContentsMargins(14, 12, 14, 12)
         today_layout.setSpacing(4)
 
-        active_title = QLabel("Active Time")
+        active_title = QLabel("Active Time", today_group)
         active_title.setObjectName("StatusLabel")
         active_title.setStyleSheet("color: #64748b; font-size: 12px; font-weight: 500;")
         self.active_time_val_label = QLabel(
-            format_hh_mm_ss(self._cached_today_total_seconds)
+            format_hh_mm_ss(self._cached_today_total_seconds),
+            today_group,
         )
         self.active_time_val_label.setObjectName("TimeValueLabel")
         self.active_time_val_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
 
         # Retain today_idle_val_label internally for background workpulse and test compatibility
         self.today_idle_val_label = QLabel(
-            format_hh_mm_ss(self._cached_today_idle)
+            format_hh_mm_ss(self._cached_today_idle),
+            self,
         )
         self.today_idle_val_label.setVisible(False)
 
@@ -353,15 +355,16 @@ class DashboardPage(QWidget):
 
         # Retain hidden widgets for test suite and backward compatibility
         self.today_total_label = QLabel(
-            ActivityService.format_duration(self._cached_today_total_seconds)
+            ActivityService.format_duration(self._cached_today_total_seconds),
+            self,
         )
         self.today_total_label.setVisible(False)
 
-        self.refresh_button = QPushButton("↻ Refresh")
+        self.refresh_button = QPushButton("↻ Refresh", self)
         self.refresh_button.setVisible(False)
         self.refresh_button.clicked.connect(lambda: self.refresh(async_mode=True))
 
-        self.attendance_button = QPushButton("Attendance →")
+        self.attendance_button = QPushButton("Attendance →", today_group)
         self.attendance_button.setObjectName("AttendanceButton")
         self.attendance_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.attendance_button.setToolTip("View monthly attendance records and status")
@@ -385,7 +388,7 @@ class DashboardPage(QWidget):
         # --------------------------------------------------------------
         # 2. Attendance (Compact Modern Header, 2-Column Info & Status Row)
         # --------------------------------------------------------------
-        attendance_group = QGroupBox()
+        attendance_group = QGroupBox(content)
         attendance_group.setObjectName("AttendanceCard")
         attendance_layout = QVBoxLayout(attendance_group)
         attendance_layout.setContentsMargins(12, 10, 12, 10)
@@ -400,13 +403,13 @@ class DashboardPage(QWidget):
         title_row.setSpacing(6)
         title_row.setContentsMargins(0, 0, 0, 0)
 
-        self.attendance_header_title = QLabel("📅  Attendance")
+        self.attendance_header_title = QLabel("📅  Attendance", attendance_group)
         self.attendance_header_title.setObjectName("AttendanceCardTitle")
         self.attendance_header_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #1e293b;")
         title_row.addWidget(self.attendance_header_title)
         title_row.addStretch(1)
 
-        self.attendance_header_subtitle = QLabel("Today's Attendance")
+        self.attendance_header_subtitle = QLabel("Today's Attendance", attendance_group)
         self.attendance_header_subtitle.setObjectName("AttendanceCardSubtitle")
         self.attendance_header_subtitle.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b; margin-top: 1px;")
 
@@ -424,11 +427,11 @@ class DashboardPage(QWidget):
         left_col = QVBoxLayout()
         left_col.setSpacing(1)
         left_col.setContentsMargins(0, 0, 0, 0)
-        start_heading = QLabel("SYSTEM START")
+        start_heading = QLabel("SYSTEM START", attendance_group)
         start_heading.setObjectName("AttendanceFieldHeading")
         start_heading.setStyleSheet("font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;")
 
-        self.attendance_start_val_label = QLabel("🖥 --:-- --")
+        self.attendance_start_val_label = QLabel("🖥 --:-- --", attendance_group)
         self.attendance_start_val_label.setObjectName("AttendanceStartVal")
         self.attendance_start_val_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
         left_col.addWidget(start_heading)
@@ -439,11 +442,11 @@ class DashboardPage(QWidget):
         right_col = QVBoxLayout()
         right_col.setSpacing(1)
         right_col.setContentsMargins(0, 0, 0, 0)
-        punch_heading = QLabel("PUNCH IN")
+        punch_heading = QLabel("PUNCH IN", attendance_group)
         punch_heading.setObjectName("AttendanceFieldHeading")
         punch_heading.setStyleSheet("font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;")
 
-        self.attendance_punch_val_label = QLabel("Not Punched")
+        self.attendance_punch_val_label = QLabel("Not Punched", attendance_group)
         self.attendance_punch_val_label.setObjectName("AttendancePunchVal")
         self.attendance_punch_val_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748b;")
         right_col.addWidget(punch_heading)
@@ -458,12 +461,12 @@ class DashboardPage(QWidget):
         status_row.setSpacing(6)
         status_row.setContentsMargins(0, 0, 0, 0)
 
-        status_heading = QLabel("Attendance Status")
+        status_heading = QLabel("Attendance Status", attendance_group)
         status_heading.setObjectName("AttendanceStatusHeading")
         status_heading.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b;")
         status_row.addWidget(status_heading)
 
-        self.attendance_status_badge = QLabel("● Not Punched")
+        self.attendance_status_badge = QLabel("● Not Punched", attendance_group)
         self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
         self.attendance_status_badge.setStyleSheet(
             "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #cbd5e1;"
@@ -474,10 +477,10 @@ class DashboardPage(QWidget):
         attendance_layout.addLayout(status_row)
 
         # Retain backward-compatible labels for test suite and existing references
-        self.start_time_label = QLabel("Start Time: --:-- --")
+        self.start_time_label = QLabel("Start Time: --:-- --", self)
         self.start_time_label.setObjectName("StatusLabel")
         self.start_time_label.setVisible(False)
-        self.punch_time_label = QLabel("Punch Time: Not Punched")
+        self.punch_time_label = QLabel("Punch Time: Not Punched", self)
         self.punch_time_label.setObjectName("StatusLabel")
         self.punch_time_label.setVisible(False)
 
@@ -492,7 +495,7 @@ class DashboardPage(QWidget):
         # Contains: Network Status (● Online / ● Offline), Idle Time, Version, Records Uploaded,
         # Status, Last Successful Sync, and WorkPulse button
         # --------------------------------------------------------------
-        status_group = QGroupBox("Tracking && Sync Status")
+        status_group = QGroupBox("Tracking && Sync Status", content)
         status_grid = QGridLayout(status_group)
         status_grid.setContentsMargins(14, 12, 14, 12)
         status_grid.setHorizontalSpacing(18)
@@ -502,7 +505,7 @@ class DashboardPage(QWidget):
 
         # Network status indicator (Row 0, Col 0): ● Online or ● Offline
         initial_online = getattr(self, "_is_network_online", True)
-        self.network_status_label = QLabel("● Online" if initial_online else "● Offline")
+        self.network_status_label = QLabel("● Online" if initial_online else "● Offline", status_group)
         self.network_status_label.setObjectName("NetworkStatusLabel")
         if initial_online:
             self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
@@ -510,24 +513,24 @@ class DashboardPage(QWidget):
             self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
 
         # Retain workpulse_status_label for error reporting and backward compatibility
-        self.workpulse_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}")
+        self.workpulse_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}", self)
         self.workpulse_status_label.setObjectName("WorkPulseStatusLabel")
         self.workpulse_status_label.setVisible(False)
 
-        self.idle_time_label = QLabel("Idle Time: 0 seconds")
+        self.idle_time_label = QLabel("Idle Time: 0 seconds", status_group)
         self.idle_time_label.setObjectName("StatusLabel")
 
-        self.unsynced_records_label = QLabel("Records uploading: 0")
+        self.unsynced_records_label = QLabel("Records uploading: 0", self)
         self.unsynced_records_label.setObjectName("StatusLabel")
         self.unsynced_records_label.setVisible(False)  # hidden from UI
 
-        self.version_label = QLabel(f"Version: {get_running_app_version()}")
+        self.version_label = QLabel(f"Version: {get_running_app_version()}", status_group)
         self.version_label.setObjectName("StatusLabel")
 
-        self.records_uploaded_label = QLabel("Records Uploaded: 0")
+        self.records_uploaded_label = QLabel("Records Uploaded: 0", status_group)
         self.records_uploaded_label.setObjectName("StatusLabel")
 
-        self.update_status_label = QLabel("Status: Online")
+        self.update_status_label = QLabel("Status: Online", self)
         self.update_status_label.setObjectName("StatusLabel")
         self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
         self.update_status_label.setVisible(False)  # Hidden to avoid duplicate network status line
@@ -540,17 +543,17 @@ class DashboardPage(QWidget):
             if hasattr(SyncService, "get_last_successful_sync_time")
             else SyncService.last_successful_sync_time
         )
-        self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}")
+        self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}", status_group)
         self.last_sync_label.setObjectName("StatusLabel")
 
-        self.current_app_label = QLabel("Not workpulse")
+        self.current_app_label = QLabel("Not workpulse", self)
         self.current_app_label.setVisible(False)
-        self.current_window_label = QLabel("")
+        self.current_window_label = QLabel("", self)
         self.current_window_label.setVisible(False)
 
         # Single workpulse button on Dashboard: [ Paused ] when running, [ Resume ] when paused
         initial_btn_text = "Paused" if is_initially_active else "Resume"
-        self.workpulse_toggle_button = QPushButton(initial_btn_text)
+        self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
         self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
         self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.workpulse_toggle_button.clicked.connect(self._on_workpulse_toggle_clicked)
@@ -584,22 +587,24 @@ class DashboardPage(QWidget):
         # ==============================================================
         # 2. Below Top Row: Assigned Tasks (Full Width)
         # ==============================================================
-        tasks_group = QGroupBox("Assigned Tasks")
+        tasks_group = QGroupBox("Assigned Tasks", content)
         tasks_layout = QVBoxLayout(tasks_group)
         tasks_layout.setContentsMargins(12, 14, 12, 12)
         tasks_layout.setSpacing(0)
 
-        self.task_table = AssignedTasksTable()
+        self.task_table = AssignedTasksTable(parent=self)
         tasks_layout.addWidget(self.task_table)
 
         root.addWidget(tasks_group)
         root.addStretch(1)
 
-        # Retain table instances (hidden) for seamless data/test compatibility without rendering on Dashboard
-        self.usage_table = ApplicationUsageTable()
+        # Retain table instances (hidden & parented) for seamless data/test compatibility without rendering on Dashboard
+        self.usage_table = ApplicationUsageTable(parent=self)
         self.usage_table.setVisible(False)
-        self.timeline_table = ActivityTimelineTable()
+        self.usage_table.hide()
+        self.timeline_table = ActivityTimelineTable(parent=self)
         self.timeline_table.setVisible(False)
+        self.timeline_table.hide()
 
     def _apply_toggle_button_style(self, is_active: bool) -> None:
         """Apply dynamic color and styling to single Paused/Resume workpulse button."""

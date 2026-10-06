@@ -249,12 +249,12 @@ class WeeklyTimelinePage(QWidget):
         page_layout.setSpacing(0)
 
         # Scroll area for clean display across all desktop screen sizes
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        content = QWidget()
+        content = QWidget(scroll)
         root = QVBoxLayout(content)
         root.setContentsMargins(14, 12, 14, 16)
         root.setSpacing(12)
@@ -267,7 +267,7 @@ class WeeklyTimelinePage(QWidget):
         header_bar = QHBoxLayout()
         header_bar.setSpacing(12)
 
-        self.back_button = QPushButton("← Back to Dashboard")
+        self.back_button = QPushButton("← Back to Dashboard", content)
         self.back_button.setObjectName("SecondaryButton")
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setMinimumHeight(34)
@@ -275,11 +275,11 @@ class WeeklyTimelinePage(QWidget):
         header_bar.addWidget(self.back_button)
 
         header_title_layout = QVBoxLayout()
-        self.title_label = QLabel("Weekly Timeline")
+        self.title_label = QLabel("Weekly Timeline", content)
         self.title_label.setObjectName("WeeklyTimelineTitle")
         self.title_label.setStyleSheet("font-size: 19px; font-weight: 700; color: #1a1a1a;")
 
-        self.week_range_label = QLabel("Current Week (Monday – Sunday)")
+        self.week_range_label = QLabel("Current Week (Monday – Sunday)", content)
         self.week_range_label.setStyleSheet("font-size: 12px; color: #5f6368;")
 
         header_title_layout.addWidget(self.title_label)
@@ -288,7 +288,7 @@ class WeeklyTimelinePage(QWidget):
 
         header_bar.addStretch(1)
 
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton("Refresh", content)
         self.refresh_button.setObjectName("SecondaryButton")
         self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_button.setMinimumHeight(34)
@@ -304,30 +304,30 @@ class WeeklyTimelinePage(QWidget):
         stats_row.setSpacing(10)
 
         # Total Week Time Card
-        total_card = QGroupBox("Total Week Active Time")
+        total_card = QGroupBox("Total Week Active Time", content)
         total_layout = QVBoxLayout(total_card)
         total_layout.setContentsMargins(12, 8, 12, 10)
-        self.total_week_label = QLabel("0h 0m")
+        self.total_week_label = QLabel("0h 0m", total_card)
         self.total_week_label.setObjectName("WeeklyStatBig")
         self.total_week_label.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a73e8;")
         total_layout.addWidget(self.total_week_label)
         stats_row.addWidget(total_card)
 
         # Daily Average Card
-        avg_card = QGroupBox("Daily Average")
+        avg_card = QGroupBox("Daily Average", content)
         avg_layout = QVBoxLayout(avg_card)
         avg_layout.setContentsMargins(12, 8, 12, 10)
-        self.daily_avg_label = QLabel("0h 0m")
+        self.daily_avg_label = QLabel("0h 0m", avg_card)
         self.daily_avg_label.setObjectName("WeeklyStatBig")
         self.daily_avg_label.setStyleSheet("font-size: 22px; font-weight: 700; color: #00a0c6;")
         avg_layout.addWidget(self.daily_avg_label)
         stats_row.addWidget(avg_card)
 
         # Active Days Card
-        active_days_card = QGroupBox("Active Days")
+        active_days_card = QGroupBox("Active Days", content)
         active_days_layout = QVBoxLayout(active_days_card)
         active_days_layout.setContentsMargins(12, 8, 12, 10)
-        self.active_days_label = QLabel("0 / 7 Days")
+        self.active_days_label = QLabel("0 / 7 Days", active_days_card)
         self.active_days_label.setObjectName("WeeklyStatBig")
         self.active_days_label.setStyleSheet("font-size: 22px; font-weight: 700; color: #34a853;")
         active_days_layout.addWidget(self.active_days_label)
@@ -338,11 +338,11 @@ class WeeklyTimelinePage(QWidget):
         # ==============================================================
         # Weekly Bar Chart Card
         # ==============================================================
-        chart_group = QGroupBox("Weekly Activity Overview (Monday – Sunday)")
+        chart_group = QGroupBox("Weekly Activity Overview (Monday – Sunday)", content)
         chart_layout = QVBoxLayout(chart_group)
         chart_layout.setContentsMargins(10, 10, 10, 10)
 
-        self.chart = WeeklyBarChart()
+        self.chart = WeeklyBarChart(chart_group)
         chart_layout.addWidget(self.chart)
 
         root.addWidget(chart_group)
@@ -350,7 +350,7 @@ class WeeklyTimelinePage(QWidget):
         # ==============================================================
         # Day-by-Day Breakdown
         # ==============================================================
-        breakdown_group = QGroupBox("Daily Active Hours Breakdown")
+        breakdown_group = QGroupBox("Daily Active Hours Breakdown", content)
         self.breakdown_layout = QVBoxLayout(breakdown_group)
         self.breakdown_layout.setContentsMargins(12, 12, 12, 12)
         self.breakdown_layout.setSpacing(8)
@@ -422,7 +422,7 @@ class WeeklyTimelinePage(QWidget):
         # Re-populate day list rows in requested format:
         # "Example: Monday — 01 Sep — 7h 25m"
         for d in week_data:
-            row_widget = QFrame()
+            row_widget = QFrame(self)
             row_widget.setObjectName("WeeklyDayRow")
             is_today = d.get("is_today", False)
             sec = d.get("total_seconds", 0)

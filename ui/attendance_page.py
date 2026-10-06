@@ -1,7 +1,7 @@
 """Attendance Page UI for iHRMS Monitor.
 
 Displays a monthly calendar-based attendance view, summary statistics cards,
-status pill badges, previous/next month navigation, and Leave Balance modal integration.
+status pill badges, previous month / today navigation, and Leave Balance modal integration.
 """
 
 from __future__ import annotations
@@ -83,13 +83,28 @@ class CalendarDayCard(QFrame):
         day_num = self._day_data.get("day_num", 0)
         date_str = self._day_data.get("date", "")
         day_name = self._day_data.get("day_name", "")
-        status_label = self._day_data.get("status_label") or self._day_data.get("status_code") or "—"
+        status_label = (self._day_data.get("status_label") or "").strip()
         raw_code = str(self._day_data.get("status_code", "")).strip().upper()
-        label_upper = status_label.strip().upper()
+        label_upper = status_label.upper()
         details = self._day_data.get("details")
 
+        has_status = bool(
+            status_label
+            and status_label not in ("—", "-", "None", "null")
+            and raw_code not in ("—", "-", "NONE", "NULL")
+        )
+
         # Determine semantic status category & full-card color theme
-        if label_upper == "PRESENT" or raw_code in ("P", "PRESENT"):
+        if not has_status:
+            card_bg = "#FFFFFF"      # Clean neutral white card for unrecorded days
+            card_border = "#E2E8F0" if not is_today else "#3B82F6"
+            card_hover = "#F8FAFC"
+            badge_bg = "transparent"
+            badge_border = "transparent"
+            dow_color = "#64748B" if day_name not in ("Sat", "Sun") else "#2563EB"
+            detail_color = "#0F172A"
+            today_badge_bg = "#2563EB"
+        elif label_upper == "PRESENT" or raw_code in ("P", "PRESENT"):
             card_bg = "#F0FDF4"      # Full light green card
             card_border = "#86EFAC" if not is_today else "#16A34A"
             card_hover = "#DCFCE7"
@@ -99,14 +114,14 @@ class CalendarDayCard(QFrame):
             detail_color = "#0F172A"
             today_badge_bg = "#16A34A"
         elif "MISSED" in label_upper or "MISPUNCH" in label_upper or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH"):
-            card_bg = "#F0FDF4"      # Full light green card
-            card_border = "#86EFAC" if not is_today else "#16A34A"
-            card_hover = "#DCFCE7"
-            badge_bg = "#DCFCE7"
-            badge_border = "#86EFAC"
-            dow_color = "#166534"
+            card_bg = "#FEF2F2"      # Full light red/coral card for missed punch
+            card_border = "#FECACA" if not is_today else "#DC2626"
+            card_hover = "#FEE2E2"
+            badge_bg = "#FEE2E2"
+            badge_border = "#F87171"
+            dow_color = "#991B1B"
             detail_color = "#0F172A"
-            today_badge_bg = "#16A34A"
+            today_badge_bg = "#DC2626"
         elif label_upper == "ABSENT" or raw_code in ("A", "ABSENT"):
             card_bg = "#FEF2F2"      # Full light red card
             card_border = "#FECACA" if not is_today else "#DC2626"
@@ -171,7 +186,7 @@ class CalendarDayCard(QFrame):
             detail_color = "#0F172A"
             today_badge_bg = "#B45309"
         else:
-            card_bg = "#FFFFFF"      # Neutral white card for future / unrecorded
+            card_bg = "#FFFFFF"      # Neutral white card
             card_border = "#E2E8F0" if not is_today else "#3B82F6"
             card_hover = "#F8FAFC"
             badge_bg = "#F1F5F9"
@@ -230,23 +245,28 @@ class CalendarDayCard(QFrame):
         layout.addLayout(top_row)
 
         # --------------------------------------------------------------
-        # Center: Status Pill Badge (Dark text and dot on light badge)
+        # Center: Status Pill Badge (Empty for unrecorded days)
         # --------------------------------------------------------------
         status_container = QHBoxLayout()
         status_container.setContentsMargins(0, 2, 0, 2)
         status_container.setSpacing(0)
 
-        badge_text = f"● {status_label}" if status_label != "—" else "—"
-        self.status_badge = QLabel(badge_text)
+        self.status_badge = QLabel("")
         self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_badge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.status_badge.setMinimumHeight(24)
 
-        badge_css = (
-            f"QLabel {{ background-color: {badge_bg}; color: #000000; font-size: 11px; font-weight: 700; "
-            f"border-radius: 5px; padding: 2px 4px; border: 1px solid {badge_border}; }}"
-        )
-        self.status_badge.setStyleSheet(badge_css)
+        if has_status:
+            self.status_badge.setText(f"● {status_label}")
+            badge_css = (
+                f"QLabel {{ background-color: {badge_bg}; color: #000000; font-size: 11px; font-weight: 700; "
+                f"border-radius: 5px; padding: 2px 4px; border: 1px solid {badge_border}; }}"
+            )
+            self.status_badge.setStyleSheet(badge_css)
+            self.status_badge.setVisible(True)
+        else:
+            self.status_badge.setVisible(False)
+
         status_container.addWidget(self.status_badge)
         layout.addLayout(status_container)
 
@@ -265,7 +285,9 @@ class CalendarDayCard(QFrame):
         layout.addStretch(1)
 
         # Tooltip
-        tooltip_lines = [f"Date: {date_str} ({day_name})", f"Status: {status_label}"]
+        tooltip_lines = [f"Date: {date_str} ({day_name})"]
+        if has_status:
+            tooltip_lines.append(f"Status: {status_label}")
         if details:
             tooltip_lines.append(f"Details: {details}")
         self.setToolTip("\n".join(tooltip_lines))
@@ -478,7 +500,7 @@ class AttendancePage(QWidget):
         )
         nav_toolbar.addWidget(self.year_combo)
 
-        # Populate year and month combos dynamically (only past and current)
+        # Populate year and month combos dynamically
         self._populate_year_combo()
         self._populate_month_combo()
 
@@ -529,42 +551,36 @@ class AttendancePage(QWidget):
         self.refresh()
 
     def _populate_year_combo(self) -> None:
-        """Populate year selector with past years and current year only (no future years)."""
+        """Populate year selector with past years up to current year."""
         now = datetime.now()
         current_year = now.year
         self.year_combo.blockSignals(True)
         self.year_combo.clear()
-        for yr in range(current_year - 4, current_year + 1):
+        for yr in range(current_year - 10, current_year + 1):
             self.year_combo.addItem(str(yr))
         self.year_combo.setCurrentText(str(current_year))
         self.year_combo.blockSignals(False)
 
     def _populate_month_combo(self, target_year: int | None = None, desired_month: str | None = None) -> None:
-        """Populate month selector based on selected year:
-        - Current year: only months up to current month (no future months).
-        - Past year: all 12 months.
-        - Future year: none.
-        """
+        """Populate month selector with available months, preventing future months for the current year."""
         now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+
         if target_year is None:
             try:
                 target_year = int(self.year_combo.currentText())
             except ValueError:
-                target_year = now.year
+                target_year = current_year
 
-        current_selection = desired_month or self.month_combo.currentText()
-        if not current_selection and 1 <= now.month <= len(MONTH_NAMES):
-            current_selection = MONTH_NAMES[now.month - 1]
-
-        if target_year > now.year:
-            available_months: list[str] = []
-        elif target_year == now.year:
-            available_months = MONTH_NAMES[:now.month]
+        if target_year >= current_year:
+            available_months = list(MONTH_NAMES[:current_month])
         else:
             available_months = list(MONTH_NAMES)
 
-        if desired_month and desired_month in MONTH_NAMES and desired_month not in available_months:
-            available_months.append(desired_month)
+        current_selection = desired_month or self.month_combo.currentText()
+        if not current_selection and 1 <= current_month <= len(available_months):
+            current_selection = available_months[current_month - 1]
 
         self.month_combo.blockSignals(True)
         self.month_combo.clear()
@@ -574,15 +590,23 @@ class AttendancePage(QWidget):
         if current_selection in available_months:
             self.month_combo.setCurrentText(current_selection)
         elif available_months:
-            self.month_combo.setCurrentIndex(len(available_months) - 1)
+            self.month_combo.setCurrentText(available_months[-1])
         self.month_combo.blockSignals(False)
 
     def _on_year_changed(self) -> None:
         """Handle year selection change and update available months."""
+        now = datetime.now()
         try:
             target_year = int(self.year_combo.currentText())
         except ValueError:
-            target_year = datetime.now().year
+            target_year = now.year
+
+        if target_year > now.year:
+            target_year = now.year
+            self.year_combo.blockSignals(True)
+            self.year_combo.setCurrentText(str(now.year))
+            self.year_combo.blockSignals(False)
+
         self._populate_month_combo(target_year=target_year)
         self._on_month_year_changed()
 
@@ -616,29 +640,6 @@ class AttendancePage(QWidget):
             new_m_name = MONTH_NAMES[sel_month_num - 2]
             self.month_combo.setCurrentText(new_m_name)
 
-    def _on_next_month(self) -> None:
-        """Navigate to next month."""
-        sel_month_name = self.month_combo.currentText()
-        sel_month_num = MONTH_NAMES.index(sel_month_name) + 1 if sel_month_name in MONTH_NAMES else 1
-        try:
-            cur_y = int(self.year_combo.currentText())
-        except ValueError:
-            cur_y = datetime.now().year
-
-        if sel_month_num == 12:
-            new_m_name = MONTH_NAMES[0]
-            new_y = cur_y + 1
-            if self.year_combo.findText(str(new_y)) == -1:
-                self.year_combo.addItem(str(new_y))
-            self.year_combo.blockSignals(True)
-            self.year_combo.setCurrentText(str(new_y))
-            self.year_combo.blockSignals(False)
-            self._populate_month_combo(target_year=new_y, desired_month=new_m_name)
-            self._on_month_year_changed()
-        else:
-            new_m_name = MONTH_NAMES[sel_month_num]
-            self.month_combo.setCurrentText(new_m_name)
-
     def _on_today(self) -> None:
         """Jump to current month and year."""
         now = datetime.now()
@@ -656,8 +657,36 @@ class AttendancePage(QWidget):
             import sys
             async_mode = not any("test" in arg.lower() or "unittest" in arg.lower() for arg in sys.argv)
 
-        selected_month = self.month_combo.currentText()
-        selected_year = self.year_combo.currentText()
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+
+        # Validate and clamp selected year/month to prevent future navigation
+        try:
+            sel_y = int(self.year_combo.currentText())
+        except ValueError:
+            sel_y = current_year
+
+        sel_m_name = self.month_combo.currentText()
+        sel_m_num = MONTH_NAMES.index(sel_m_name) + 1 if sel_m_name in MONTH_NAMES else current_month
+
+        is_clamped = False
+        if sel_y > current_year:
+            sel_y = current_year
+            sel_m_num = current_month
+            is_clamped = True
+        elif sel_y == current_year and sel_m_num > current_month:
+            sel_m_num = current_month
+            is_clamped = True
+
+        if is_clamped:
+            self.year_combo.blockSignals(True)
+            self.year_combo.setCurrentText(str(sel_y))
+            self.year_combo.blockSignals(False)
+            self._populate_month_combo(target_year=sel_y, desired_month=MONTH_NAMES[sel_m_num - 1])
+
+        selected_month = self.month_combo.currentText() or MONTH_NAMES[sel_m_num - 1]
+        selected_year = self.year_combo.currentText() or str(sel_y)
         self.month_year_display.setText(f"{selected_month} {selected_year}")
 
         if not async_mode:
@@ -808,7 +837,7 @@ class AttendancePage(QWidget):
 
         # 1. Leading Padding Cells (Preceding Days)
         for pad_col in range(first_weekday):
-            pad_card = CalendarDayCard(is_padding=True)
+            pad_card = CalendarDayCard(is_padding=True, parent=self)
             self.calendar_grid.addWidget(pad_card, 0, pad_col)
 
         # 2. Month Days (1..num_days_in_month)
@@ -817,18 +846,40 @@ class AttendancePage(QWidget):
             row_idx = slot_idx // 7
             col_idx = slot_idx % 7
 
-            day_info = days_map.get(day_idx, {
-                "day_num": day_idx,
-                "date": f"{year_num}-{month_num:02d}-{day_idx:02d}",
-                "day_name": WEEKDAY_NAMES[col_idx],
-                "status_code": "—",
-                "status_label": "—",
-                "color": "#94A3B8",
-                "bg_color": "#F1F5F9",
-                "is_today": False,
-            })
+            if day_idx in days_map:
+                day_info = days_map[day_idx]
+            else:
+                try:
+                    cur_dt = datetime(year_num, month_num, day_idx)
+                    now_dt = datetime.now()
+                    is_today = (cur_dt.date() == now_dt.date())
+                    day_info = {
+                        "day_num": day_idx,
+                        "date": f"{year_num}-{month_num:02d}-{day_idx:02d}",
+                        "day_name": WEEKDAY_NAMES[col_idx],
+                        "status_code": "",
+                        "status_label": "",
+                        "status_badge": "",
+                        "color": "#64748B",
+                        "bg_color": "#FFFFFF",
+                        "details": None,
+                        "is_today": is_today,
+                    }
+                except Exception:
+                    day_info = {
+                        "day_num": day_idx,
+                        "date": f"{year_num}-{month_num:02d}-{day_idx:02d}",
+                        "day_name": WEEKDAY_NAMES[col_idx],
+                        "status_code": "",
+                        "status_label": "",
+                        "status_badge": "",
+                        "color": "#64748B",
+                        "bg_color": "#FFFFFF",
+                        "details": None,
+                        "is_today": False,
+                    }
 
-            day_card = CalendarDayCard(day_data=day_info)
+            day_card = CalendarDayCard(day_data=day_info, parent=self)
             day_card.clicked.connect(self._show_day_detail)
             self.calendar_grid.addWidget(day_card, row_idx, col_idx)
             self._day_cards.append(day_card)
@@ -840,7 +891,7 @@ class AttendancePage(QWidget):
             slot_idx = total_slots + pad_idx
             row_idx = slot_idx // 7
             col_idx = slot_idx % 7
-            pad_card = CalendarDayCard(is_padding=True)
+            pad_card = CalendarDayCard(is_padding=True, parent=self)
             self.calendar_grid.addWidget(pad_card, row_idx, col_idx)
 
     def _show_day_detail(self, day_info: dict) -> None:
@@ -848,7 +899,8 @@ class AttendancePage(QWidget):
         details = day_info.get("details")
         date_str = day_info.get("date", "")
         day_name = day_info.get("day_name", "")
-        status_label = day_info.get("status_label") or "—"
+        status_label = (day_info.get("status_label") or "").strip()
+        has_status = bool(status_label and status_label not in ("—", "-", "None", "null"))
         status_color = day_info.get("color") or "#475569"
         status_bg = day_info.get("bg_color") or "#F1F5F9"
 
@@ -865,7 +917,8 @@ class AttendancePage(QWidget):
         dlg_layout.addWidget(title_lbl)
 
         # Status badge
-        badge_lbl = QLabel(f" Status:  ● {status_label} ")
+        display_status = f"● {status_label}" if has_status else "No Record Available"
+        badge_lbl = QLabel(f" Status:  {display_status} ")
         badge_lbl.setStyleSheet(
             f"background-color: {status_bg}; color: {status_color}; "
             f"font-size: 13px; font-weight: 700; border-radius: 6px; padding: 6px 12px; border: 1px solid {status_color}33;"

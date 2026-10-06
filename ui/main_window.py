@@ -726,8 +726,10 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         """Build main application interface."""
+        import os
+        logger.debug("MainWindow: Building UI (PID=%s, window=%s)", os.getpid(), self)
 
-        central = QWidget()
+        central = QWidget(self)
 
         root = QVBoxLayout(
             central
@@ -748,7 +750,7 @@ class MainWindow(QMainWindow):
         # HEADER
         # ======================================================
 
-        header = QWidget()
+        header = QWidget(central)
 
         header.setObjectName(
             "HeaderBar"
@@ -774,7 +776,8 @@ class MainWindow(QMainWindow):
         # ------------------------------------------------------
 
         title_label = QLabel(
-            APP_NAME
+            APP_NAME,
+            header,
         )
 
         title_label.setObjectName(
@@ -791,17 +794,17 @@ class MainWindow(QMainWindow):
         session = SessionService().current_user
         display_name = session.display_name if session else "User"
 
-        self.user_label = QLabel(f"Welcome, {display_name}")
+        self.user_label = QLabel(f"Welcome, {display_name}", header)
         self.user_label.setStyleSheet("font-weight: 600; color: #5f6368; margin-right: 10px;")
         header_layout.addWidget(self.user_label)
 
         # WorkPulse status icon next to status badge
-        self.status_icon = QLabel()
+        self.status_icon = QLabel(header)
         self.status_icon.setFixedSize(24, 24)
         self.status_icon.setStyleSheet("margin-right: 4px; background: transparent;")
         header_layout.addWidget(self.status_icon)
 
-        self.status_badge = QLabel("Offline")
+        self.status_badge = QLabel("Offline", header)
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("workpulse", "false")
         self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
@@ -811,7 +814,7 @@ class MainWindow(QMainWindow):
         # ------------------------------------------------------
         # HRMS Portal Button (with Globe Icon)
         # ------------------------------------------------------
-        self.hrms_button = QPushButton(" HRMS")
+        self.hrms_button = QPushButton(" HRMS", header)
         self.hrms_button.setObjectName("SecondaryButton")
         self.hrms_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hrms_button.setToolTip("Open HRMS Web Portal (https://ihrms.indovisionservices.in)")
@@ -828,14 +831,14 @@ class MainWindow(QMainWindow):
         # WorkPulse controls (Internal, hidden from all users)
         # ------------------------------------------------------
 
-        self.start_button = QPushButton("Start WorkPulse")
+        self.start_button = QPushButton("Start WorkPulse", header)
         self.start_button.setObjectName("PrimaryButton")
         self.start_button.clicked.connect(self.start_workpulse)
         self.start_button.setVisible(False)
         self.start_button.hide()
         header_layout.addWidget(self.start_button)
 
-        self.stop_button = QPushButton("Stop WorkPulse")
+        self.stop_button = QPushButton("Stop WorkPulse", header)
         self.stop_button.setObjectName("SecondaryButton")
         self.stop_button.clicked.connect(lambda: self.stop_workpulse(manual=False))
         self.stop_button.setEnabled(False)
@@ -843,7 +846,7 @@ class MainWindow(QMainWindow):
         self.stop_button.hide()
 
 
-        self.update_button = QPushButton("🚀 Update Available")
+        self.update_button = QPushButton("🚀 Update Available", header)
         self.update_button.setObjectName("PrimaryButton")
         self.update_button.setVisible(False)
         self.update_button.setStyleSheet(
@@ -853,33 +856,36 @@ class MainWindow(QMainWindow):
         self.update_button.clicked.connect(self._on_update_button_clicked)
         header_layout.addWidget(self.update_button)
 
-        self.logout_button = QPushButton("Logout")
+        self.logout_button = QPushButton("Logout", header)
         self.logout_button.setObjectName("SecondaryButton")
         self.logout_button.clicked.connect(self.logout)
         header_layout.addWidget(self.logout_button)
 
         root.addWidget(header)
 
-        self.tabs = QTabWidget()
+        self.tabs = QTabWidget(central)
 
         from config.settings import get_running_app_version
         self.dashboard_page = (
             DashboardPage(
-                self._activity_service
+                self._activity_service,
+                parent=self,
             )
         )
         self.dashboard_page.set_version(get_running_app_version())
 
         self.attendance_page = (
             AttendancePage(
-                self._attendance_service if hasattr(self, "_attendance_service") else None
+                self._attendance_service if hasattr(self, "_attendance_service") else None,
+                parent=self,
             )
         )
         self.weekly_page = self.attendance_page
 
         self.settings_page = (
             SettingsPage(
-                self._settings_service
+                self._settings_service,
+                parent=self,
             )
         )
 
@@ -1182,62 +1188,6 @@ class MainWindow(QMainWindow):
         display_name = session.display_name if session else "User"
         if hasattr(self, "user_label") and self.user_label:
             self.user_label.setText(f"Welcome, {display_name}")
-
-    def _update_status_icon(self) -> None:
-        """Update the Shield+Pulse icon based on real-time network reachability."""
-        if not hasattr(self, "status_icon") or not self.status_icon:
-            return
-            
-        from services.session_service import SessionService
-        session = SessionService().current_user
-        if session and not getattr(session, "workpulse_permitted", True):
-            self.status_icon.hide()
-            return
-
-        is_online = getattr(self, "_is_network_online", True)
-            
-        from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
-        from PySide6.QtCore import Qt
-        
-        pixmap = QPixmap(24, 24)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Real-time network reachability: Online = Green, Offline = Red
-        if is_online:
-            color = QColor("#137333")  # Green
-        else:
-            color = QColor("#a50e0e")  # Red
-            
-        # Draw Shield Path
-        path = QPainterPath()
-        path.moveTo(4, 5)
-        path.quadTo(12, 3, 20, 5)
-        path.quadTo(20, 14, 12, 21)
-        path.quadTo(4, 14, 4, 5)
-        
-        painter.setPen(QPen(color, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(path)
-        
-        # Draw Pulse/Activity Line inside the shield
-        pulse_path = QPainterPath()
-        pulse_path.moveTo(7, 12)
-        pulse_path.lineTo(9, 12)
-        pulse_path.lineTo(11, 8)
-        pulse_path.lineTo(13, 16)
-        pulse_path.lineTo(15, 12)
-        pulse_path.lineTo(17, 12)
-        
-        painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        painter.drawPath(pulse_path)
-        
-        painter.end()
-        
-        self.status_icon.setPixmap(pixmap)
-        self.status_icon.show()
 
     def set_network_status(self, is_online: bool) -> None:
         """Update header network connectivity badge and shield icon from centralized monitor."""
