@@ -131,6 +131,11 @@ class ErrorReportService:
         # Offline persistent queue lock
         self._queue_lock = threading.Lock()
 
+        # Last dispatch audit results for test and verification monitoring
+        self._last_api_request: dict[str, Any] | None = None
+        self._last_api_response: dict[str, Any] | None = None
+        self._last_smtp_result: bool | None = None
+
         # Connect to centralized NetworkReachabilityMonitor for automatic queued report flushing
         try:
             from services.network_monitor import NetworkReachabilityMonitor
@@ -982,6 +987,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                     server.send_message(msg)
 
             logger.info("SMTP email sent successfully to %s: %s", to_addr, subject)
+            self._last_smtp_result = True
             return True
 
         except smtplib.SMTPAuthenticationError as auth_err:
@@ -997,6 +1003,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         except Exception as smtp_err:
             logger.warning("SMTP send failed to %s:%d: %s", host, port, smtp_err)
 
+        self._last_smtp_result = False
         return False
 
     # ==============================================================
@@ -1004,7 +1011,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
     # ==============================================================
 
     def _resolve_api_url(self) -> str:
-        """Resolve the Error Reporting API endpoint URL."""
+        """Resolve the Error Reporting API endpoint URL dynamically."""
         env_url = os.environ.get("IHRMS_REPORT_ERROR_API_URL", "").strip()
         if env_url:
             return env_url
@@ -1012,6 +1019,12 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         try:
             from config.api_config import ApiConfig
             cfg = ApiConfig()
+            if not cfg.is_verified:
+                from PySide6.QtCore import QSettings
+                st = QSettings("Indovision", "iHRMSMonitor")
+                company_code = st.value("last_company_code") or st.value("ApiConfig/last_verified_code")
+                if company_code:
+                    cfg.load(company_code=str(company_code).strip())
             if cfg.is_verified:
                 return cfg.report_error_url
         except Exception:
@@ -1030,19 +1043,29 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         try:
             from PySide6.QtCore import QSettings
             st = QSettings("Indovision", "iHRMSMonitor")
-            cached_url = st.value("ApiConfig/last_base_url")
+            cached_url = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
             if cached_url:
                 return f"{str(cached_url).rstrip('/')}/workpulse/report_error"
         except Exception:
             pass
 
-        return "https://info.indovisionservices.in/dev/v15/hrms_api/ci4/api/workpulse/report_error"
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if getattr(cfg, "_base_url", None):
+                return f"{str(cfg._base_url).rstrip('/')}/workpulse/report_error"
+        except Exception:
+            pass
+
+        return "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/workpulse/report_error"
 
     def _resolve_device_token(self, context: dict[str, Any]) -> str:
         """Resolve the enrolled device token dynamically."""
         extra = context.get("extra_context_dict") or {}
         if extra.get("device_token"):
             return str(extra["device_token"]).strip()
+        if context.get("device_token"):
+            return str(context["device_token"]).strip()
 
         try:
             from services.session_service import SessionService
@@ -1065,6 +1088,35 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             pass
 
         try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            enc_tok = store.settings.value(store._KEY_DEVICE_TOKEN)
+            if enc_tok:
+                dec_tok = store._simple_decrypt(enc_tok)
+                if dec_tok:
+                    return str(dec_tok).strip()
+        except Exception:
+            pass
+
+        try:
+            from services.sync_service import SyncService
+            token = SyncService.re_enroll_device_static()
+            if token:
+                return str(token).strip()
+        except Exception:
+            pass
+
+        try:
+            from services.device_registry_service import DeviceRegistryService
+            from utils.device import get_device_identifier
+            dev_id = get_device_identifier()
+            for d in DeviceRegistryService().get_all_devices():
+                if d.get("device_identifier") == dev_id and d.get("device_token"):
+                    return str(d["device_token"]).strip()
+        except Exception:
+            pass
+
+        try:
             from config.api_config import get_device_id
             dev_id = get_device_id()
             if dev_id:
@@ -1072,11 +1124,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         except Exception:
             pass
 
-        try:
-            from utils.device import get_device_identifier
-            return get_device_identifier() or "UNKNOWN_DEVICE"
-        except Exception:
-            return "UNKNOWN_DEVICE"
+        return ""
 
     def _derive_severity(self, error_type: str, extra: dict[str, Any]) -> str:
         """Derive severity level ('critical', 'error', 'warning', 'info')."""
@@ -1290,6 +1338,12 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         if context.get("workpulse_status") and context.get("workpulse_status") != "Unknown":
             payload["workpulse_status"] = context["workpulse_status"]
 
+        # Support extra error_payload dictionary if supplied
+        if isinstance(extra.get("error_payload"), dict):
+            for k, v in extra["error_payload"].items():
+                if k not in payload:
+                    payload[k] = v
+
         # 3. Merge additional non-secret extra keys
         SECRET_KEYS = (
             "device_token", "password", "auth_token", "bearer", "api_key",
@@ -1297,7 +1351,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         )
         for k, v in extra.items():
             k_lower = str(k).lower()
-            if any(sk in k_lower for sk in SECRET_KEYS):
+            if any(sk in k_lower for sk in SECRET_KEYS) or k in ("error_payload",):
                 continue
             if k not in payload:
                 if isinstance(v, str):
@@ -1324,7 +1378,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         error_msg = context.get("error_message", "N/A")
         extra = context.get("extra_context_dict", {})
 
-        severity = "error"
+        severity = extra.get("severity") or self._derive_severity(error_type, extra)
         category = self._derive_category(
             error_type,
             str(context.get("endpoint", "")),
@@ -1336,6 +1390,16 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         platform_name = context.get("device_details", {}).get("platform") or platform.system()
         occurred_at = context.get("timestamp_local") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         error_payload = context.get("error_payload") or self._build_error_payload(context)
+
+        # If device_token is missing or placeholder, attempt dynamic re-enrollment first
+        if not device_token or device_token in ("UNKNOWN_DEVICE", "<saved from enroll_device>"):
+            try:
+                from services.sync_service import SyncService
+                re_tok = SyncService.re_enroll_device_static()
+                if re_tok:
+                    device_token = re_tok
+            except Exception:
+                pass
 
         post_data = {
             "device_token": device_token,
@@ -1356,6 +1420,8 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             url, error_type, severity, category, agent_endpoint, masked_token,
         )
 
+        self._last_api_request = dict(post_data)
+
         try:
             response = requests.post(
                 url,
@@ -1370,10 +1436,44 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             except Exception:
                 res_json = {}
 
-            if status_code in (200, 201):
+            # Handle 401 Unauthorized / Token rejection -> Auto re-enroll and retry once
+            if status_code == 401 or "Device not recognized" in response.text or "revoked" in response.text:
+                logger.warning(
+                    "Error Reporting API rejected device token (HTTP %d). Attempting automatic re-enrollment...",
+                    status_code,
+                )
+                try:
+                    from services.sync_service import SyncService
+                    new_token = SyncService.re_enroll_device_static()
+                    if new_token:
+                        new_masked = f"{new_token[:4]}***{new_token[-4:]}" if len(new_token) >= 8 else "***"
+                        logger.info("Retrying Error Reporting API with refreshed device_token: %s", new_masked)
+                        post_data["device_token"] = new_token
+                        context["device_token"] = new_token
+                        self._last_api_request = dict(post_data)
+                        response = requests.post(
+                            url,
+                            data=post_data,
+                            timeout=10,
+                            headers={"User-Agent": f"Workpulse/{app_version}"},
+                        )
+                        status_code = response.status_code
+                        try:
+                            res_json = response.json()
+                        except Exception:
+                            res_json = {}
+                except Exception as retry_err:
+                    logger.warning("Error Reporting API re-enrollment retry failed: %s", retry_err)
+
+            self._last_api_response = {
+                "status_code": status_code,
+                "body": res_json if res_json else (response.text if hasattr(response, "text") else ""),
+            }
+
+            if status_code in (200, 201) and (not res_json or res_json.get("response") != "Failed"):
                 logger.info(
-                    "Error Reporting API request succeeded: status=%d, error_code=%s",
-                    status_code, error_type,
+                    "Error Reporting API request succeeded: status=%d, error_code=%s, response=%s",
+                    status_code, error_type, res_json.get("message", "Success"),
                 )
                 return True
             else:
@@ -1386,10 +1486,13 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
         except requests.exceptions.Timeout:
             logger.warning("Error Reporting API request timed out for url: %s", url)
+            self._last_api_response = {"status_code": 0, "error": "Request timed out"}
         except requests.exceptions.ConnectionError as conn_err:
             logger.warning("Error Reporting API connection failed for url %s: %s", url, conn_err)
+            self._last_api_response = {"status_code": 0, "error": f"Connection error: {conn_err}"}
         except Exception as api_err:
             logger.warning("Error Reporting API dispatch failed for url %s: %s", url, api_err)
+            self._last_api_response = {"status_code": 0, "error": str(api_err)}
 
         return False
 
@@ -1585,3 +1688,119 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                 "ErrorReportService.report_error encountered an internal issue: %s",
                 err,
             )
+
+    # ==============================================================
+    # TEMPORARY TEST ERROR TRIGGER
+    # ==============================================================
+
+    def trigger_test_error(self, synchronous: bool = True) -> dict[str, Any]:
+        """
+        TEMPORARY TEST ONLY: Trigger a real test error to verify Workpulse error reporting.
+
+        When the test is triggered, sends the SAME test error through both:
+          1. Existing support email
+          2. Existing POST /hrms_api/ci4/api/workpulse/report_error API
+
+        Specifications:
+          error_code: TEST_ERROR
+          error_message: Workpulse error reporting integration test
+          severity: error
+          error_category: test
+
+        Captures real dynamic exception, module, file, function, line, and traceback.
+        """
+        try:
+            # Raise an actual test exception to dynamically capture frame, file, line, function, traceback
+            raise RuntimeError("Workpulse error reporting integration test")
+        except RuntimeError as test_exc:
+            extra = {
+                "severity": "error",
+                "error_category": "test",
+                "endpoint": "/workpulse/report_error",
+                "operation": "test_error_reporting",
+            }
+            context = self._collect_context(
+                error_type="TEST_ERROR",
+                error_message="Workpulse error reporting integration test",
+                exc=test_exc,
+                extra_context=extra,
+            )
+
+            sig = self._get_error_signature("TEST_ERROR", "Workpulse error reporting integration test")
+            if self._is_duplicate(sig):
+                logger.info("TEST_ERROR duplicate suppressed by cooldown window.")
+                return {
+                    "status": "deduplicated",
+                    "duplicate_suppressed": True,
+                    "message": "Duplicate error suppressed by cooldown window. No duplicate email/API report generated.",
+                    "signature": sig,
+                    "test_error": {
+                        "error_code": "TEST_ERROR",
+                        "error_message": "Workpulse error reporting integration test",
+                        "severity": "error",
+                        "error_category": "test",
+                    },
+                    "api_request_payload": self._last_api_request,
+                    "api_response": self._last_api_response,
+                    "email_result": self._last_smtp_result,
+                    "both_working": bool(
+                        self._last_smtp_result
+                        and self._last_api_response
+                        and self._last_api_response.get("status_code") in (200, 201)
+                    ),
+                }
+
+            self._record_sent(sig)
+
+            if synchronous:
+                self._dispatch_report(context)
+            else:
+                def _async_send() -> None:
+                    try:
+                        self._dispatch_report(context)
+                    except Exception as async_err:
+                        logger.debug("Async test error dispatch failed: %s", async_err)
+
+                t = threading.Thread(
+                    target=_async_send, name="TestErrorReportWorker", daemon=True
+                )
+                t.start()
+                t.join(timeout=15.0)
+
+            parsed_payload = {}
+            try:
+                parsed_payload = json.loads(context.get("error_payload", "{}"))
+            except Exception:
+                pass
+
+            return {
+                "status": "dispatched",
+                "duplicate_suppressed": False,
+                "test_error": {
+                    "error_code": context.get("error_type"),
+                    "error_message": context.get("error_message"),
+                    "severity": extra.get("severity"),
+                    "error_category": extra.get("error_category"),
+                    "exception_type": parsed_payload.get("exception_type"),
+                    "module": parsed_payload.get("module"),
+                    "file": parsed_payload.get("file"),
+                    "file_path": parsed_payload.get("file_path"),
+                    "function": parsed_payload.get("function"),
+                    "line": parsed_payload.get("line"),
+                    "message": parsed_payload.get("message"),
+                    "traceback": parsed_payload.get("traceback"),
+                    "endpoint": parsed_payload.get("endpoint"),
+                    "operation": parsed_payload.get("operation"),
+                    "app_version": parsed_payload.get("app_version"),
+                    "platform": parsed_payload.get("platform"),
+                    "occurred_at": parsed_payload.get("occurred_at"),
+                },
+                "api_request_payload": self._last_api_request,
+                "api_response": self._last_api_response,
+                "email_result": self._last_smtp_result,
+                "both_working": bool(
+                    self._last_smtp_result
+                    and self._last_api_response
+                    and self._last_api_response.get("status_code") in (200, 201)
+                ),
+            }

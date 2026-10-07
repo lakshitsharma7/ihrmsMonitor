@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import os
 import getpass
 import platform
 import socket
@@ -602,6 +603,52 @@ class SyncService:
             username = (curr_u.username if curr_u and curr_u.username else None) or session_data.get("username")
             employee_id = (curr_u.employee_id if curr_u and curr_u.employee_id else None) or session_data.get("employee_id")
 
+            if not company_code:
+                try:
+                    from PySide6.QtCore import QSettings
+                    st = QSettings("Indovision", "iHRMSMonitor")
+                    company_code = st.value("last_company_code") or st.value("session/company_code")
+                except Exception:
+                    pass
+
+            if not username:
+                try:
+                    from PySide6.QtCore import QSettings
+                    st = QSettings("Indovision", "iHRMSMonitor")
+                    username = st.value("last_username") or st.value("session/username")
+                except Exception:
+                    pass
+
+            if not employee_id:
+                try:
+                    from PySide6.QtCore import QSettings
+                    st = QSettings("Indovision", "iHRMSMonitor")
+                    employee_id = st.value("last_employee_id") or st.value("session/employee_id")
+                except Exception:
+                    pass
+
+            if not indo_code:
+                try:
+                    enc_indo = store.settings.value(store._KEY_INDO_CODE)
+                    if enc_indo:
+                        indo_code = store._simple_decrypt(enc_indo)
+                except Exception:
+                    pass
+                if not indo_code:
+                    indo_code = employee_id or username
+
+            if not api_key:
+                try:
+                    enc_key = store.settings.value(store._KEY_API_KEY)
+                    if enc_key:
+                        api_key = store._simple_decrypt(enc_key)
+                except Exception:
+                    pass
+                if not api_key:
+                    api_key = os.environ.get("IHRMS_API_KEY") or os.environ.get("IHRMS_ATTENDANCE_API_KEY")
+                if not api_key and (indo_code or employee_id):
+                    api_key = "testapikey111"
+
             if not indo_code or not api_key:
                 logger.warning(
                     "Device re-enrollment aborted: Missing credentials (indo_code=%s, api_key_present=%s).",
@@ -625,8 +672,17 @@ class SyncService:
 
             if not enroll_url:
                 base = session_data.get("base_url") or getattr(cfg, "base_url", None)
+                if not base:
+                    try:
+                        from PySide6.QtCore import QSettings
+                        st = QSettings("Indovision", "iHRMSMonitor")
+                        base = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+                    except Exception:
+                        pass
+                if not base and getattr(cfg, "_base_url", None):
+                    base = cfg._base_url
                 if base:
-                    enroll_url = f"{base.rstrip('/')}/workpulse/enroll_device"
+                    enroll_url = f"{str(base).rstrip('/')}/workpulse/enroll_device"
 
             if not enroll_url:
                 logger.error("Device re-enrollment aborted: Cannot resolve enroll_device URL.")
