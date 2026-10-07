@@ -151,6 +151,56 @@ class ErrorReportService:
         except Exception:
             pass
 
+    @classmethod
+    def is_production_build(cls) -> bool:
+        """
+        Dynamically determine if the application is running in a production packaged build.
+
+        Returns:
+            True: If running as a frozen executable (e.g. PyInstaller packaged Windows EXE)
+                  or if explicitly configured for production via WORKPULSE_ENV/APP_ENV='production'.
+            False: If running directly in a local Python development environment.
+        """
+        env_override = (os.environ.get("WORKPULSE_ENV") or os.environ.get("APP_ENV") or "").strip().lower()
+        if env_override:
+            return env_override in ("prod", "production")
+        return bool(getattr(sys, "frozen", False))
+
+    def should_send_email(self, context: dict[str, Any] | None = None) -> bool:
+        """
+        Determine if support emails should be dispatched via direct SMTP.
+
+        Support emails are sent ONLY in production / packaged builds.
+        In local Python development runs, support emails are suppressed to prevent
+        accidentally polluting the production support mailbox.
+        Can be explicitly enabled for intentional testing by setting context['_force_email']=True
+        or the WORKPULSE_FORCE_EMAIL=1 environment variable.
+        """
+        if context and context.get("_force_email") is True:
+            return True
+        if os.environ.get("WORKPULSE_FORCE_EMAIL", "").strip().lower() in ("1", "true", "yes"):
+            return True
+        return self.is_production_build()
+
+    def should_send_api(self, context: dict[str, Any] | None = None) -> bool:
+        """
+        Determine if error reports should be dispatched to the Workpulse report_error API.
+
+        In production / packaged builds, real errors are dispatched to the API.
+        In local Python development runs, normal errors do NOT trigger the production API
+        to prevent accidental error pollution during development.
+        Intentional test triggers (context['_force_api']=True or context['_is_test']=True)
+        or explicit configuration (WORKPULSE_ENABLE_DEV_API=1, custom IHRMS_REPORT_ERROR_API_URL)
+        allow API dispatch during development.
+        """
+        if context and (context.get("_force_api") is True or context.get("_is_test") is True):
+            return True
+        if os.environ.get("WORKPULSE_ENABLE_DEV_API", "").strip().lower() in ("1", "true", "yes"):
+            return True
+        if os.environ.get("IHRMS_REPORT_ERROR_API_URL"):
+            return True
+        return self.is_production_build()
+
     def _on_connectivity_changed(self, is_online: bool) -> None:
         """When network connectivity returns, automatically flush any offline queued reports."""
         if is_online:
@@ -241,23 +291,32 @@ class ErrorReportService:
             sent_count = 0
 
             for report in reports:
-                # 1. Flush API if not yet sent
+                send_api = self.should_send_api(report)
+                send_email = self.should_send_email(report)
+
+                # 1. Flush API if not yet sent and permitted in current environment
                 if not report.get("_api_sent", False):
-                    try:
-                        report["_api_sent"] = self._dispatch_via_api(report)
-                    except Exception as api_err:
-                        logger.debug("ErrorReportService: Failed to dispatch queued API report: %s", api_err)
-                        report["_api_sent"] = False
+                    if send_api:
+                        try:
+                            report["_api_sent"] = self._dispatch_via_api(report)
+                        except Exception as api_err:
+                            logger.debug("ErrorReportService: Failed to dispatch queued API report: %s", api_err)
+                            report["_api_sent"] = False
+                    else:
+                        report["_api_sent"] = True
 
-                # 2. Flush SMTP if not yet sent
+                # 2. Flush SMTP if not yet sent and permitted in current environment
                 if not report.get("_smtp_sent", False):
-                    try:
-                        report["_smtp_sent"] = self._dispatch_via_smtp(report)
-                    except Exception as smtp_err:
-                        logger.debug("ErrorReportService: Failed to dispatch queued SMTP report: %s", smtp_err)
-                        report["_smtp_sent"] = False
+                    if send_email:
+                        try:
+                            report["_smtp_sent"] = self._dispatch_via_smtp(report)
+                        except Exception as smtp_err:
+                            logger.debug("ErrorReportService: Failed to dispatch queued SMTP report: %s", smtp_err)
+                            report["_smtp_sent"] = False
+                    else:
+                        report["_smtp_sent"] = True
 
-                # If both delivered, count as success and do not keep in queue
+                # If both delivered or resolved, count as success and do not keep in queue
                 if report.get("_api_sent", False) and report.get("_smtp_sent", False):
                     sent_count += 1
                 else:
@@ -1523,11 +1582,36 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         """
         Deliver the error report via BOTH direct SMTP (support email) and Error Reporting API.
 
-        Failure Isolation:
-          - If SMTP fails, Error API is still attempted.
-          - If Error API fails, support email was still attempted/sent.
-          - If either fails, remaining undelivered channel(s) are queued locally in queued_reports.json.
+        Environment Policy:
+          - Production / Packaged Build (Windows EXE):
+              Dispatches BOTH support email and Workpulse Error API.
+          - Developer / Local Python Run:
+              Suppresses support emails completely to prevent pollution of the support mailbox.
+              Suppresses unprompted production API calls for normal developer errors.
+              Writes all error diagnostic details to the local error report log file for debugging.
         """
+        send_email = self.should_send_email(context)
+        send_api = self.should_send_api(context)
+
+        # In developer mode where neither channel is dispatched, record to local log and return cleanly
+        if not send_email and not send_api:
+            logger.info(
+                "ErrorReportService: Error dispatch skipped in developer runtime (support emails and production API are active in packaged builds only): %s",
+                context.get("error_type"),
+            )
+            context["_smtp_sent"] = True
+            context["_smtp_skipped_dev"] = True
+            context["_api_sent"] = True
+            context["_api_skipped_dev"] = True
+            self._last_smtp_result = False
+            self._last_api_response = {
+                "status_code": 0,
+                "status": "skipped_dev",
+                "message": "API dispatch skipped in development runtime",
+            }
+            self._dispatch_to_local_log(context)
+            return
+
         is_online = True
         try:
             from services.network_monitor import NetworkReachabilityMonitor
@@ -1537,15 +1621,21 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
         if not is_online:
             logger.info("ErrorReportService: Network is offline. Queuing support report locally without attempting network transmission.")
-            context["_smtp_sent"] = False
-            context["_api_sent"] = False
-            self._queue_report(context)
+            context["_smtp_sent"] = not send_email
+            context["_api_sent"] = not send_api
+            if send_email or send_api:
+                self._queue_report(context)
             self._dispatch_to_local_log(context)
             return
 
-        # 1. Attempt SMTP Support Email
+        # 1. Attempt SMTP Support Email (Production / explicitly forced test only)
         smtp_sent = False
-        if not context.get("_smtp_sent"):
+        if not send_email:
+            logger.info("ErrorReportService: Support email skipped (development runtime detected: emails enabled in packaged production builds only).")
+            smtp_sent = True
+            context["_smtp_skipped_dev"] = True
+            self._last_smtp_result = False
+        elif not context.get("_smtp_sent"):
             try:
                 smtp_sent = self._dispatch_via_smtp(context)
             except Exception as smtp_err:
@@ -1556,7 +1646,16 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 
         # 2. Attempt Error Reporting API
         api_sent = False
-        if not context.get("_api_sent"):
+        if not send_api:
+            logger.info("ErrorReportService: API dispatch skipped (development runtime detected: production API active in packaged builds).")
+            api_sent = True
+            context["_api_skipped_dev"] = True
+            self._last_api_response = {
+                "status_code": 0,
+                "status": "skipped_dev",
+                "message": "API dispatch skipped in development runtime",
+            }
+        elif not context.get("_api_sent"):
             try:
                 api_sent = self._dispatch_via_api(context)
             except Exception as api_err:
@@ -1565,9 +1664,15 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         else:
             api_sent = True
 
-        # 3. Check delivery status
+        # 3. Always record in local error log for developer debugging
+        self._dispatch_to_local_log(context)
+
+        # 4. Check delivery status & offline queue
         if smtp_sent and api_sent:
-            logger.info("ErrorReportService: Report successfully delivered via both SMTP and API.")
+            if not context.get("_smtp_skipped_dev") and not context.get("_api_skipped_dev"):
+                logger.info("ErrorReportService: Report successfully delivered via both SMTP and API.")
+            else:
+                logger.info("ErrorReportService: Report handled in development mode (logged locally).")
         else:
             logger.info(
                 "ErrorReportService: Partial or failed delivery (SMTP=%s, API=%s); queuing remaining for retry.",
@@ -1576,7 +1681,6 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             context["_smtp_sent"] = smtp_sent
             context["_api_sent"] = api_sent
             self._queue_report(context)
-            self._dispatch_to_local_log(context)
 
     # --------------------------------------------------------------
     # Backward Compatibility Aliases
@@ -1693,13 +1797,21 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
     # TEMPORARY TEST ERROR TRIGGER
     # ==============================================================
 
-    def trigger_test_error(self, synchronous: bool = True) -> dict[str, Any]:
+    def trigger_test_error(
+        self,
+        synchronous: bool = True,
+        force_email: bool = False,
+        force_api: bool = True,
+        clear_cooldown: bool = False,
+    ) -> dict[str, Any]:
         """
         TEMPORARY TEST ONLY: Trigger a real test error to verify Workpulse error reporting.
 
-        When the test is triggered, sends the SAME test error through both:
-          1. Existing support email
-          2. Existing POST /hrms_api/ci4/api/workpulse/report_error API
+        When the test is triggered:
+          - In production / packaged builds (or if force_email=True):
+            Sends the SAME test error through both support email and report_error API.
+          - In developer / local Python run (when force_email=False):
+            Dispatches report_error API and suppresses support email to protect the production inbox.
 
         Specifications:
           error_code: TEST_ERROR
@@ -1725,8 +1837,18 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                 exc=test_exc,
                 extra_context=extra,
             )
+            if force_email:
+                context["_force_email"] = True
+            if force_api:
+                context["_force_api"] = True
+            context["_is_test"] = True
 
             sig = self._get_error_signature("TEST_ERROR", "Workpulse error reporting integration test")
+            if clear_cooldown:
+                self._sent_reports.pop(sig, None)
+
+            is_prod = self.is_production_build()
+
             if self._is_duplicate(sig):
                 logger.info("TEST_ERROR duplicate suppressed by cooldown window.")
                 return {
@@ -1734,6 +1856,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                     "duplicate_suppressed": True,
                     "message": "Duplicate error suppressed by cooldown window. No duplicate email/API report generated.",
                     "signature": sig,
+                    "environment": "production_packaged" if is_prod else "developer_unfrozen",
                     "test_error": {
                         "error_code": "TEST_ERROR",
                         "error_message": "Workpulse error reporting integration test",
@@ -1743,8 +1866,9 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                     "api_request_payload": self._last_api_request,
                     "api_response": self._last_api_response,
                     "email_result": self._last_smtp_result,
+                    "email_status": "skipped_in_dev" if not (is_prod or force_email) else ("sent" if self._last_smtp_result else "failed"),
                     "both_working": bool(
-                        self._last_smtp_result
+                        (self._last_smtp_result if (is_prod or force_email) else True)
                         and self._last_api_response
                         and self._last_api_response.get("status_code") in (200, 201)
                     ),
@@ -1773,9 +1897,26 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
             except Exception:
                 pass
 
+            email_sent = bool(self._last_smtp_result)
+            email_skipped = bool(context.get("_smtp_skipped_dev", False))
+            api_ok = bool(
+                self._last_api_response
+                and self._last_api_response.get("status_code") in (200, 201)
+            )
+
+            # In production (or when force_email is requested): both email and API must be successful.
+            # In developer mode (with force_email=False): API must be successful and email must be safely skipped.
+            if is_prod or force_email:
+                both_working = bool(email_sent and api_ok)
+                email_status = "sent" if email_sent else "failed"
+            else:
+                both_working = bool(api_ok and email_skipped)
+                email_status = "skipped_in_dev"
+
             return {
                 "status": "dispatched",
                 "duplicate_suppressed": False,
+                "environment": "production_packaged" if is_prod else "developer_unfrozen",
                 "test_error": {
                     "error_code": context.get("error_type"),
                     "error_message": context.get("error_message"),
@@ -1798,9 +1939,6 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                 "api_request_payload": self._last_api_request,
                 "api_response": self._last_api_response,
                 "email_result": self._last_smtp_result,
-                "both_working": bool(
-                    self._last_smtp_result
-                    and self._last_api_response
-                    and self._last_api_response.get("status_code") in (200, 201)
-                ),
+                "email_status": email_status,
+                "both_working": both_working,
             }

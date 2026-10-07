@@ -133,6 +133,19 @@ def main() -> int:
         print(f"TEST_SCREENSHOT_RESULT: {path}", flush=True)
         return 0 if path else 1
 
+    if "--trigger-test-error" in sys.argv or "--test-error-reporting" in sys.argv:
+        import json
+        from services.error_report_service import ErrorReportService
+        force_email = "--force-email" in sys.argv
+        clear_cooldown = "--clear-cooldown" in sys.argv
+        res = ErrorReportService().trigger_test_error(
+            synchronous=True,
+            force_email=force_email,
+            clear_cooldown=clear_cooldown,
+        )
+        print(f"TEST_ERROR_RESULT: {json.dumps(res, default=str)}", flush=True)
+        return 0
+
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(APP_STYLESHEET)
 

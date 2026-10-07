@@ -9,6 +9,7 @@ Verifies:
 6. Graceful failure handling without raising exceptions.
 """
 
+import sys
 import time
 import unittest
 from unittest.mock import patch, MagicMock
@@ -308,7 +309,8 @@ class TestErrorReportService(unittest.TestCase):
             error_message="API is down but SMTP should work",
         )
 
-        with patch.object(service, "_dispatch_via_api", return_value=False) as mock_api, \
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(service, "_dispatch_via_api", return_value=False) as mock_api, \
              patch.object(service, "_dispatch_via_smtp", return_value=True) as mock_smtp, \
              patch.object(service, "_queue_report") as mock_queue:
 
@@ -330,7 +332,8 @@ class TestErrorReportService(unittest.TestCase):
             error_message="SMTP is down but API should work",
         )
 
-        with patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
              patch.object(service, "_dispatch_via_smtp", return_value=False) as mock_smtp, \
              patch.object(service, "_queue_report") as mock_queue:
 
@@ -352,7 +355,8 @@ class TestErrorReportService(unittest.TestCase):
             error_message="Both channels succeed",
         )
 
-        with patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
              patch.object(service, "_dispatch_via_smtp", return_value=True) as mock_smtp, \
              patch.object(service, "_queue_report") as mock_queue:
 
@@ -381,6 +385,50 @@ class TestErrorReportService(unittest.TestCase):
             # Wait briefly for thread execution
             time.sleep(0.1)
             self.assertEqual(mock_dispatch.call_count, 1)
+
+    def test_developer_mode_suppresses_email_and_api(self):
+        """Verify normal developer errors in local Python run do NOT dispatch email or API."""
+        service = self.service
+        context = service._collect_context(
+            error_type="DEV_TEST_NORMAL_ERROR",
+            error_message="Normal developer error during coding",
+        )
+
+        with patch.object(sys, "frozen", False, create=True), \
+             patch.dict("os.environ", {}, clear=False):
+            # Ensure not production
+            self.assertFalse(service.is_production_build())
+            self.assertFalse(service.should_send_email(context))
+            self.assertFalse(service.should_send_api(context))
+
+            with patch.object(service, "_dispatch_via_smtp") as mock_smtp, \
+                 patch.object(service, "_dispatch_via_api") as mock_api, \
+                 patch.object(service, "_queue_report") as mock_queue:
+                service._dispatch_report(context)
+                mock_smtp.assert_not_called()
+                mock_api.assert_not_called()
+                mock_queue.assert_not_called()
+
+    def test_production_mode_enables_both(self):
+        """Verify packaged production build (frozen) dispatches both email and API."""
+        service = self.service
+        context = service._collect_context(
+            error_type="PROD_TEST_REAL_ERROR",
+            error_message="Real production error",
+        )
+
+        with patch.object(sys, "frozen", True, create=True):
+            self.assertTrue(service.is_production_build())
+            self.assertTrue(service.should_send_email(context))
+            self.assertTrue(service.should_send_api(context))
+
+            with patch.object(service, "_dispatch_via_smtp", return_value=True) as mock_smtp, \
+                 patch.object(service, "_dispatch_via_api", return_value=True) as mock_api, \
+                 patch.object(service, "_queue_report") as mock_queue:
+                service._dispatch_report(context)
+                mock_smtp.assert_called_once()
+                mock_api.assert_called_once()
+                mock_queue.assert_not_called()
 
 
 if __name__ == "__main__":
