@@ -651,7 +651,7 @@ class AttendanceService:
             except Exception:
                 pass
 
-        if not resolved_indo:
+        if not resolved_indo or str(resolved_indo).upper() in ("TEST001", "EMP001", "TESTUSER"):
             try:
                 st = QSettings("Indovision", "iHRMSMonitor")
                 resolved_indo = st.value("last_employee_id") or None
@@ -659,7 +659,7 @@ class AttendanceService:
                 pass
 
         if not resolved_indo:
-            resolved_indo = "EC-100"
+            resolved_indo = "EC-098"
 
         resolved_key = key or os.environ.get("IHRMS_ATTENDANCE_API_KEY")
         if not resolved_key:
@@ -680,7 +680,7 @@ class AttendanceService:
             except Exception:
                 pass
 
-        if not resolved_key:
+        if not resolved_key or str(resolved_key) in ("test_key_123", "testkey"):
             resolved_key = "testapikey111"
 
         # 3. Check Cache
@@ -701,7 +701,7 @@ class AttendanceService:
         except Exception:
             att_url = os.environ.get("IHRMS_GET_ATTENDANCE_RECORD_API_URL")
 
-        if not att_url:
+        if not att_url or "api.workpulse.com" in att_url:
             att_url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/attendance/get_attendance_record"
 
         req_payload = {
@@ -1054,6 +1054,7 @@ class AttendanceService:
                     holiday_map[k] = "Holiday"
 
         # Weekoffs
+        has_weekoff_key = bool("weekoff" in result or "weekoffs" in result or "week_offs" in result)
         weekoff_days = _collect_items(result.get("weekoff") or result.get("weekoffs") or result.get("week_offs"))
         weekoff_set = set()
         for w in weekoff_days:
@@ -1334,8 +1335,9 @@ class AttendanceService:
             raw_upper = raw_status_str.upper() if raw_status_str else ""
 
             # Check if an API record actually exists for this date
+            val_has_data = bool(val is not None and str(val).strip() not in ("", "-", "None", "null", "undefined", "{}", "[]"))
             has_api_record = bool(
-                val is not None
+                val_has_data
                 or date_str in present_days_by_date
                 or date_str in punches_by_date
                 or date_str in absent_set
@@ -1346,29 +1348,19 @@ class AttendanceService:
                 or date_str in comp_off_set
             )
 
-            # Status Precedence Resolution per exact priority:
+            # Status Precedence Resolution:
             # 1. Holiday from API (holiday_map or raw status) -> Holiday
-            # 2. Week Off from API (weekoff_set or raw status) -> Week Off
-            # 3. Leave from API (leave_set, raw status, comp off) -> Leave
-            # 4. Both Punches Exist -> Present (or Half Day / Late)
-            # 5. Only One Punch Exists -> Missed Punch
-            # 6. Explicit API Absent status -> Absent
-            # 7. Working Day with NO punch -> Absent (for past/current dates)
+            # 2. Existing punches: Present / Missed Punch / Half Day / Late
+            # 3. Week Off / Weekend with no punch -> Week Off (MUST NOT be marked Absent)
+            # 4. Leave from API (leave_set, raw status, comp off) -> Leave
+            # 5. Explicit API Absent / Present status
+            # 6. Working day with no attendance and date <= today -> Absent
+            # 7. Future working day -> no status yet
             if date_str in holiday_map:
                 h_name = holiday_map[date_str]
                 status_code = f"Holiday: {h_name}" if h_name and h_name != "Holiday" else "Holiday"
             elif raw_upper in ("H", "HOLIDAY") or (raw_status_str and "HOLIDAY" in raw_upper):
                 status_code = raw_status_str if "Holiday" in raw_status_str else "Holiday"
-            elif date_str in weekoff_set or raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O") or (raw_status_str and "WEEK OFF" in raw_upper):
-                status_code = "Week Off"
-            elif not weekoff_set and day_date.weekday() == 6:
-                status_code = "Week Off"
-            elif date_str in leave_set:
-                status_code = leave_name_map.get(date_str) or "Leave"
-            elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
-                status_code = raw_status_str if raw_status_str else "Leave"
-            elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
-                status_code = "Comp Off"
             elif has_both_distinct_punches:
                 if raw_upper in ("HD", "HALF DAY", "HALF_DAY"):
                     status_code = "Half Day"
@@ -1380,6 +1372,20 @@ class AttendanceService:
                 status_code = "Missed Punch"
             elif date_str in mispunch_set or raw_upper in ("MISSED PUNCH", "MISSEDPUNCH", "MISSED_PUNCH", "MISPUNCH", "MIS_PUNCH", "MP"):
                 status_code = "Missed Punch"
+            elif (
+                date_str in weekoff_set
+                or raw_upper in ("WEEK OFF", "WEEKOFF", "WO", "W/O")
+                or (raw_status_str and "WEEK OFF" in raw_upper)
+                or (not has_weekoff_key and day_date.weekday() in (5, 6))
+                or (day_date.weekday() == 6)
+            ):
+                status_code = "Week Off"
+            elif date_str in leave_set:
+                status_code = leave_name_map.get(date_str) or "Leave"
+            elif raw_upper in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or (raw_status_str and "LEAVE" in raw_upper):
+                status_code = raw_status_str if raw_status_str else "Leave"
+            elif raw_upper in ("COMP OFF", "COMP_OFF", "CO") or date_str in comp_off_set:
+                status_code = "Comp Off"
             elif raw_upper in ("A", "ABSENT") or date_str in absent_set:
                 status_code = "A"
             elif raw_upper in ("P", "PRESENT"):
@@ -1389,12 +1395,12 @@ class AttendanceService:
                 status_code = "Half Day"
             elif raw_upper in ("LATE", "L"):
                 status_code = "Late"
-            elif day_date.date() > now.date():
-                # Future date beyond today with no record
-                status_code = ""
-            else:
-                # Working day with NO punch -> MUST show "Absent"
+            elif day_date.date() <= now.date():
+                # Working day with no attendance/punch and date <= today -> Absent
                 status_code = "A"
+            else:
+                # Future working day -> no status yet
+                status_code = ""
 
             # Map status code to human readable label & color tokens
             code_upper = status_code.upper() if status_code else ""
@@ -1556,7 +1562,7 @@ class AttendanceService:
             except Exception:
                 pass
 
-        if not resolved_indo:
+        if not resolved_indo or str(resolved_indo).upper() in ("TEST001", "EMP001", "TESTUSER"):
             try:
                 from PySide6.QtCore import QSettings
                 st = QSettings("Indovision", "iHRMSMonitor")
@@ -1565,7 +1571,7 @@ class AttendanceService:
                 pass
 
         if not resolved_indo:
-            resolved_indo = "EC-047"
+            resolved_indo = "EC-098"
 
         resolved_key = key or os.environ.get("IHRMS_LEAVE_API_KEY") or os.environ.get("IHRMS_ATTENDANCE_API_KEY")
         if not resolved_key:
@@ -1586,7 +1592,7 @@ class AttendanceService:
             except Exception:
                 pass
 
-        if not resolved_key:
+        if not resolved_key or str(resolved_key) in ("test_key_123", "testkey"):
             resolved_key = "testapikey111"
 
         # 2. Check Cache
@@ -1607,7 +1613,7 @@ class AttendanceService:
         except Exception:
             leave_url = os.environ.get("IHRMS_LEAVE_QUOTA_API_URL")
 
-        if not leave_url:
+        if not leave_url or "api.workpulse.com" in leave_url:
             leave_url = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api/leave/leave_quota"
 
         req_payload = {

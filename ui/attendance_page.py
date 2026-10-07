@@ -75,7 +75,7 @@ class CalendarDayCard(QFrame):
                 }
                 """
             )
-            lbl = QLabel("")
+            lbl = QLabel("", self)
             layout.addWidget(lbl)
             return
 
@@ -219,14 +219,14 @@ class CalendarDayCard(QFrame):
         top_row.setSpacing(4)
 
         day_num_str = f"{day_num:02d}" if day_num > 0 else "—"
-        self.num_label = QLabel(day_num_str)
+        self.num_label = QLabel(day_num_str, self)
         self.num_label.setStyleSheet(
             "font-size: 13px; font-weight: 700; color: #0F172A; border: none; background: transparent;"
         )
         top_row.addWidget(self.num_label)
 
         if day_name:
-            dow_label = QLabel(day_name)
+            dow_label = QLabel(day_name, self)
             dow_label.setStyleSheet(
                 f"font-size: 11px; font-weight: 600; color: {dow_color}; border: none; background: transparent;"
             )
@@ -235,7 +235,7 @@ class CalendarDayCard(QFrame):
         top_row.addStretch(1)
 
         if is_today:
-            today_badge = QLabel("Today")
+            today_badge = QLabel("Today", self)
             today_badge.setStyleSheet(
                 f"background-color: {today_badge_bg}; color: white; font-size: 9px; font-weight: 700; "
                 "border-radius: 4px; padding: 1px 4px; border: none;"
@@ -251,7 +251,7 @@ class CalendarDayCard(QFrame):
         status_container.setContentsMargins(0, 2, 0, 2)
         status_container.setSpacing(0)
 
-        self.status_badge = QLabel("")
+        self.status_badge = QLabel("", self)
         self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_badge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.status_badge.setMinimumHeight(24)
@@ -274,7 +274,7 @@ class CalendarDayCard(QFrame):
         # Bottom: Secondary Details (Punch In/Out etc.)
         # --------------------------------------------------------------
         if details:
-            detail_label = QLabel(str(details))
+            detail_label = QLabel(str(details), self)
             detail_label.setStyleSheet(
                 f"color: {detail_color}; font-size: 9px; font-weight: 600; border: none; background: transparent;"
             )
@@ -340,7 +340,7 @@ class AttendancePage(QWidget):
         header_bar = QHBoxLayout()
         header_bar.setSpacing(12)
 
-        self.back_button = QPushButton("← Back to Dashboard")
+        self.back_button = QPushButton("← Back to Dashboard", self)
         self.back_button.setObjectName("SecondaryButton")
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setMinimumHeight(34)
@@ -349,11 +349,11 @@ class AttendancePage(QWidget):
 
         header_title_layout = QVBoxLayout()
         header_title_layout.setSpacing(2)
-        self.title_label = QLabel("Attendance Records")
+        self.title_label = QLabel("Attendance Records", self)
         self.title_label.setObjectName("AttendanceTitle")
         self.title_label.setStyleSheet("font-size: 19px; font-weight: 700; color: #0F172A;")
 
-        self.subtitle_label = QLabel("Monthly Attendance Calendar & Status Breakdown")
+        self.subtitle_label = QLabel("Monthly Attendance Calendar & Status Breakdown", self)
         self.subtitle_label.setStyleSheet("font-size: 12px; color: #64748B;")
 
         header_title_layout.addWidget(self.title_label)
@@ -363,7 +363,7 @@ class AttendancePage(QWidget):
         header_bar.addStretch(1)
 
         # Leave Balance Button (Modal Popup Opener)
-        self.leave_balance_button = QPushButton("Leave Balance")
+        self.leave_balance_button = QPushButton("Leave Balance", self)
         self.leave_balance_button.setObjectName("SecondaryButton")
         self.leave_balance_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.leave_balance_button.setMinimumHeight(34)
@@ -374,7 +374,7 @@ class AttendancePage(QWidget):
         self.root_layout.addLayout(header_bar)
 
         # Error Banner
-        self.error_banner = QLabel("Unable to load attendance. Please try again.")
+        self.error_banner = QLabel("Unable to load attendance. Please try again.", self)
         self.error_banner.setObjectName("ErrorBanner")
         self.error_banner.setStyleSheet(
             "QLabel { background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; border-radius: 6px; padding: 10px 14px; font-size: 13px; font-weight: 500; }"
@@ -389,60 +389,60 @@ class AttendancePage(QWidget):
         stats_row.setSpacing(10)
 
         # Present Card
-        present_card = QGroupBox("Present Days")
+        present_card = QGroupBox("Present Days", self)
         present_layout = QVBoxLayout(present_card)
         present_layout.setContentsMargins(12, 8, 12, 10)
-        self.present_val_label = QLabel("0 Days")
+        self.present_val_label = QLabel("0 Days", present_card)
         self.present_val_label.setObjectName("AttendanceStatPresent")
         self.present_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #16A34A;")
         present_layout.addWidget(self.present_val_label)
         stats_row.addWidget(present_card)
 
         # Missed Punch Card
-        missed_punch_card = QGroupBox("Missed Punch")
+        missed_punch_card = QGroupBox("Missed Punch", self)
         mp_layout = QVBoxLayout(missed_punch_card)
         mp_layout.setContentsMargins(12, 8, 12, 10)
-        self.missed_punch_val_label = QLabel("0 Days")
+        self.missed_punch_val_label = QLabel("0 Days", missed_punch_card)
         self.missed_punch_val_label.setObjectName("AttendanceStatMissedPunch")
         self.missed_punch_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #DC2626;")
         mp_layout.addWidget(self.missed_punch_val_label)
         stats_row.addWidget(missed_punch_card)
 
         # Absent Card
-        absent_card = QGroupBox("Absent Days")
+        absent_card = QGroupBox("Absent Days", self)
         absent_layout = QVBoxLayout(absent_card)
         absent_layout.setContentsMargins(12, 8, 12, 10)
-        self.absent_val_label = QLabel("0 Days")
+        self.absent_val_label = QLabel("0 Days", absent_card)
         self.absent_val_label.setObjectName("AttendanceStatAbsent")
         self.absent_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #EA580C;")
         absent_layout.addWidget(self.absent_val_label)
         stats_row.addWidget(absent_card)
 
         # Week Off Card
-        weekoff_card = QGroupBox("Week Offs")
+        weekoff_card = QGroupBox("Week Offs", self)
         weekoff_layout = QVBoxLayout(weekoff_card)
         weekoff_layout.setContentsMargins(12, 8, 12, 10)
-        self.weekoff_val_label = QLabel("0 Days")
+        self.weekoff_val_label = QLabel("0 Days", weekoff_card)
         self.weekoff_val_label.setObjectName("AttendanceStatWeekOff")
         self.weekoff_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #2563EB;")
         weekoff_layout.addWidget(self.weekoff_val_label)
         stats_row.addWidget(weekoff_card)
 
         # Leave / Holiday Card
-        leave_card = QGroupBox("Leaves / Holidays")
+        leave_card = QGroupBox("Leaves / Holidays", self)
         leave_layout = QVBoxLayout(leave_card)
         leave_layout.setContentsMargins(12, 8, 12, 10)
-        self.leave_val_label = QLabel("0 Days")
+        self.leave_val_label = QLabel("0 Days", leave_card)
         self.leave_val_label.setObjectName("AttendanceStatLeave")
         self.leave_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #7E22CE;")
         leave_layout.addWidget(self.leave_val_label)
         stats_row.addWidget(leave_card)
 
         # Total Days Card
-        total_card = QGroupBox("Total Month Days")
+        total_card = QGroupBox("Total Month Days", self)
         total_layout = QVBoxLayout(total_card)
         total_layout.setContentsMargins(12, 8, 12, 10)
-        self.total_days_val_label = QLabel("0 Days")
+        self.total_days_val_label = QLabel("0 Days", total_card)
         self.total_days_val_label.setObjectName("AttendanceStatTotal")
         self.total_days_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #475569;")
         total_layout.addWidget(self.total_days_val_label)
@@ -547,8 +547,8 @@ class AttendancePage(QWidget):
 
         self.root_layout.addWidget(self.calendar_group)
 
-        # Initial Load
-        self.refresh()
+        # Initial Load: Asynchronous to eliminate blocking startup UI freeze
+        self.refresh(async_mode=True)
 
     def _populate_year_combo(self) -> None:
         """Populate year selector with past years up to current year."""
@@ -853,15 +853,26 @@ class AttendancePage(QWidget):
                     cur_dt = datetime(year_num, month_num, day_idx)
                     now_dt = datetime.now()
                     is_today = (cur_dt.date() == now_dt.date())
+                    is_weekend = (cur_dt.weekday() in (5, 6))
+                    is_past_or_today = (cur_dt.date() <= now_dt.date())
+                    if is_weekend:
+                        st_code, st_lbl, st_bdg = "Week Off", "Week Off", "WO"
+                        col, bg_col = "#2563EB", "#DBEAFE"
+                    elif is_past_or_today:
+                        st_code, st_lbl, st_bdg = "A", "Absent", "A"
+                        col, bg_col = "#DC2626", "#FEE2E2"
+                    else:
+                        st_code, st_lbl, st_bdg = "", "", ""
+                        col, bg_col = "#64748B", "#FFFFFF"
                     day_info = {
                         "day_num": day_idx,
                         "date": f"{year_num}-{month_num:02d}-{day_idx:02d}",
                         "day_name": WEEKDAY_NAMES[col_idx],
-                        "status_code": "",
-                        "status_label": "",
-                        "status_badge": "",
-                        "color": "#64748B",
-                        "bg_color": "#FFFFFF",
+                        "status_code": st_code,
+                        "status_label": st_lbl,
+                        "status_badge": st_bdg,
+                        "color": col,
+                        "bg_color": bg_col,
                         "details": None,
                         "is_today": is_today,
                     }

@@ -1190,21 +1190,32 @@ class MainWindow(QMainWindow):
             self.user_label.setText(f"Welcome, {display_name}")
 
     def set_network_status(self, is_online: bool) -> None:
-        """Update header network connectivity badge and shield icon from centralized monitor."""
+        """Update header network connectivity badge, icon, and propagate reachability state."""
         self._is_network_online = bool(is_online)
         if hasattr(self, "status_badge") and self.status_badge:
-            if is_online:
-                self.status_badge.setText("Online")
-                self.status_badge.setProperty("workpulse", "true")
-                self.status_badge.setToolTip("Network: Online")
-            else:
-                self.status_badge.setText("Offline")
-                self.status_badge.setProperty("workpulse", "false")
-                self.status_badge.setToolTip("Network: Offline")
-            self._refresh_badge_style()
+            self.status_badge.setText("Online" if is_online else "Offline")
+            self.status_badge.setProperty("workpulse", "true" if is_online else "false")
+            try:
+                self.status_badge.style().unpolish(self.status_badge)
+                self.status_badge.style().polish(self.status_badge)
+            except Exception:
+                pass
+            self.status_badge.setToolTip(f"Network: {'Online' if is_online else 'Offline'}")
+
+        if hasattr(self, "_update_status_icon"):
+            try:
+                self._update_status_icon()
+            except Exception:
+                pass
+
+        if hasattr(self, "dashboard_page") and self.dashboard_page:
+            try:
+                self.dashboard_page.set_network_status(is_online)
+            except Exception:
+                pass
 
     def _on_reachability_changed(self, is_online: bool) -> None:
-        """Handle real-time centralized network reachability changes for header."""
+        """Handle real-time centralized network reachability changes for header (thread-safe)."""
         try:
             from PySide6.QtCore import QThread, QTimer
             if self.thread() == QThread.currentThread():
@@ -1431,28 +1442,6 @@ class MainWindow(QMainWindow):
             NetworkReachabilityMonitor().report_api_failure()
         except Exception:
             pass
-
-    def _on_reachability_changed(self, is_online: bool) -> None:
-        """Slot invoked from NetworkReachabilityMonitor on network state change."""
-        self.set_network_status(is_online)
-
-    def set_network_status(self, is_online: bool) -> None:
-        """Update header badge, icon, and propagate reachability state to dashboard."""
-        self._is_network_online = is_online
-        if hasattr(self, "status_badge") and self.status_badge:
-            self.status_badge.setText("Online" if is_online else "Offline")
-            self.status_badge.setProperty("workpulse", "true" if is_online else "false")
-            self.status_badge.style().unpolish(self.status_badge)
-            self.status_badge.style().polish(self.status_badge)
-            self.status_badge.setToolTip(f"Network: {'Online' if is_online else 'Offline'}")
-
-        self._update_status_icon()
-
-        if hasattr(self, "dashboard_page") and self.dashboard_page:
-            try:
-                self.dashboard_page.set_network_status(is_online)
-            except Exception:
-                pass
 
     def _update_status_icon(self) -> None:
         """Render Workpulse logo/icon in header (green when online, red when offline)."""

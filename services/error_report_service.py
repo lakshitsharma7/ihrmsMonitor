@@ -379,58 +379,157 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 4. Stack trace
+        # 4. Dynamic Exception & Caller Stack Trace Details
+        if exc is None:
+            try:
+                _, active_exc, _ = sys.exc_info()
+                if active_exc is not None:
+                    exc = active_exc
+            except Exception:
+                pass
+
+        exception_type = "N/A"
+        err_file = "N/A"
+        err_file_path = "N/A"
+        err_line = None
+        err_function = "N/A"
+        err_module = "N/A"
         traceback_str = ""
+
         if exc is not None:
+            exception_type = type(exc).__name__
             import traceback
             traceback_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
-        # 5. Extract explicit API & HTTP diagnostics if provided
+            # Extract deepest / origin frame where exception was raised
+            tb = exc.__traceback__
+            deepest_tb = tb
+            while tb:
+                deepest_tb = tb
+                tb = tb.tb_next
+            if deepest_tb:
+                frame = deepest_tb.tb_frame
+                err_line = deepest_tb.tb_lineno
+                err_file_path = str(Path(frame.f_code.co_filename).resolve())
+                err_file = Path(err_file_path).name
+                err_function = frame.f_code.co_name
+                err_module = frame.f_globals.get("__name__") or Path(err_file_path).stem
+        else:
+            # Dynamically inspect caller stack outside ErrorReportService
+            try:
+                import inspect
+                stack = inspect.stack()
+                for frame_info in stack[1:]:
+                    fn = frame_info.filename
+                    if "error_report_service" not in fn:
+                        err_file_path = str(Path(fn).resolve())
+                        err_file = Path(err_file_path).name
+                        err_line = frame_info.lineno
+                        err_function = frame_info.function
+                        err_module = frame_info.frame.f_globals.get("__name__") or Path(err_file_path).stem
+                        break
+            except Exception:
+                pass
+
+        # Allow extra_context to supplement or override any explicit items
+        if extra_context:
+            if extra_context.get("exception_type"):
+                exception_type = str(extra_context["exception_type"])
+            elif extra_context.get("exception"):
+                exception_type = str(extra_context["exception"])
+
+            if extra_context.get("file_path"):
+                err_file_path = str(extra_context["file_path"])
+            if extra_context.get("file"):
+                err_file = str(extra_context["file"])
+            if extra_context.get("line") is not None:
+                try:
+                    err_line = int(extra_context["line"])
+                except (ValueError, TypeError):
+                    pass
+            if extra_context.get("function"):
+                err_function = str(extra_context["function"])
+            if extra_context.get("module"):
+                err_module = str(extra_context["module"])
+            if extra_context.get("traceback"):
+                traceback_str = str(extra_context["traceback"])
+
+        if exception_type == "N/A" or not exception_type:
+            exception_type = error_type
+
+        if not traceback_str:
+            try:
+                import traceback
+                traceback_str = "".join(traceback.format_stack()[:-1])
+            except Exception:
+                traceback_str = "No traceback available."
+
+        # 5. Extract HTTP diagnostics, retry count, file size, operation, and endpoint
+        http_status_val = None
+        if extra_context:
+            for k in ("http_status", "status_code", "status"):
+                if extra_context.get(k) is not None:
+                    try:
+                        http_status_val = int(extra_context[k])
+                        break
+                    except (ValueError, TypeError):
+                        http_status_val = extra_context[k]
+                        break
+        if http_status_val is None and exc is not None:
+            resp = getattr(exc, "response", None)
+            if resp is not None and getattr(resp, "status_code", None) is not None:
+                http_status_val = resp.status_code
+            elif getattr(exc, "status_code", None) is not None:
+                http_status_val = exc.status_code
+
+        retry_val = None
+        if extra_context:
+            for k in ("retry", "retry_count", "attempt", "retries"):
+                if extra_context.get(k) is not None:
+                    try:
+                        retry_val = int(extra_context[k])
+                        break
+                    except (ValueError, TypeError):
+                        retry_val = extra_context[k]
+                        break
+
+        file_size_val = None
+        if extra_context:
+            for k in ("file_size", "size", "bytes", "filesize"):
+                if extra_context.get(k) is not None:
+                    try:
+                        file_size_val = int(extra_context[k])
+                        break
+                    except (ValueError, TypeError):
+                        file_size_val = extra_context[k]
+                        break
+
         endpoint = "N/A"
-        http_status = "N/A"
-        response_error = "N/A"
         operation = "N/A"
+        response_error = "N/A"
+
         if extra_context:
             if extra_context.get("endpoint"):
                 endpoint = str(extra_context["endpoint"])
             elif extra_context.get("api_url"):
                 endpoint = str(extra_context["api_url"])
 
-            if extra_context.get("http_status") is not None:
-                http_status = str(extra_context["http_status"])
-            elif extra_context.get("status_code") is not None:
-                http_status = str(extra_context["status_code"])
+            if extra_context.get("operation"):
+                operation = str(extra_context["operation"])
+            elif extra_context.get("action"):
+                operation = str(extra_context["action"])
 
             if extra_context.get("response_error") is not None:
                 response_error = str(extra_context["response_error"])
             elif extra_context.get("server_response") is not None:
                 response_error = str(extra_context["server_response"])
 
-            if extra_context.get("operation"):
-                operation = str(extra_context["operation"])
+        if operation == "N/A":
+            operation = err_function if err_function != "N/A" else "workpulse_operation"
+        if endpoint == "N/A":
+            endpoint = operation
 
-        # 6. Extract module and function where error originated
-        calling_module = "N/A"
-        calling_function = "N/A"
-        try:
-            if extra_context and extra_context.get("module"):
-                calling_module = str(extra_context["module"])
-            if extra_context and extra_context.get("function"):
-                calling_function = str(extra_context["function"])
-
-            if calling_module == "N/A" or calling_function == "N/A":
-                import inspect
-                stack = inspect.stack()
-                for frame_info in stack[1:]:
-                    fn = frame_info.filename
-                    if "error_report_service" not in fn:
-                        calling_module = Path(fn).name
-                        calling_function = frame_info.function
-                        break
-        except Exception:
-            pass
-
-        # 7. Current application status (workpulse, sync, network, update)
+        # 6. Current application status (workpulse, sync, network, update)
         workpulse_status = "Unknown"
         try:
             from services.secure_session import SessionStore
@@ -471,22 +570,30 @@ class ErrorReportService:
         except Exception:
             pass
 
-        # 8. Recent application log lines
+        # 7. Recent application log lines
         recent_logs = self._get_recent_logs(max_lines=60)
 
         now_utc = datetime.now(timezone.utc).isoformat()
         now_local = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        return {
+        context_dict = {
             "app_name": APP_NAME,
             "app_version": get_running_app_version(),
             "error_type": error_type,
             "error_message": sanitize_text(error_message),
-            "calling_module": sanitize_text(calling_module),
-            "calling_function": sanitize_text(calling_function),
+            "exception_type": exception_type,
+            "module": err_module,
+            "file": err_file,
+            "file_path": err_file_path,
+            "function": err_function,
+            "line": err_line,
+            "calling_module": sanitize_text(err_module),
+            "calling_function": sanitize_text(err_function),
             "operation": sanitize_text(operation),
             "endpoint": sanitize_text(endpoint),
-            "http_status": sanitize_text(http_status),
+            "http_status": str(http_status_val) if http_status_val is not None else "N/A",
+            "retry": retry_val,
+            "file_size": file_size_val,
             "response_error": sanitize_text(response_error),
             "workpulse_status": workpulse_status,
             "sync_status": sync_status,
@@ -504,6 +611,8 @@ class ErrorReportService:
             "extra_context": sanitize_text(str(extra_context or {})),
             "extra_context_dict": dict(extra_context or {}),
         }
+        context_dict["error_payload"] = self._build_error_payload(context_dict)
+        return context_dict
 
     def _get_recent_logs(self, max_lines: int = 60) -> str:
         """Extract the tail lines from the application log file."""
@@ -622,6 +731,8 @@ class ErrorReportService:
             f"Python Version           : {python_version}\n\n"
             "--- Traceback ---\n"
             f"{context.get('traceback') or 'No traceback available.'}\n\n"
+            "--- Root Cause Error Payload (API JSON) ---\n"
+            f"{context.get('error_payload') or self._build_error_payload(context)}\n\n"
             "--- Extra Context ---\n"
             f"{context.get('extra_context')}\n\n"
             "--- Recent Application Logs (Tail) ---\n"
@@ -777,6 +888,9 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
     
     <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Traceback:</div>
     <pre class="code-block">{context.get('traceback') or 'No traceback available.'}</pre>
+
+    <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Root Cause Error Payload (API JSON):</div>
+    <pre class="code-block">{context.get('error_payload') or self._build_error_payload(context)}</pre>
 
     <div style="margin-top: 14px; font-weight: 600; font-size: 13px; color: #5f6368;">Recent Application Logs:</div>
     <pre class="code-block">{context.get('recent_logs')}</pre>
@@ -1034,30 +1148,126 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         return "workpulse"
 
     def _build_error_payload(self, context: dict[str, Any]) -> str:
-        """Construct JSON string representation for error_payload parameter."""
+        """Construct JSON string representation for error_payload parameter with all root-cause metrics."""
         user = context.get("user_details", {})
         device = context.get("device_details", {})
         extra = context.get("extra_context_dict", {})
 
         payload: dict[str, Any] = {}
 
-        # 1. Diagnostic metrics
-        if context.get("http_status") and context.get("http_status") != "N/A":
+        # 1. Root-cause fields required by specification
+        if context.get("http_status") is not None and context.get("http_status") != "N/A":
             try:
                 payload["http_status"] = int(context["http_status"])
-            except ValueError:
+            except (ValueError, TypeError):
                 payload["http_status"] = context["http_status"]
+        elif extra.get("http_status") is not None:
+            try:
+                payload["http_status"] = int(extra["http_status"])
+            except (ValueError, TypeError):
+                payload["http_status"] = extra["http_status"]
 
+        if context.get("retry") is not None and context.get("retry") != "N/A":
+            try:
+                payload["retry"] = int(context["retry"])
+            except (ValueError, TypeError):
+                payload["retry"] = context["retry"]
+        elif extra.get("retry") is not None:
+            try:
+                payload["retry"] = int(extra["retry"])
+            except (ValueError, TypeError):
+                payload["retry"] = extra["retry"]
+
+        if context.get("file_size") is not None and context.get("file_size") != "N/A":
+            try:
+                payload["file_size"] = int(context["file_size"])
+            except (ValueError, TypeError):
+                payload["file_size"] = context["file_size"]
+        elif extra.get("file_size") is not None:
+            try:
+                payload["file_size"] = int(extra["file_size"])
+            except (ValueError, TypeError):
+                payload["file_size"] = extra["file_size"]
+
+        payload["exception_type"] = (
+            context.get("exception_type")
+            or extra.get("exception_type")
+            or extra.get("exception")
+            or context.get("error_type")
+            or "N/A"
+        )
+        payload["module"] = (
+            context.get("module")
+            or extra.get("module")
+            or context.get("calling_module")
+            or "N/A"
+        )
+        payload["file"] = (
+            context.get("file")
+            or extra.get("file")
+            or (Path(context.get("file_path", "")).name if context.get("file_path") and context.get("file_path") != "N/A" else "N/A")
+        )
+        payload["file_path"] = (
+            context.get("file_path")
+            or extra.get("file_path")
+            or "N/A"
+        )
+        payload["function"] = (
+            context.get("function")
+            or extra.get("function")
+            or context.get("calling_function")
+            or "N/A"
+        )
+
+        line_val = context.get("line") if context.get("line") is not None else extra.get("line")
+        if line_val is not None:
+            try:
+                payload["line"] = int(line_val)
+            except (ValueError, TypeError):
+                payload["line"] = line_val
+        else:
+            payload["line"] = None
+
+        payload["message"] = (
+            context.get("error_message")
+            or extra.get("message")
+            or "N/A"
+        )
+        payload["operation"] = (
+            context.get("operation")
+            or extra.get("operation")
+            or payload["function"]
+        )
+        payload["endpoint"] = (
+            context.get("endpoint")
+            or extra.get("endpoint")
+            or payload["operation"]
+        )
+        payload["traceback"] = (
+            context.get("traceback")
+            or extra.get("traceback")
+            or "No traceback available."
+        )
+        payload["app_version"] = (
+            context.get("app_version")
+            or extra.get("app_version")
+            or get_running_app_version()
+        )
+        payload["platform"] = (
+            context.get("platform")
+            or device.get("platform")
+            or platform.system()
+        )
+        payload["occurred_at"] = (
+            context.get("timestamp_local")
+            or extra.get("occurred_at")
+            or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        # 2. Diagnostics & metadata
         if context.get("response_error") and context.get("response_error") != "N/A":
             payload["response_error"] = context["response_error"]
 
-        if context.get("calling_module") and context.get("calling_module") != "N/A":
-            payload["calling_module"] = context["calling_module"]
-
-        if context.get("calling_function") and context.get("calling_function") != "N/A":
-            payload["calling_function"] = context["calling_function"]
-
-        # 2. Employee / user context
         if user.get("employee_code") and user.get("employee_code") != "Not Available":
             payload["employee_code"] = user["employee_code"]
         if user.get("employee_id") and user.get("employee_id") != "Not Available":
@@ -1067,24 +1277,27 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         if user.get("company_code") and user.get("company_code") != "Not Available":
             payload["company_code"] = user["company_code"]
 
-        # 3. Hostname & health
         if device.get("hostname") and device.get("hostname") != "Unknown":
             payload["hostname"] = device["hostname"]
 
         if context.get("system_health"):
             payload["system_health"] = context["system_health"]
 
-        # 4. Status details
-        payload["network_status"] = context.get("network_status", "Unknown")
-        payload["sync_status"] = context.get("sync_status", "Unknown")
-        payload["workpulse_status"] = context.get("workpulse_status", "Unknown")
+        if context.get("network_status") and context.get("network_status") != "Unknown":
+            payload["network_status"] = context["network_status"]
+        if context.get("sync_status") and context.get("sync_status") != "Unknown":
+            payload["sync_status"] = context["sync_status"]
+        if context.get("workpulse_status") and context.get("workpulse_status") != "Unknown":
+            payload["workpulse_status"] = context["workpulse_status"]
 
-        if context.get("traceback"):
-            payload["traceback"] = context["traceback"]
-
-        # 5. Merge any additional extra keys (e.g. retry, file_size, session_id, etc.)
+        # 3. Merge additional non-secret extra keys
+        SECRET_KEYS = (
+            "device_token", "password", "auth_token", "bearer", "api_key",
+            "secret", "token", "cookie", "cookies", "authorization", "key"
+        )
         for k, v in extra.items():
-            if k in ("device_token", "password", "auth_token", "bearer", "api_key", "secret", "token"):
+            k_lower = str(k).lower()
+            if any(sk in k_lower for sk in SECRET_KEYS):
                 continue
             if k not in payload:
                 if isinstance(v, str):
@@ -1111,7 +1324,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         error_msg = context.get("error_message", "N/A")
         extra = context.get("extra_context_dict", {})
 
-        severity = self._derive_severity(error_type, extra)
+        severity = "error"
         category = self._derive_category(
             error_type,
             str(context.get("endpoint", "")),
@@ -1122,7 +1335,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
         app_version = context.get("app_version", get_running_app_version())
         platform_name = context.get("device_details", {}).get("platform") or platform.system()
         occurred_at = context.get("timestamp_local") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        error_payload = self._build_error_payload(context)
+        error_payload = context.get("error_payload") or self._build_error_payload(context)
 
         post_data = {
             "device_token": device_token,

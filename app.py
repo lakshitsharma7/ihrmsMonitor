@@ -211,6 +211,15 @@ def main() -> int:
                     if win32gui.IsWindow(hwnd) and not win32gui.GetParent(hwnd):
                         title = win32gui.GetWindowText(hwnd)
                         if ("Workpulse" in title or "iHRMS Monitor" in title) and not found_hwnds:
+                            try:
+                                rect = win32gui.GetWindowRect(hwnd)
+                                width = rect[2] - rect[0]
+                                height = rect[3] - rect[1]
+                                # Only target the actual main application window, not small helper widgets
+                                if width < 500 or height < 400:
+                                    return
+                            except Exception:
+                                pass
                             win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                             win32gui.SetForegroundWindow(hwnd)
