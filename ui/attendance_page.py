@@ -54,15 +54,15 @@ class CalendarDayCard(QFrame):
         self._day_data = day_data or {}
         self._is_padding = is_padding
         self.setObjectName("CalendarDayCard")
-        self.setMinimumHeight(82)
-        self.setMinimumWidth(75)
+        self.setMinimumHeight(68)
+        self.setMinimumWidth(70)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(3)
 
         if self._is_padding:
             # Faded padding cell outside the current month
@@ -71,7 +71,7 @@ class CalendarDayCard(QFrame):
                 QFrame#CalendarDayCard {
                     background-color: #F8FAFC;
                     border: 1px dashed #E2E8F0;
-                    border-radius: 8px;
+                    border-radius: 6px;
                 }
                 """
             )
@@ -87,6 +87,7 @@ class CalendarDayCard(QFrame):
         raw_code = str(self._day_data.get("status_code", "")).strip().upper()
         label_upper = status_label.upper()
         details = self._day_data.get("details")
+        is_weekend = (day_name in ("Sat", "Sun"))
 
         has_status = bool(
             status_label
@@ -94,118 +95,129 @@ class CalendarDayCard(QFrame):
             and raw_code not in ("—", "-", "NONE", "NULL")
         )
 
-        # Determine semantic status category & full-card color theme
+        # Determine subtle status category & corporate color theme
         if not has_status:
-            card_bg = "#FFFFFF"      # Clean neutral white card for unrecorded days
-            card_border = "#E2E8F0" if not is_today else "#3B82F6"
-            card_hover = "#F8FAFC"
+            # Working days with no record remain clean/blank; weekends have subtle tint
+            card_bg = "#F8FAFC" if is_weekend else "#FFFFFF"
+            card_border = "#E2E8F0"
+            card_hover = "#F1F5F9" if is_weekend else "#F8FAFC"
             badge_bg = "transparent"
             badge_border = "transparent"
-            dow_color = "#64748B" if day_name not in ("Sat", "Sun") else "#2563EB"
-            detail_color = "#0F172A"
-            today_badge_bg = "#2563EB"
+            badge_text = "transparent"
+            dow_color = "#2563EB" if is_weekend else "#64748B"
+            detail_color = "#475569"
         elif label_upper == "PRESENT" or raw_code in ("P", "PRESENT"):
-            card_bg = "#F0FDF4"      # Full light green card
-            card_border = "#86EFAC" if not is_today else "#16A34A"
+            # Present -> subtle green
+            card_bg = "#F0FDF4"
+            card_border = "#86EFAC"
             card_hover = "#DCFCE7"
             badge_bg = "#DCFCE7"
             badge_border = "#86EFAC"
+            badge_text = "#15803D"
             dow_color = "#166534"
-            detail_color = "#0F172A"
-            today_badge_bg = "#16A34A"
+            detail_color = "#334155"
         elif "MISSED" in label_upper or "MISPUNCH" in label_upper or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH"):
-            card_bg = "#FEF2F2"      # Full light red/coral card for missed punch
-            card_border = "#FECACA" if not is_today else "#DC2626"
-            card_hover = "#FEE2E2"
-            badge_bg = "#FEE2E2"
-            badge_border = "#F87171"
-            dow_color = "#991B1B"
-            detail_color = "#0F172A"
-            today_badge_bg = "#DC2626"
+            # Missed Punch -> subtle orange
+            card_bg = "#FFF7ED"
+            card_border = "#FED7AA"
+            card_hover = "#FFEDD5"
+            badge_bg = "#FFEDD5"
+            badge_border = "#FDBA74"
+            badge_text = "#C2410C"
+            dow_color = "#9A3412"
+            detail_color = "#334155"
         elif label_upper == "ABSENT" or raw_code in ("A", "ABSENT"):
-            card_bg = "#FEF2F2"      # Full light red card
-            card_border = "#FECACA" if not is_today else "#DC2626"
+            # Absent -> subtle red
+            card_bg = "#FEF2F2"
+            card_border = "#FECACA"
             card_hover = "#FEE2E2"
             badge_bg = "#FEE2E2"
-            badge_border = "#F87171"
+            badge_border = "#FCA5A5"
+            badge_text = "#B91C1C"
             dow_color = "#991B1B"
-            detail_color = "#0F172A"
-            today_badge_bg = "#DC2626"
+            detail_color = "#334155"
         elif "WEEK OFF" in label_upper or "WEEK OFF" in raw_code or raw_code in ("WO", "W/O"):
-            card_bg = "#EFF6FF"      # Full light blue card
-            card_border = "#BFDBFE" if not is_today else "#2563EB"
+            # Week Off -> subtle light blue
+            card_bg = "#EFF6FF"
+            card_border = "#BFDBFE"
             card_hover = "#DBEAFE"
             badge_bg = "#DBEAFE"
             badge_border = "#93C5FD"
-            dow_color = "#2563EB"
-            detail_color = "#0F172A"
-            today_badge_bg = "#2563EB"
+            badge_text = "#1D4ED8"
+            dow_color = "#1E40AF"
+            detail_color = "#334155"
         elif "HOLIDAY" in label_upper or "HOLIDAY" in raw_code or raw_code == "H":
-            card_bg = "#FAF5FF"      # Full light purple card
-            card_border = "#E9D5FF" if not is_today else "#9333EA"
-            card_hover = "#F3E8FF"
-            badge_bg = "#F3E8FF"
-            badge_border = "#D8B4FE"
-            dow_color = "#7E22CE"
-            detail_color = "#0F172A"
-            today_badge_bg = "#9333EA"
+            # Holiday -> subtle neutral/blue
+            card_bg = "#F0F9FF"
+            card_border = "#BAE6FD"
+            card_hover = "#E0F2FE"
+            badge_bg = "#E0F2FE"
+            badge_border = "#7DD3FC"
+            badge_text = "#0369A1"
+            dow_color = "#075985"
+            detail_color = "#334155"
         elif "LEAVE" in label_upper or raw_code in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE") or "LEAVE" in raw_code:
-            card_bg = "#FAF5FF"      # Full light purple card matching reference UI
-            card_border = "#E9D5FF" if not is_today else "#7E22CE"
-            card_hover = "#F3E8FF"
-            badge_bg = "#F3E8FF"
-            badge_border = "#D8B4FE"
-            dow_color = "#7E22CE"
-            detail_color = "#0F172A"
-            today_badge_bg = "#7E22CE"
+            # Leave -> subtle purple/blue
+            card_bg = "#F5F3FF"
+            card_border = "#DDD6FE"
+            card_hover = "#EDE9FE"
+            badge_bg = "#EDE9FE"
+            badge_border = "#C4B5FD"
+            badge_text = "#6D28D9"
+            dow_color = "#5B21B6"
+            detail_color = "#334155"
         elif "COMP" in label_upper or "COMP" in raw_code:
-            card_bg = "#ECFEFF"      # Full light cyan card
-            card_border = "#A5F3FC" if not is_today else "#0891B2"
+            # Comp Off -> subtle cyan
+            card_bg = "#ECFEFF"
+            card_border = "#A5F3FC"
             card_hover = "#CFFAFE"
             badge_bg = "#CFFAFE"
             badge_border = "#67E8F9"
-            dow_color = "#0E7490"
-            detail_color = "#0F172A"
-            today_badge_bg = "#0891B2"
+            badge_text = "#0E7490"
+            dow_color = "#155E75"
+            detail_color = "#334155"
         elif "HALF DAY" in label_upper or raw_code in ("HD", "HALF DAY"):
-            card_bg = "#FEFCE8"      # Full light yellow card
-            card_border = "#FEF08A" if not is_today else "#CA8A04"
+            # Half Day -> subtle yellow/amber
+            card_bg = "#FEFCE8"
+            card_border = "#FEF08A"
             card_hover = "#FEF9C3"
             badge_bg = "#FEF9C3"
             badge_border = "#FDE047"
-            dow_color = "#A16207"
-            detail_color = "#0F172A"
-            today_badge_bg = "#CA8A04"
+            badge_text = "#A16207"
+            dow_color = "#854D0E"
+            detail_color = "#334155"
         elif "LATE" in label_upper or raw_code == "LATE":
-            card_bg = "#FFFBEB"      # Full light amber card
-            card_border = "#FDE68A" if not is_today else "#B45309"
+            # Late -> subtle amber
+            card_bg = "#FFFBEB"
+            card_border = "#FDE68A"
             card_hover = "#FEF3C7"
             badge_bg = "#FEF3C7"
             badge_border = "#FCD34D"
-            dow_color = "#B45309"
-            detail_color = "#0F172A"
-            today_badge_bg = "#B45309"
+            badge_text = "#B45309"
+            dow_color = "#92400E"
+            detail_color = "#334155"
         else:
-            card_bg = "#FFFFFF"      # Neutral white card
-            card_border = "#E2E8F0" if not is_today else "#3B82F6"
+            card_bg = "#F8FAFC" if is_weekend else "#FFFFFF"
+            card_border = "#E2E8F0"
             card_hover = "#F8FAFC"
             badge_bg = "#F1F5F9"
             badge_border = "#CBD5E1"
-            dow_color = "#64748B" if day_name not in ("Sat", "Sun") else "#2563EB"
-            detail_color = "#0F172A"
-            today_badge_bg = "#2563EB"
+            badge_text = "#475569"
+            dow_color = "#2563EB" if is_weekend else "#64748B"
+            detail_color = "#334155"
 
-        # Apply Card Base Style
-        border_width = "2px" if is_today else "1px"
+        # Apply Card Base Style with subtle Today highlight
+        border_css = "border: 1.5px solid #2563EB;" if is_today else f"border: 1px solid {card_border};"
+        hover_border = "#2563EB" if is_today else card_border
         self.setStyleSheet(
             f"""
             QFrame#CalendarDayCard {{
-                border: {border_width} solid {card_border};
+                {border_css}
                 background-color: {card_bg};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
             QFrame#CalendarDayCard:hover {{
-                border-color: {card_border};
+                border-color: {hover_border};
                 background-color: {card_hover};
             }}
             """
@@ -217,18 +229,19 @@ class CalendarDayCard(QFrame):
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(4)
+        top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         day_num_str = f"{day_num:02d}" if day_num > 0 else "—"
         self.num_label = QLabel(day_num_str, self)
         self.num_label.setStyleSheet(
-            "font-size: 13px; font-weight: 700; color: #0F172A; border: none; background: transparent;"
+            "font-size: 12px; font-weight: 700; color: #1E293B; border: none; background: transparent;"
         )
         top_row.addWidget(self.num_label)
 
         if day_name:
             dow_label = QLabel(day_name, self)
             dow_label.setStyleSheet(
-                f"font-size: 11px; font-weight: 600; color: {dow_color}; border: none; background: transparent;"
+                f"font-size: 10px; font-weight: 500; color: {dow_color}; border: none; background: transparent;"
             )
             top_row.addWidget(dow_label)
 
@@ -237,30 +250,30 @@ class CalendarDayCard(QFrame):
         if is_today:
             today_badge = QLabel("Today", self)
             today_badge.setStyleSheet(
-                f"background-color: {today_badge_bg}; color: white; font-size: 9px; font-weight: 700; "
-                "border-radius: 4px; padding: 1px 4px; border: none;"
+                "background-color: #2563EB; color: #FFFFFF; font-size: 8.5px; font-weight: 600; "
+                "border-radius: 3px; padding: 1px 4px; border: none;"
             )
             top_row.addWidget(today_badge)
 
         layout.addLayout(top_row)
 
         # --------------------------------------------------------------
-        # Center: Status Pill Badge (Empty for unrecorded days)
+        # Center: Compact Status Pill Badge (Empty for unrecorded days)
         # --------------------------------------------------------------
         status_container = QHBoxLayout()
-        status_container.setContentsMargins(0, 2, 0, 2)
+        status_container.setContentsMargins(0, 1, 0, 1)
         status_container.setSpacing(0)
 
         self.status_badge = QLabel("", self)
         self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_badge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.status_badge.setMinimumHeight(24)
+        self.status_badge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.status_badge.setFixedHeight(19)
 
         if has_status:
             self.status_badge.setText(f"● {status_label}")
             badge_css = (
-                f"QLabel {{ background-color: {badge_bg}; color: #000000; font-size: 11px; font-weight: 700; "
-                f"border-radius: 5px; padding: 2px 4px; border: 1px solid {badge_border}; }}"
+                f"QLabel {{ background-color: {badge_bg}; color: {badge_text}; font-size: 10px; font-weight: 600; "
+                f"border-radius: 4px; padding: 1px 5px; border: 1px solid {badge_border}; }}"
             )
             self.status_badge.setStyleSheet(badge_css)
             self.status_badge.setVisible(True)
@@ -276,7 +289,7 @@ class CalendarDayCard(QFrame):
         if details:
             detail_label = QLabel(str(details), self)
             detail_label.setStyleSheet(
-                f"color: {detail_color}; font-size: 9px; font-weight: 600; border: none; background: transparent;"
+                f"color: {detail_color}; font-size: 9px; font-weight: 500; border: none; background: transparent;"
             )
             detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             detail_label.setWordWrap(True)
@@ -404,7 +417,7 @@ class AttendancePage(QWidget):
         mp_layout.setContentsMargins(12, 8, 12, 10)
         self.missed_punch_val_label = QLabel("0 Days", missed_punch_card)
         self.missed_punch_val_label.setObjectName("AttendanceStatMissedPunch")
-        self.missed_punch_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #DC2626;")
+        self.missed_punch_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #EA580C;")
         mp_layout.addWidget(self.missed_punch_val_label)
         stats_row.addWidget(missed_punch_card)
 
@@ -414,7 +427,7 @@ class AttendancePage(QWidget):
         absent_layout.setContentsMargins(12, 8, 12, 10)
         self.absent_val_label = QLabel("0 Days", absent_card)
         self.absent_val_label.setObjectName("AttendanceStatAbsent")
-        self.absent_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #EA580C;")
+        self.absent_val_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #DC2626;")
         absent_layout.addWidget(self.absent_val_label)
         stats_row.addWidget(absent_card)
 
@@ -511,15 +524,15 @@ class AttendancePage(QWidget):
 
         # --- Weekday Headers ---
         weekdays_row = QHBoxLayout()
-        weekdays_row.setSpacing(6)
+        weekdays_row.setSpacing(5)
         for dow in WEEKDAY_NAMES:
             hdr_lbl = QLabel(dow)
             hdr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hdr_lbl.setFixedHeight(30)
+            hdr_lbl.setFixedHeight(26)
             dow_color = "#2563EB" if dow in ("Sat", "Sun") else "#475569"
             hdr_lbl.setStyleSheet(
-                f"QLabel {{ background-color: #F8FAFC; color: {dow_color}; font-size: 12px; font-weight: 700; "
-                f"border: 1px solid #E2E8F0; border-radius: 6px; }}"
+                f"QLabel {{ background-color: #F8FAFC; color: {dow_color}; font-size: 11px; font-weight: 600; "
+                f"border: 1px solid #E2E8F0; border-radius: 5px; }}"
             )
             weekdays_row.addWidget(hdr_lbl, 1)
         calendar_layout.addLayout(weekdays_row)
@@ -529,7 +542,7 @@ class AttendancePage(QWidget):
         self.calendar_grid_container.setMinimumWidth(560)
         self.calendar_grid = QGridLayout(self.calendar_grid_container)
         self.calendar_grid.setContentsMargins(0, 4, 0, 4)
-        self.calendar_grid.setSpacing(6)
+        self.calendar_grid.setSpacing(5)
         for col_idx in range(7):
             self.calendar_grid.setColumnStretch(col_idx, 1)
         calendar_layout.addWidget(self.calendar_grid_container)
@@ -932,7 +945,7 @@ class AttendancePage(QWidget):
         badge_lbl = QLabel(f" Status:  {display_status} ")
         badge_lbl.setStyleSheet(
             f"background-color: {status_bg}; color: {status_color}; "
-            f"font-size: 13px; font-weight: 700; border-radius: 6px; padding: 6px 12px; border: 1px solid {status_color}33;"
+            f"font-size: 12px; font-weight: 600; border-radius: 5px; padding: 4px 10px; border: 1px solid {status_color}33;"
         )
         dlg_layout.addWidget(badge_lbl)
 

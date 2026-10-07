@@ -659,7 +659,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
         self.assertIn("background-color: #EFF6FF", weekoff_card.styleSheet())
         self.assertIn("border: 1px solid #BFDBFE", weekoff_card.styleSheet())
 
-        # 4. Today + Present -> Green Card with Today 2px border and Today badge
+        # 4. Today + Present -> Green Card with Today subtle highlight and Today badge
         today_present_card = CalendarDayCard(day_data={
             "day_num": 19,
             "day_name": "Sat",
@@ -670,9 +670,9 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             "is_today": True,
         })
         self.assertIn("background-color: #F0FDF4", today_present_card.styleSheet())
-        self.assertIn("border: 2px solid #16A34A", today_present_card.styleSheet())
+        self.assertIn("border: 1.5px solid #2563EB", today_present_card.styleSheet())
 
-        # 5. Today + Absent -> Red Card with Today 2px border and Today badge
+        # 5. Today + Absent -> Red Card with Today subtle highlight and Today badge
         today_absent_card = CalendarDayCard(day_data={
             "day_num": 19,
             "day_name": "Sat",
@@ -683,7 +683,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             "is_today": True,
         })
         self.assertIn("background-color: #FEF2F2", today_absent_card.styleSheet())
-        self.assertIn("border: 2px solid #DC2626", today_absent_card.styleSheet())
+        self.assertIn("border: 1.5px solid #2563EB", today_absent_card.styleSheet())
 
         # 6. Unrecorded Day -> Neutral white card with empty status badge hidden
         unrecorded_card = CalendarDayCard(day_data={
@@ -1109,7 +1109,14 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             }
         }
 
-        with patch("requests.post") as mock_post:
+        from datetime import datetime as real_datetime
+
+        class MockDateTime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real_datetime(2026, 10, 6, 12, 0, 0)
+
+        with patch("requests.post") as mock_post, patch("services.attendance_service.datetime", MockDateTime):
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.content = b'{"response": 200}'
