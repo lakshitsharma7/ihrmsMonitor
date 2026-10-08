@@ -8,18 +8,24 @@ and error handling.
 from __future__ import annotations
 
 import threading
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -254,8 +260,481 @@ class LeaveSummaryCard(QFrame):
         layout.addStretch(1)
 
 
+class LeaveBarChartWidget(QWidget):
+    """Modern, compact professional bar chart displaying leave types and their quotas with interactive hover."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._items: list[dict] = []
+        self._hovered_bar: tuple[int, int] | None = None  # (group_idx, bar_idx)
+        self._bar_hit_boxes: list[dict] = []
+        self.setMouseTracking(True)
+        self.setMinimumHeight(240)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet(
+            """
+            LeaveBarChartWidget {
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+            }
+            QToolTip {
+                background-color: #0B0F19;
+                color: #FFFFFF;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-size: 11.5px;
+                font-weight: 500;
+            }
+            """
+        )
+
+    def set_data(self, items: list[dict]) -> None:
+        self._items = items or []
+        self._hovered_bar = None
+        self._calc_bar_rects()
+        self.update()
+
+    def _calc_bar_rects(self, w: float | None = None, h: float | None = None) -> list[dict]:
+        """Compute bar hit boxes and layout dimensions."""
+        if w is None:
+            w = float(self.width()) if self.width() > 0 else 500.0
+        if h is None:
+            h = float(self.height()) if self.height() > 0 else 240.0
+
+        if not self._items:
+            self._bar_hit_boxes = []
+            return []
+
+        margin_left = 50.0
+        margin_right = 20.0
+        margin_top = 40.0
+        margin_bottom = 44.0
+
+        chart_x = margin_left
+        chart_y = margin_top
+        chart_w = max(100.0, w - margin_left - margin_right)
+        chart_h = max(80.0, h - margin_top - margin_bottom)
+
+        max_val = max(
+            (max(float(item.get("total", 0.0) or item.get("total_quota", 0.0) or 0.0),
+                 float(item.get("used", 0.0) or 0.0),
+                 float(item.get("available", 0.0) or item.get("left", 0.0) or 0.0))
+             for item in self._items),
+            default=0.0
+        )
+        if max_val <= 0.0:
+            max_val = 10.0
+        elif max_val <= 10.0:
+            max_val = 10.0
+        elif max_val <= 25.0:
+            max_val = 25.0
+        elif max_val <= 50.0:
+            max_val = 50.0
+        elif max_val <= 100.0:
+            max_val = 100.0
+        elif max_val <= 250.0:
+            max_val = 250.0
+        else:
+            max_val = float(int((max_val + 49.9) / 50) * 50)
+
+        n_groups = len(self._items)
+        if n_groups == 0:
+            self._bar_hit_boxes = []
+            return []
+
+        group_w = chart_w / float(n_groups)
+        bar_colors = [
+            QColor("#3B82F6"),  # Allotted
+            QColor("#F97316"),  # Used
+            QColor("#10B981"),  # Available
+        ]
+        metric_names = ["Allotted", "Used", "Available"]
+
+        hit_boxes = []
+        for g_idx, item in enumerate(self._items):
+            gx = chart_x + (g_idx * group_w)
+            cx = gx + (group_w / 2.0)
+
+            total_v = float(item.get("total", 0.0) or item.get("total_quota", 0.0) or 0.0)
+            used_v = float(item.get("used", 0.0) or 0.0)
+            avail_v = float(item.get("available", 0.0) or item.get("left", 0.0) or 0.0)
+            vals = [total_v, used_v, avail_v]
+
+            inner_pad = min(14.0, group_w * 0.12)
+            avail_bw = group_w - (2 * inner_pad)
+            single_w = min(16.0, max(6.0, (avail_bw - 6.0) / 3.0))
+            bar_gap = 3.0
+            tot_bars_w = (3 * single_w) + (2 * bar_gap)
+            start_bx = cx - (tot_bars_w / 2.0)
+
+            for b_idx, (v, color, m_name) in enumerate(zip(vals, bar_colors, metric_names)):
+                bx = start_bx + (b_idx * (single_w + bar_gap))
+                bar_ratio = min(1.0, max(0.0, v / max_val))
+                bar_h = chart_h * bar_ratio
+                by = chart_y + chart_h - bar_h
+
+                hit_rect = QRectF(bx - 1.5, chart_y, single_w + 3.0, chart_h + 22.0)
+                hit_boxes.append({
+                    "group_idx": g_idx,
+                    "bar_idx": b_idx,
+                    "hit_rect": hit_rect,
+                    "item": item,
+                    "metric_name": m_name,
+                    "val": v,
+                    "color": color,
+                    "bx": bx,
+                    "by": by,
+                    "bw": single_w,
+                    "bh": bar_h,
+                    "chart_h": chart_h,
+                    "chart_y": chart_y,
+                })
+
+        self._bar_hit_boxes = hit_boxes
+        return hit_boxes
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = float(self.width())
+        h = float(self.height())
+
+        # Fill background with rounded rectangle
+        bg_path = QPainterPath()
+        bg_path.addRoundedRect(QRectF(0, 0, w, h), 8.0, 8.0)
+        painter.fillPath(bg_path, QColor("#FFFFFF"))
+
+        if not self._items:
+            painter.setPen(QColor("#94A3B8"))
+            painter.setFont(QFont("-apple-system, Segoe UI, sans-serif", 11))
+            painter.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "No leave quota data to display.")
+            return
+
+        # Margins & plot dimensions
+        margin_left = 50.0
+        margin_right = 20.0
+        margin_top = 40.0
+        margin_bottom = 44.0
+
+        chart_x = margin_left
+        chart_y = margin_top
+        chart_w = max(100.0, w - margin_left - margin_right)
+        chart_h = max(80.0, h - margin_top - margin_bottom)
+
+        # 1. Legend at top left
+        leg_font = QFont("-apple-system, Segoe UI, sans-serif", 9)
+        leg_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(leg_font)
+
+        legend_items = [
+            ("Allotted", QColor("#3B82F6")),
+            ("Used", QColor("#F97316")),
+            ("Available", QColor("#10B981")),
+        ]
+        cur_lx = chart_x
+        leg_y = 14.0
+
+        for lbl, color in legend_items:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRectF(cur_lx, leg_y + 2.0, 10.0, 10.0), 2.5, 2.5)
+
+            painter.setPen(QColor("#475569"))
+            painter.drawText(QRectF(cur_lx + 15.0, leg_y, 72.0, 16.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, lbl)
+            cur_lx += 92.0
+
+        # 2. Maximum scale computation
+        max_val = max(
+            (max(float(item.get("total", 0.0) or item.get("total_quota", 0.0) or 0.0),
+                 float(item.get("used", 0.0) or 0.0),
+                 float(item.get("available", 0.0) or item.get("left", 0.0) or 0.0))
+             for item in self._items),
+            default=0.0
+        )
+        if max_val <= 0.0:
+            max_val = 10.0
+        elif max_val <= 10.0:
+            max_val = 10.0
+        elif max_val <= 25.0:
+            max_val = 25.0
+        elif max_val <= 50.0:
+            max_val = 50.0
+        elif max_val <= 100.0:
+            max_val = 100.0
+        elif max_val <= 250.0:
+            max_val = 250.0
+        else:
+            max_val = float(int((max_val + 49.9) / 50) * 50)
+
+        # 3. Y-Axis Gridlines & Step Labels
+        num_steps = 4
+        guide_font = QFont("-apple-system, Segoe UI, sans-serif", 8)
+        painter.setFont(guide_font)
+
+        for i in range(num_steps + 1):
+            val_step = (max_val / num_steps) * i
+            y_pos = chart_y + chart_h - (chart_h * (val_step / max_val))
+
+            grid_pen = QPen(QColor("#F1F5F9" if i > 0 else "#CBD5E1"))
+            grid_pen.setStyle(Qt.PenStyle.DashLine if i > 0 else Qt.PenStyle.SolidLine)
+            grid_pen.setWidthF(1.0)
+            painter.setPen(grid_pen)
+            painter.drawLine(QPointF(chart_x, y_pos), QPointF(chart_x + chart_w, y_pos))
+
+            painter.setPen(QColor("#64748B"))
+            lbl_str = f"{int(val_step)}" if val_step.is_integer() else f"{val_step:.1f}"
+            painter.drawText(
+                QRectF(0.0, y_pos - 8.0, margin_left - 8.0, 16.0),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                lbl_str
+            )
+
+        # 4. Grouped Bars
+        n_groups = len(self._items)
+        if n_groups == 0:
+            return
+
+        group_w = chart_w / float(n_groups)
+        bar_font = QFont("-apple-system, Segoe UI, sans-serif", 8)
+        bar_font.setWeight(QFont.Weight.Bold)
+
+        cat_font = QFont("-apple-system, Segoe UI, sans-serif", 9)
+        cat_font.setWeight(QFont.Weight.DemiBold)
+
+        sub_font = QFont("-apple-system, Segoe UI, sans-serif", 8)
+
+        # Recalculate hit boxes based on actual paint dimensions
+        self._calc_bar_rects(w, h)
+
+        for entry in self._bar_hit_boxes:
+            g_idx = entry["group_idx"]
+            b_idx = entry["bar_idx"]
+            bx = entry["bx"]
+            by = entry["by"]
+            single_w = entry["bw"]
+            bar_h = entry["bh"]
+            color = entry["color"]
+            v = entry["val"]
+
+            is_hovered = (self._hovered_bar == (g_idx, b_idx))
+
+            # Subtle professional hover enlargement & highlight
+            if is_hovered:
+                draw_bx = bx - 1.0
+                draw_bw = single_w + 2.0
+                draw_by = max(chart_y, by - 2.0) if bar_h > 1.5 else by
+                draw_bh = (chart_y + chart_h - draw_by) if bar_h > 1.5 else bar_h
+                fill_color = color.lighter(115)
+            else:
+                draw_bx = bx
+                draw_bw = single_w
+                draw_by = by
+                draw_bh = bar_h
+                fill_color = color
+
+            if draw_bh > 1.5:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(fill_color)
+                bar_path = QPainterPath()
+                bar_path.addRoundedRect(QRectF(draw_bx, draw_by, draw_bw, draw_bh), 2.5, 2.5)
+                painter.fillPath(bar_path, fill_color)
+                if is_hovered:
+                    painter.strokePath(bar_path, QPen(color.darker(115), 1.2))
+            else:
+                # Subtle marker at baseline for 0 values
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(color.lighter(130) if not is_hovered else color)
+                painter.drawRect(QRectF(draw_bx, chart_y + chart_h - 1.5, draw_bw, 1.5))
+
+            # Number above bar
+            if v > 0:
+                painter.setFont(bar_font)
+                val_color = color.darker(130) if is_hovered else color.darker(115)
+                painter.setPen(val_color)
+                val_str = f"{int(v)}" if v.is_integer() else f"{v:.1f}"
+                val_y = max(chart_y - 12.0, draw_by - 12.0)
+                painter.drawText(
+                    QRectF(draw_bx - 10.0, val_y, draw_bw + 20.0, 11.0),
+                    Qt.AlignmentFlag.AlignCenter,
+                    val_str
+                )
+
+        # Category Labels
+        for g_idx, item in enumerate(self._items):
+            gx = chart_x + (g_idx * group_w)
+            code = str(item.get("code") or item.get("short_name") or "").strip()
+            name = str(item.get("name") or item.get("leave_type") or "").strip()
+
+            label_y = chart_y + chart_h + 5.0
+            is_group_hovered = (self._hovered_bar is not None and self._hovered_bar[0] == g_idx)
+            painter.setFont(cat_font)
+            painter.setPen(QColor("#0F172A") if is_group_hovered else QColor("#1E293B"))
+            display_title = code if code else (name[:6] if name else f"L{g_idx+1}")
+            painter.drawText(
+                QRectF(gx, label_y, group_w, 14.0),
+                Qt.AlignmentFlag.AlignCenter,
+                display_title
+            )
+
+            # Abbreviated subtitle
+            if name and name != code:
+                short_disp = name.replace(" Leave", "").strip()
+                if len(short_disp) > 11:
+                    short_disp = short_disp[:10] + "…"
+                painter.setFont(sub_font)
+                painter.setPen(QColor("#334155") if is_group_hovered else QColor("#64748B"))
+                painter.drawText(
+                    QRectF(gx, label_y + 14.0, group_w, 13.0),
+                    Qt.AlignmentFlag.AlignCenter,
+                    short_disp
+                )
+
+    def mouseMoveEvent(self, event) -> None:
+        """Handle mouse hover to trigger dynamic tooltip and subtle bar enlargement."""
+        pos = event.position()
+        found_bar = None
+        found_entry = None
+
+        for entry in self._bar_hit_boxes:
+            if entry["hit_rect"].contains(pos):
+                found_bar = (entry["group_idx"], entry["bar_idx"])
+                found_entry = entry
+                break
+
+        if found_bar != self._hovered_bar:
+            self._hovered_bar = found_bar
+            if found_entry:
+                item = found_entry["item"]
+                code = str(item.get("code") or item.get("short_name") or "").strip()
+                name = str(item.get("name") or item.get("leave_type") or "").strip()
+                full_name = f"{name} ({code})" if code and code != name else (name or code or "Leave")
+
+                metric = str(found_entry.get("metric_name") or "Allotted")
+                val = float(found_entry.get("val", 0.0))
+
+                tooltip_text = (
+                    f"{full_name}\n"
+                    f"{metric}: {_fmt_val(val)}"
+                )
+                self.setToolTip(tooltip_text)
+                QToolTip.showText(event.globalPosition().toPoint(), tooltip_text, self)
+            else:
+                self.setToolTip("")
+                QToolTip.hideText()
+            self.update()
+
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        """Clear hover effect when mouse exits the chart."""
+        if self._hovered_bar is not None:
+            self._hovered_bar = None
+            self.setToolTip("")
+            QToolTip.hideText()
+            self.update()
+        super().leaveEvent(event)
+
+
+class LeaveTableView(QTableWidget):
+    """Compact, professional enterprise table displaying leave balance quotas."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setColumnCount(4)
+        self.setHorizontalHeaderLabels([
+            "Leave Type",
+            "Allotted",
+            "Used",
+            "Available",
+        ])
+        self.setAlternatingRowColors(True)
+        self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.verticalHeader().setVisible(False)
+        self.setShowGrid(False)
+        self.setStyleSheet(
+            """
+            QTableWidget {
+                background-color: #FFFFFF;
+                alternate-background-color: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                font-size: 11px;
+                color: #1E293B;
+            }
+            QHeaderView::section {
+                background-color: #F1F5F9;
+                color: #475569;
+                font-weight: 600;
+                font-size: 11px;
+                padding: 6px 10px;
+                border: none;
+                border-bottom: 1px solid #CBD5E1;
+            }
+            QTableWidget::item {
+                padding: 4px 10px;
+                border-bottom: 1px solid #F1F5F9;
+            }
+            QTableWidget::item:selected {
+                background-color: #EFF6FF;
+                color: #1E293B;
+            }
+            """
+        )
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+
+    def set_data(self, items: list[dict]) -> None:
+        self.setRowCount(0)
+        if not items:
+            return
+
+        self.setRowCount(len(items))
+        for row_idx, item in enumerate(items):
+            self.setRowHeight(row_idx, 30)
+
+            code = str(item.get("code") or item.get("short_name") or "").strip()
+            name = str(item.get("name") or item.get("leave_type") or "").strip()
+            full_name = f"{name} ({code})" if code and code != name else (name or code or "Leave")
+
+            total_v = float(item.get("total", 0.0) or item.get("total_quota", 0.0) or 0.0)
+            used_v = float(item.get("used", 0.0) or 0.0)
+            avail_v = float(item.get("available", 0.0) or item.get("left", 0.0) or 0.0)
+
+            # Col 0: Name
+            name_item = QTableWidgetItem(full_name)
+            name_item.setFont(QFont("-apple-system, Segoe UI, sans-serif", 10, QFont.Weight.Medium))
+            self.setItem(row_idx, 0, name_item)
+
+            # Col 1: Allotted
+            allotted_item = QTableWidgetItem(f"{_fmt_val(total_v)}")
+            allotted_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            allotted_item.setForeground(QColor("#2563EB"))
+            self.setItem(row_idx, 1, allotted_item)
+
+            # Col 2: Used
+            used_item = QTableWidgetItem(f"{_fmt_val(used_v)}")
+            used_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            used_item.setForeground(QColor("#DC2626") if used_v > 0 else QColor("#64748B"))
+            self.setItem(row_idx, 2, used_item)
+
+            # Col 3: Available
+            avail_item = QTableWidgetItem(f"{_fmt_val(avail_v)}")
+            avail_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            avail_item.setForeground(QColor("#15803D") if avail_v > 0 else QColor("#94A3B8"))
+            self.setItem(row_idx, 3, avail_item)
+
+
 class LeaveBalanceDialog(QDialog):
-    """Modal dialog displaying leave quotas and balances in a 2-column card layout."""
+    """Modal dialog displaying leave quotas and balances in a compact Bar Chart / Table View."""
 
     data_loaded = Signal(dict)
 
@@ -268,8 +747,8 @@ class LeaveBalanceDialog(QDialog):
         self.setObjectName("LeaveBalanceDialog")
         self.setWindowTitle("Leave Balance")
         self.setModal(True)
-        self.resize(780, 620)
-        self.setMinimumSize(600, 480)
+        self.resize(760, 490)
+        self.setMinimumSize(640, 400)
 
         self._service = service or AttendanceService()
         self._is_loading = False
@@ -286,9 +765,26 @@ class LeaveBalanceDialog(QDialog):
         self.refresh()
 
     def _setup_ui(self) -> None:
+        self.setStyleSheet(
+            """
+            QDialog#LeaveBalanceDialog {
+                background-color: #FFFFFF;
+            }
+            QToolTip {
+                background-color: #0B0F19;
+                color: #FFFFFF;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-size: 11.5px;
+                font-weight: 500;
+            }
+            """
+        )
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 18, 20, 18)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(18, 16, 18, 16)
+        main_layout.setSpacing(10)
 
         # --------------------------------------------------------------
         # 1. Header with Title, Subtitle, and Real-Time Network Status
@@ -300,10 +796,10 @@ class LeaveBalanceDialog(QDialog):
         title_col.setSpacing(2)
         self.title_label = QLabel("Leave Balance")
         self.title_label.setObjectName("LeaveBalanceTitle")
-        self.title_label.setStyleSheet("font-size: 19px; font-weight: 700; color: #0F172A;")
+        self.title_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
 
-        self.subtitle_label = QLabel("Employee Leave Quotas & Remaining Entitlements")
-        self.subtitle_label.setStyleSheet("font-size: 12px; color: #64748B;")
+        self.subtitle_label = QLabel("Employee Leave Quotas & Current Balance Breakdown")
+        self.subtitle_label.setStyleSheet("font-size: 11.5px; color: #64748B;")
 
         title_col.addWidget(self.title_label)
         title_col.addWidget(self.subtitle_label)
@@ -314,9 +810,9 @@ class LeaveBalanceDialog(QDialog):
         self.network_status_label = QLabel("● Online" if self._is_network_online else "● Offline")
         self.network_status_label.setObjectName("LeaveBalanceNetworkStatus")
         if self._is_network_online:
-            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px; margin-right: 4px;")
+            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 12px; margin-right: 4px;")
         else:
-            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px; margin-right: 4px;")
+            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 12px; margin-right: 4px;")
         header_layout.addWidget(self.network_status_label)
 
         main_layout.addLayout(header_layout)
@@ -324,19 +820,19 @@ class LeaveBalanceDialog(QDialog):
         # Error Banner
         self.error_container = QWidget(self)
         err_layout = QHBoxLayout(self.error_container)
-        err_layout.setContentsMargins(12, 10, 12, 10)
+        err_layout.setContentsMargins(12, 8, 12, 8)
         err_layout.setSpacing(10)
         self.error_container.setStyleSheet(
-            "QWidget { background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; }"
+            "QWidget { background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 6px; }"
         )
         self.error_label = QLabel("Unable to load leave balance. Please try again.", self.error_container)
-        self.error_label.setStyleSheet("color: #DC2626; font-size: 12px; font-weight: 500; border: none; background: transparent;")
+        self.error_label.setStyleSheet("color: #DC2626; font-size: 11.5px; font-weight: 500; border: none; background: transparent;")
         err_layout.addWidget(self.error_label, 1)
 
         self.retry_btn = QPushButton("Retry", self.error_container)
         self.retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.retry_btn.setStyleSheet(
-            "QPushButton { background: #DC2626; color: white; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: 600; border: none; }"
+            "QPushButton { background: #DC2626; color: white; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: 600; border: none; }"
             "QPushButton:hover { background: #B91C1C; }"
         )
         self.retry_btn.clicked.connect(lambda: self.refresh(force=True))
@@ -345,59 +841,72 @@ class LeaveBalanceDialog(QDialog):
         main_layout.addWidget(self.error_container)
 
         # --------------------------------------------------------------
-        # 2. Summary Metric Cards
+        # 2. Controls Toolbar: Section Label & Chart / Table Segmented Toggle
         # --------------------------------------------------------------
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(12)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(0, 2, 0, 2)
 
-        # Total Quota Card
-        quota_card = QGroupBox("Total Allotted", self)
-        quota_layout = QVBoxLayout(quota_card)
-        quota_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_quota_val = QLabel("0 Days", quota_card)
-        self.total_quota_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #2563EB;")
-        quota_layout.addWidget(self.total_quota_val)
-        stats_row.addWidget(quota_card)
+        self.breakdown_title = QLabel("Leave Types Breakdown", self)
+        self.breakdown_title.setStyleSheet("font-size: 12.5px; font-weight: 600; color: #1E293B;")
+        toolbar_layout.addWidget(self.breakdown_title)
+        toolbar_layout.addStretch(1)
 
-        # Total Used Card
-        used_card = QGroupBox("Total Availed / Used", self)
-        used_layout = QVBoxLayout(used_card)
-        used_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_used_val = QLabel("0 Days", used_card)
-        self.total_used_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #DC2626;")
-        used_layout.addWidget(self.total_used_val)
-        stats_row.addWidget(used_card)
+        toggle_frame = QFrame(self)
+        toggle_frame.setStyleSheet("background: #F1F5F9; border-radius: 5px; border: 1px solid #E2E8F0;")
+        toggle_layout = QHBoxLayout(toggle_frame)
+        toggle_layout.setContentsMargins(2, 2, 2, 2)
+        toggle_layout.setSpacing(2)
 
-        # Total Available Card
-        avail_card = QGroupBox("Available Balance", self)
-        avail_layout = QVBoxLayout(avail_card)
-        avail_layout.setContentsMargins(14, 8, 14, 10)
-        self.total_avail_val = QLabel("0 Days", avail_card)
-        self.total_avail_val.setStyleSheet("font-size: 19px; font-weight: 700; color: #16A34A;")
-        avail_layout.addWidget(self.total_avail_val)
-        stats_row.addWidget(avail_card)
+        self._active_toggle_style = (
+            "QPushButton { background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 600; "
+            "border-radius: 4px; padding: 3px 10px; border: none; }"
+        )
+        self._inactive_toggle_style = (
+            "QPushButton { background-color: transparent; color: #475569; font-size: 11px; font-weight: 500; "
+            "border-radius: 4px; padding: 3px 10px; border: none; }"
+            "QPushButton:hover { background-color: #E2E8F0; color: #0F172A; }"
+        )
 
-        main_layout.addLayout(stats_row)
+        self.chart_btn = QPushButton("📊 Bar Chart", toggle_frame)
+        self.chart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chart_btn.clicked.connect(self._show_chart_view)
+        toggle_layout.addWidget(self.chart_btn)
+
+        self.table_btn = QPushButton("📋 Table", toggle_frame)
+        self.table_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.table_btn.clicked.connect(self._show_table_view)
+        toggle_layout.addWidget(self.table_btn)
+
+        toolbar_layout.addWidget(toggle_frame)
+        main_layout.addLayout(toolbar_layout)
 
         # --------------------------------------------------------------
-        # 3. Card-Based Leave Summary Section (Scrollable 2-Column Grid)
+        # 3. Main Content Stack: Bar Chart View (Default) & Table View
         # --------------------------------------------------------------
+        self.content_stack = QStackedWidget(self)
+        self.content_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self.chart_view = LeaveBarChartWidget(self.content_stack)
+        self.table_view = LeaveTableView(self.content_stack)
+
+        self.content_stack.addWidget(self.chart_view)  # Page 0 (Default)
+        self.content_stack.addWidget(self.table_view)  # Page 1
+
+        main_layout.addWidget(self.content_stack, 1)
+
+        # Set default view to Bar Chart
+        self._show_chart_view()
+
+        # Headless/Compatibility attributes for tests & legacy access
+        self.total_quota_val = QLabel("0 Days", self)
+        self.total_used_val = QLabel("0 Days", self)
+        self.total_avail_val = QLabel("0 Days", self)
+        self.total_quota_val.setVisible(False)
+        self.total_used_val.setVisible(False)
+        self.total_avail_val.setVisible(False)
         self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-
-        self.cards_container = QWidget(self.scroll_area)
-        self.cards_container.setObjectName("LeaveCardsContainer")
-        self.cards_grid = QGridLayout(self.cards_container)
-        self.cards_grid.setContentsMargins(4, 4, 4, 8)
-        self.cards_grid.setSpacing(12)
-        self.cards_grid.setColumnStretch(0, 1)
-        self.cards_grid.setColumnStretch(1, 1)
-
-        self.scroll_area.setWidget(self.cards_container)
-        main_layout.addWidget(self.scroll_area, 1)
+        self.scroll_area.setVisible(False)
+        self.cards_grid = QGridLayout()
 
         # Empty State
         self.empty_state = QWidget(self)
@@ -405,7 +914,7 @@ class LeaveBalanceDialog(QDialog):
         empty_l.setContentsMargins(10, 30, 10, 30)
         empty_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label = QLabel("No leave balance data available.", self.empty_state)
-        self.empty_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748B;")
+        self.empty_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #64748B;")
         empty_l.addWidget(self.empty_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.empty_state.setVisible(False)
         main_layout.addWidget(self.empty_state)
@@ -419,11 +928,23 @@ class LeaveBalanceDialog(QDialog):
         self.close_btn = QPushButton("Close")
         self.close_btn.setObjectName("SecondaryButton")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_btn.setFixedSize(84, 32)
+        self.close_btn.setFixedSize(80, 30)
         self.close_btn.clicked.connect(self.accept)
         footer.addWidget(self.close_btn)
 
         main_layout.addLayout(footer)
+
+    def _show_chart_view(self) -> None:
+        """Switch to Bar Chart View (Default)."""
+        self.content_stack.setCurrentIndex(0)
+        self.chart_btn.setStyleSheet(self._active_toggle_style)
+        self.table_btn.setStyleSheet(self._inactive_toggle_style)
+
+    def _show_table_view(self) -> None:
+        """Switch to Table View."""
+        self.content_stack.setCurrentIndex(1)
+        self.table_btn.setStyleSheet(self._active_toggle_style)
+        self.chart_btn.setStyleSheet(self._inactive_toggle_style)
 
     def set_network_status(self, is_online: bool) -> None:
         """Update the displayed network connectivity status."""
@@ -493,6 +1014,7 @@ class LeaveBalanceDialog(QDialog):
             self.error_container.setVisible(False)
             if not self._cards:
                 self.scroll_area.setVisible(False)
+                self.content_stack.setVisible(False)
                 self.empty_state.setVisible(True)
         else:
             # Reconnected: If we currently have no cards or were showing an error/empty state, auto-refresh
@@ -557,6 +1079,7 @@ class LeaveBalanceDialog(QDialog):
                 self.error_container.setVisible(False)
                 if not self._cards:
                     self.scroll_area.setVisible(False)
+                    self.content_stack.setVisible(False)
                     self.empty_state.setVisible(True)
                 return
             self._show_error("Unable to load leave balance. Please try again.")
@@ -592,6 +1115,7 @@ class LeaveBalanceDialog(QDialog):
                 self._show_error(sanitized_msg)
                 if not self._cards:
                     self.scroll_area.setVisible(False)
+                    self.content_stack.setVisible(False)
                     self.empty_state.setVisible(True)
                 return
 
@@ -771,15 +1295,16 @@ class LeaveBalanceDialog(QDialog):
                 })
 
         if not final_items:
-            self.scroll_area.setVisible(False)
+            self.content_stack.setVisible(False)
             self.empty_state.setVisible(True)
             self.total_quota_val.setText("0 Days")
             self.total_used_val.setText("0 Days")
             self.total_avail_val.setText("0 Days")
+            self._cards.clear()
             return
 
         self.empty_state.setVisible(False)
-        self.scroll_area.setVisible(True)
+        self.content_stack.setVisible(True)
 
         # Compute dynamic summary totals from summary dict or items
         summary_dict = data.get("summary") if isinstance(data, dict) and isinstance(data.get("summary"), dict) else {}
@@ -799,22 +1324,12 @@ class LeaveBalanceDialog(QDialog):
         self.total_used_val.setText(f"{_fmt_val(tot_used)} Days")
         self.total_avail_val.setText(f"{_fmt_val(tot_avail)} Days")
 
-        # Clear existing cards
-        while self.cards_grid.count():
-            child = self.cards_grid.takeAt(0)
-            w = child.widget()
-            if w:
-                w.deleteLater()
-        self._cards.clear()
+        # Keep legacy cards cache populated
+        self._cards = [LeaveSummaryCard(item=item) for item in final_items]
 
-        # Render cards dynamically in a 2-column responsive grid
-        cols_per_row = 2
-        for idx, item in enumerate(final_items):
-            row_idx = idx // cols_per_row
-            col_idx = idx % cols_per_row
-            card = LeaveSummaryCard(item=item)
-            self.cards_grid.addWidget(card, row_idx, col_idx)
-            self._cards.append(card)
+        # Update Bar Chart View and Table View with dynamic API data
+        self.chart_view.set_data(final_items)
+        self.table_view.set_data(final_items)
 
     def _show_error(self, message: str) -> None:
         """Display error banner with sanitized message."""
@@ -824,3 +1339,5 @@ class LeaveBalanceDialog(QDialog):
         sanitized = self._sanitize_error_message(message)
         self.error_label.setText(sanitized)
         self.error_container.setVisible(True)
+        self.content_stack.setVisible(False)
+        self.empty_state.setVisible(True)

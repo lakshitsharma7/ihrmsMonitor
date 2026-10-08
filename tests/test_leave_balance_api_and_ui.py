@@ -494,5 +494,180 @@ class TestLeaveBalanceApiAndUi(unittest.TestCase):
         self.assertEqual(dialog.error_label.text(), "Invalid API KEY")
 
 
+    def test_bar_chart_default_view_and_toggle_switch(self):
+        """Verify Bar Chart is default view and Chart/Table toggle switches views cleanly."""
+        mock_service = MagicMock()
+        mock_service.get_leave_quota.return_value = {
+            "response": "Success",
+            "status": 200,
+            "items": [
+                {"code": "CL", "name": "Casual Leave", "total": 12.0, "used": 4.0, "left": 8.0, "available": 8.0},
+                {"code": "SL", "name": "Sick Leave", "total": 6.0, "used": 1.0, "left": 5.0, "available": 5.0},
+            ],
+            "summary": {"total_quota": 18.0, "total_used": 5.0, "total_available": 13.0},
+        }
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.refresh(async_mode=False)
+
+        # 1. Bar Chart must be default view
+        self.assertEqual(dialog.content_stack.currentIndex(), 0)
+        self.assertEqual(dialog.content_stack.currentWidget(), dialog.chart_view)
+
+        # 2. Click Table button -> switches to Table View
+        dialog.table_btn.click()
+        self.assertEqual(dialog.content_stack.currentIndex(), 1)
+        self.assertEqual(dialog.content_stack.currentWidget(), dialog.table_view)
+
+        # 3. Click Chart button -> switches back to Bar Chart View
+        dialog.chart_btn.click()
+        self.assertEqual(dialog.content_stack.currentIndex(), 0)
+        self.assertEqual(dialog.content_stack.currentWidget(), dialog.chart_view)
+
+    def test_bar_chart_and_table_view_display_identical_dynamic_api_data(self):
+        """Verify Table View and Bar Chart receive and display exact same dynamic API data."""
+        mock_service = MagicMock()
+        test_items = [
+            {"code": "CL", "name": "Casual Leave", "total": 202.0, "used": 2.0, "left": 200.0, "available": 200.0},
+            {"code": "SL", "name": "Sick Leave", "total": 100.0, "used": 0.0, "left": 100.0, "available": 100.0},
+            {"code": "EL", "name": "Paid Leave", "total": 203.0, "used": 3.0, "left": 200.0, "available": 200.0},
+        ]
+        mock_service.get_leave_quota.return_value = {
+            "response": "Success",
+            "status": 200,
+            "items": test_items,
+            "summary": {"total_quota": 505.0, "total_used": 5.0, "total_available": 500.0},
+        }
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.refresh(async_mode=False)
+
+        # 1. Bar Chart data check
+        self.assertEqual(len(dialog.chart_view._items), 3)
+        self.assertEqual(dialog.chart_view._items[0]["code"], "CL")
+        self.assertEqual(dialog.chart_view._items[0]["total"], 202.0)
+
+        # 2. Table View rows check
+        self.assertEqual(dialog.table_view.rowCount(), 3)
+        self.assertEqual(dialog.table_view.columnCount(), 4)
+
+        # Row 0: Casual Leave (CL) | 202 | 2 | 200 (No Days suffix, No Status column)
+        self.assertEqual(dialog.table_view.item(0, 0).text(), "Casual Leave (CL)")
+        self.assertEqual(dialog.table_view.item(0, 1).text(), "202")
+        self.assertEqual(dialog.table_view.item(0, 2).text(), "2")
+        self.assertEqual(dialog.table_view.item(0, 3).text(), "200")
+
+        # Row 1: Sick Leave (SL) | 100 | 0 | 100
+        self.assertEqual(dialog.table_view.item(1, 0).text(), "Sick Leave (SL)")
+        self.assertEqual(dialog.table_view.item(1, 1).text(), "100")
+        self.assertEqual(dialog.table_view.item(1, 2).text(), "0")
+        self.assertEqual(dialog.table_view.item(1, 3).text(), "100")
+
+    def test_leave_table_has_no_status_column_and_bar_chart_hover_tooltip(self):
+        """Verify Table View excludes Status column and Bar Chart shows context-aware tooltip on hover."""
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import QPointF, QEvent, Qt
+
+        mock_service = MagicMock()
+        test_items = [
+            {"code": "CL", "name": "Casual Leave", "total": 202.0, "used": 2.0, "left": 200.0, "available": 200.0},
+            {"code": "SL", "name": "Sick Leave", "total": 100.0, "used": 0.0, "left": 100.0, "available": 100.0},
+        ]
+        mock_service.get_leave_quota.return_value = {
+            "response": "Success",
+            "status": 200,
+            "items": test_items,
+            "summary": {"total_quota": 302.0, "total_used": 2.0, "total_available": 300.0},
+        }
+
+        dialog = LeaveBalanceDialog(service=mock_service)
+        dialog.refresh(async_mode=False)
+
+        # 1. Verify Table Headers do NOT contain Status and values have no 'Days'
+        headers = [dialog.table_view.horizontalHeaderItem(c).text() for c in range(dialog.table_view.columnCount())]
+        self.assertEqual(headers, ["Leave Type", "Allotted", "Used", "Available"])
+        self.assertNotIn("Status", headers)
+        self.assertEqual(dialog.table_view.item(0, 1).text(), "202")
+        self.assertEqual(dialog.table_view.item(0, 2).text(), "2")
+        self.assertEqual(dialog.table_view.item(0, 3).text(), "200")
+
+        # 2. Render chart to populate hit boxes
+        dialog.chart_view.resize(500, 250)
+        dialog.chart_view.repaint()
+
+        self.assertGreater(len(dialog.chart_view._bar_hit_boxes), 0)
+
+        # 3. Simulate mouse move over first bar hit box (CL Allotted)
+        first_box = dialog.chart_view._bar_hit_boxes[0]
+        center_pt = first_box["hit_rect"].center()
+
+        move_ev0 = QMouseEvent(
+            QEvent.Type.MouseMove,
+            center_pt,
+            center_pt,
+            dialog.chart_view.mapToGlobal(center_pt.toPoint()),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        dialog.chart_view.mouseMoveEvent(move_ev0)
+
+        # Verify tooltip shows ONLY Allotted metric
+        self.assertEqual(dialog.chart_view.toolTip(), "Casual Leave (CL)\nAllotted: 202")
+        self.assertNotIn("Used:", dialog.chart_view.toolTip())
+        self.assertNotIn("Available:", dialog.chart_view.toolTip())
+        self.assertEqual(dialog.chart_view._hovered_bar, (0, 0))
+
+        # 4. Simulate mouse move over second bar hit box (CL Used)
+        used_box = dialog.chart_view._bar_hit_boxes[1]
+        used_pt = used_box["hit_rect"].center()
+        move_ev1 = QMouseEvent(
+            QEvent.Type.MouseMove,
+            used_pt,
+            used_pt,
+            dialog.chart_view.mapToGlobal(used_pt.toPoint()),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        dialog.chart_view.mouseMoveEvent(move_ev1)
+
+        # Verify tooltip shows ONLY Used metric
+        self.assertEqual(dialog.chart_view.toolTip(), "Casual Leave (CL)\nUsed: 2")
+        self.assertNotIn("Allotted:", dialog.chart_view.toolTip())
+        self.assertNotIn("Available:", dialog.chart_view.toolTip())
+
+        # 5. Simulate mouse move over third bar hit box (CL Available)
+        avail_box = dialog.chart_view._bar_hit_boxes[2]
+        avail_pt = avail_box["hit_rect"].center()
+        move_ev2 = QMouseEvent(
+            QEvent.Type.MouseMove,
+            avail_pt,
+            avail_pt,
+            dialog.chart_view.mapToGlobal(avail_pt.toPoint()),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        dialog.chart_view.mouseMoveEvent(move_ev2)
+
+        # Verify tooltip shows ONLY Available metric
+        self.assertEqual(dialog.chart_view.toolTip(), "Casual Leave (CL)\nAvailable: 200")
+        self.assertNotIn("Allotted:", dialog.chart_view.toolTip())
+        self.assertNotIn("Used:", dialog.chart_view.toolTip())
+
+        # 6. Simulate mouse leave -> clears hover
+        leave_ev = QEvent(QEvent.Type.Leave)
+        dialog.chart_view.leaveEvent(leave_ev)
+        self.assertIsNone(dialog.chart_view._hovered_bar)
+        self.assertEqual(dialog.chart_view.toolTip(), "")
+
+        # 7. Verify dark tooltip styling in chart widget stylesheet
+        chart_style = dialog.chart_view.styleSheet()
+        self.assertIn("#0B0F19", chart_style)
+        self.assertIn("#374151", chart_style)
+        self.assertIn("#FFFFFF", chart_style)
+
+
 if __name__ == "__main__":
     unittest.main()

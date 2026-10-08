@@ -695,7 +695,7 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             "details": None,
             "is_today": False,
         })
-        self.assertIn("background-color: #FFFFFF", unrecorded_card.styleSheet())
+        self.assertIn("background-color: #F8FAFC", unrecorded_card.styleSheet())
         self.assertIn("border: 1px solid #E2E8F0", unrecorded_card.styleSheet())
         self.assertFalse(unrecorded_card.status_badge.isVisible())
 

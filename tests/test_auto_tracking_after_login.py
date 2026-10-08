@@ -120,7 +120,6 @@ class TestAutoWorkPulseAfterLogin(unittest.TestCase):
              patch.object(MainWindow, "_check_for_updates"), \
              patch.object(MainWindow, "_sync_permissions_from_backend"):
             win = MainWindow()
-            win.show()
             try:
                 # Dashboard labels should be Active, button Paused, and network Online
                 self.assertEqual(win.status_badge.text(), "Online")
@@ -129,8 +128,7 @@ class TestAutoWorkPulseAfterLogin(unittest.TestCase):
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
             finally:
                 win._shutdown()
-                win.close()
-                QApplication.processEvents()
+                win.deleteLater()
 
 
 if __name__ == "__main__":
