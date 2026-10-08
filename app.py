@@ -163,9 +163,9 @@ def main() -> int:
         arg in sys.argv for arg in ("--startup", "--minimized", "--background", "--autostart", "-s")
     )
     if is_startup:
-        logger.info("Workpulse launched through Windows startup / background mode (%s)", sys.argv)
+        logger.info("iHRMS Desktop launched through Windows startup / background mode (%s)", sys.argv)
     else:
-        logger.info("Workpulse launched manually by user (%s)", sys.argv)
+        logger.info("iHRMS Desktop launched manually by user (%s)", sys.argv)
 
     if not is_supported_platform():
         QMessageBox.critical(
@@ -223,7 +223,7 @@ def main() -> int:
                 def _enum_windows_cb(hwnd, _):
                     if win32gui.IsWindow(hwnd) and not win32gui.GetParent(hwnd):
                         title = win32gui.GetWindowText(hwnd)
-                        if ("Workpulse" in title or "iHRMS Monitor" in title) and not found_hwnds:
+                        if any(t in title for t in ("iHRMS Desktop", "Workpulse", "iHRMS Monitor")) and not found_hwnds:
                             try:
                                 rect = win32gui.GetWindowRect(hwnd)
                                 width = rect[2] - rect[0]
@@ -337,7 +337,7 @@ def main() -> int:
             app.aboutToQuit.connect(main_window._shutdown)
 
             if is_startup:
-                logger.info("Workpulse started silently in the background / system tray.")
+                logger.info("iHRMS Desktop started silently in the background / system tray.")
                 main_window.hide()
                 if hasattr(main_window, "tray") and main_window.tray:
                     main_window.tray.show()

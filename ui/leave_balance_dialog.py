@@ -1,4 +1,4 @@
-"""Leave Balance Modal Dialog for Workpulse.
+"""Leave Balance Modal Dialog for iHRMS Desktop.
 
 Displays employee leave quota and current balance breakdown with
 fixed 7 leave types, summary cards, progress bars, dynamic API loading,

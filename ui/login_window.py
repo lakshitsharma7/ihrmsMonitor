@@ -36,7 +36,7 @@ HERO_BULLETS = (
 CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
 
 CONSENT_TEXT = (
-    "By logging in to Workpulse, you acknowledge and give your consent to "
+    "By logging in to iHRMS Desktop, you acknowledge and give your consent to "
     "your activity information for workplace productivity monitoring."
 )
 
@@ -118,7 +118,7 @@ class LoginWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Workpulse - Login")
+        self.setWindowTitle("iHRMS Desktop - Login")
         self.setMinimumSize(760, 600)
         self.resize(860, 640)
         
@@ -218,7 +218,7 @@ class LoginWindow(QMainWindow):
         )
         hero_layout.addSpacing(18)
 
-        brand_name = QLabel("Workpulse", hero)
+        brand_name = QLabel("iHRMS Desktop", hero)
         brand_name.setObjectName("LoginBrandName")
         brand_name.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         hero_layout.addWidget(brand_name)
@@ -1230,8 +1230,8 @@ class LoginWindow(QMainWindow):
                 self.main_window.activateWindow()
                 if hasattr(self.main_window, "tray") and self.main_window.tray:
                     self.main_window.tray.show_message(
-                        "Workpulse",
-                        "Workpulse is active.",
+                        "iHRMS Desktop",
+                        "iHRMS Desktop is active.",
                     )
 
                 # Hide login window

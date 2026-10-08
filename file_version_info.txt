@@ -20,12 +20,12 @@ VSVersionInfo(
           '040904B0',
           [
             StringStruct('CompanyName', 'Indovision Services'),
-            StringStruct('FileDescription', 'Workpulse Desktop Client'),
+            StringStruct('FileDescription', 'iHRMS Desktop Client'),
             StringStruct('FileVersion', '1.1.0.0'),
-            StringStruct('InternalName', 'Workpulse'),
+            StringStruct('InternalName', 'iHRMS Desktop'),
             StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),
             StringStruct('OriginalFilename', 'Workpulse.exe'),
-            StringStruct('ProductName', 'Workpulse'),
+            StringStruct('ProductName', 'iHRMS Desktop'),
             StringStruct('ProductVersion', '1.1.0.0')
           ]
         )

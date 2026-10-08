@@ -417,7 +417,7 @@ class AttendanceRingWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(96, 96)
+        self.setFixedSize(80, 80)
         self._pct: int = 0
         self._has_records: bool = False
 
@@ -450,21 +450,21 @@ class AttendanceRingWidget(QWidget):
             painter.drawPie(rect, 90 * 16, span_angle)
 
         # Inner circle (matches sidebar bg)
-        inner = QRectF(12, 12, w - 24, h - 24)
+        inner = QRectF(10, 10, w - 20, h - 20)
         painter.setBrush(QColor("#EAECFF"))
         painter.drawEllipse(inner)
 
         # Percentage text
         painter.setPen(QColor("#1E1B4B"))
-        f_val = QFont("Segoe UI", 13, QFont.Weight.ExtraBold)
+        f_val = QFont("Segoe UI", 11, QFont.Weight.ExtraBold)
         painter.setFont(f_val)
         val_str = f"{self._pct}%" if self._has_records else "–%"
-        painter.drawText(QRectF(12, 22, w - 24, 24), Qt.AlignmentFlag.AlignCenter, val_str)
+        painter.drawText(QRectF(4, 15, w - 8, 20), Qt.AlignmentFlag.AlignCenter, val_str)
 
         painter.setPen(QColor("#6B7280"))
-        f_lbl = QFont("Segoe UI", 7, QFont.Weight.Medium)
+        f_lbl = QFont("Segoe UI", 6.5, QFont.Weight.Medium)
         painter.setFont(f_lbl)
-        painter.drawText(QRectF(12, 48, w - 24, 16), Qt.AlignmentFlag.AlignCenter, "attendance")
+        painter.drawText(QRectF(4, 38, w - 8, 14), Qt.AlignmentFlag.AlignCenter, "attendance")
 
 
 # ============================================================================
@@ -580,7 +580,7 @@ class AttendancePage(QWidget):
         # ════════════════════════════════════════════════════════════
         sidebar = QFrame(self)
         sidebar.setObjectName("AttendanceSidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(248)
         sidebar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         sidebar.setStyleSheet(
             """
@@ -592,7 +592,7 @@ class AttendancePage(QWidget):
             """
         )
         sb = QVBoxLayout(sidebar)
-        sb.setContentsMargins(16, 18, 16, 16)
+        sb.setContentsMargins(14, 18, 14, 16)
         sb.setSpacing(0)
 
         # Back button ─────────────────────────────────────────────────
@@ -653,8 +653,11 @@ class AttendancePage(QWidget):
         ring_info.addWidget(rate_lbl)
 
         self.rating_badge = QLabel("Good", sidebar)
+        self.rating_badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self.rating_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rating_badge.setWordWrap(False)
         self.rating_badge.setStyleSheet(
-            "border-radius: 99px; font-size: 10px; font-weight: 700; padding: 2px 10px; "
+            "border-radius: 6px; font-size: 10px; font-weight: 600; padding: 4px 10px; "
             "background: #DCFCE7; color: #16A34A; border: 1px solid #BBF7D0;"
         )
         ring_info.addWidget(self.rating_badge)
@@ -851,31 +854,11 @@ class AttendancePage(QWidget):
 
         nav_toolbar.addStretch(1)
 
-        _combo_style = """
-            QComboBox {
-                background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px;
-                color: #374151; padding: 4px 10px; font-weight: 600;
-                font-size: 11px; min-height: 28px;
-            }
-            QComboBox:hover { border-color: #818CF8; }
-            QComboBox::drop-down { border: none; width: 18px; }
-            QComboBox QAbstractItemView {
-                background-color: #FFFFFF; border: 1px solid #E2E8F0;
-                border-radius: 8px; color: #374151;
-                selection-background-color: #EEF2FF; selection-color: #4F46E5;
-                padding: 4px;
-            }
-        """
-
-        self.month_combo = QComboBox()
-        self.month_combo.setMinimumHeight(32)
-        self.month_combo.setStyleSheet(_combo_style)
-        nav_toolbar.addWidget(self.month_combo)
-
-        self.year_combo = QComboBox()
-        self.year_combo.setMinimumHeight(32)
-        self.year_combo.setStyleSheet(_combo_style)
-        nav_toolbar.addWidget(self.year_combo)
+        # Retain hidden combo instances to preserve internal logic, month calculation, and test compatibility
+        self.month_combo = QComboBox(self)
+        self.month_combo.setVisible(False)
+        self.year_combo = QComboBox(self)
+        self.year_combo.setVisible(False)
 
         self._populate_year_combo()
         self._populate_month_combo()
@@ -1480,17 +1463,17 @@ class AttendancePage(QWidget):
         pct = round((present_cnt / working_days) * 100) if working_days > 0 else 0
         self.ring_widget.set_percentage(pct, has_records=True)
 
-        # Rating badge — light-theme colours
+        # Rating badge — clean professional styling
         if pct >= 90:
-            rating_text, r_bg, r_txt, r_border = "Excellent", "#DCFCE7", "#16A34A", "#BBF7D0"
+            rating_text, r_bg, r_txt, r_border = "Excellent", "#F0FDF4", "#15803D", "#BBF7D0"
         elif pct >= 75:
-            rating_text, r_bg, r_txt, r_border = "Good",      "#DBEAFE", "#1D4ED8", "#BFDBFE"
+            rating_text, r_bg, r_txt, r_border = "Good",      "#EFF6FF", "#1D4ED8", "#BFDBFE"
         else:
-            rating_text, r_bg, r_txt, r_border = "Needs improvement", "#FEF3C7", "#B45309", "#FDE68A"
+            rating_text, r_bg, r_txt, r_border = "Needs Improvement", "#FEF3C7", "#92400E", "#FCD34D"
 
         self.rating_badge.setText(rating_text)
         self.rating_badge.setStyleSheet(
-            f"border-radius: 99px; font-size: 10px; font-weight: 700; padding: 2px 10px; "
+            f"border-radius: 6px; font-size: 10px; font-weight: 600; padding: 4px 10px; "
             f"background: {r_bg}; color: {r_txt}; border: 1px solid {r_border};"
         )
 

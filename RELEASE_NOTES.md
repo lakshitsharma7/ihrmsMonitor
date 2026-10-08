@@ -1,6 +1,6 @@
-# Workpulse v1.1 Release Notes
+# iHRMS Desktop v1.1 Release Notes
 
-We are excited to release **Workpulse v1.1**, introducing native macOS & Windows distribution updates, instant non-blocking startup flow, green Missed Punch calendar indicators, and dynamic leave balance synchronization.
+We are excited to release **iHRMS Desktop v1.1**, introducing native macOS & Windows distribution updates, instant non-blocking startup flow, green Missed Punch calendar indicators, and dynamic leave balance synchronization.
 
 ---
 
@@ -19,7 +19,7 @@ We are excited to release **Workpulse v1.1**, introducing native macOS & Windows
 
 #### 🔒 Security & TLS CA Certificate Resilience
 - **Dynamic CA Bundle Resolution**: Auto-recovers from invalid user paths or stale roaming environment variables (`REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`), guaranteeing uninterrupted HTTPS connections for attendance, leave balances, and workpulse sync.
-- **Dynamic HRMS Single-Sign-On**: Secure token generation for instant HRMS portal access from the Workpulse dashboard without exposing plain-text credentials in URLs.
+- **Dynamic HRMS Single-Sign-On**: Secure token generation for instant HRMS portal access from the iHRMS Desktop dashboard without exposing plain-text credentials in URLs.
 
 #### 🧪 Quality Assurance & CI/CD
 - **270+ Automated Tests**: Comprehensive unit and integration test suite passing on both Windows and macOS.

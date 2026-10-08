@@ -1,4 +1,4 @@
-# Workpulse
+# iHRMS Desktop
 
 A cross-platform enterprise desktop activity monitoring, timesheet management, and attendance companion for **Windows** and **macOS**, built with **Python + PySide6**. One codebase, one unified UI, one database schema, and seamless multi-tenant cloud synchronization.
 
@@ -6,7 +6,7 @@ A cross-platform enterprise desktop activity monitoring, timesheet management, a
 
 ## 1. Project Overview
 
-**Workpulse** runs quietly in the system tray or menu bar to provide:
+**iHRMS Desktop** runs quietly in the system tray or menu bar to provide:
 - **Active Workspace Productivity Monitoring**: Captures active application, process ID, window title, and exact focus duration.
 - **Smart Idle Detection**: Halts active duration counting during periods of user inactivity (mouse/keyboard idle).
 - **Automated Cloud Synchronization**: Local-first SQLite queue with transactional batch uploads (`POST /workpulse/save_activity_batch`).
@@ -102,7 +102,7 @@ python3 app.py
 
 ## 6. Endpoints & Integrations
 
-Workpulse connects dynamically to tenant-specific company endpoints resolved through AppController:
+iHRMS Desktop connects dynamically to tenant-specific company endpoints resolved through AppController:
 
 - **Company Verification**: `POST /appcontroller/appcontroller`
 - **User Authentication**: `POST /login/login`
@@ -153,7 +153,7 @@ Output: `dist/Workpulse.dmg` and `dist/Workpulse.app`
 
 ## 9. Automated Testing
 
-Workpulse includes a complete test suite of 295 unit and integration tests:
+iHRMS Desktop includes a complete test suite of 295 unit and integration tests:
 
 ```bash
 # Run all unit and integration tests
@@ -169,4 +169,4 @@ python -m unittest tests/test_auto_update_version_check.py
 
 - **Strict HTTPS/TLS**: All communication with cloud endpoints enforces valid TLS certificates.
 - **Credential Protection**: Passwords, tokens, and authorization keys are scrubbed from log files.
-- **Non-Invasive Activity WorkPulse**: Workpulse captures active application names, window titles, durations, and system health metrics. It does not perform keylogging, clipboard extraction, or covert microphone/webcam recording.
+- **Non-Invasive Activity Monitoring**: iHRMS Desktop captures active application names, window titles, durations, and system health metrics. It does not perform keylogging, clipboard extraction, or covert microphone/webcam recording.

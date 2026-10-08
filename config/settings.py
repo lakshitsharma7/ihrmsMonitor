@@ -13,8 +13,8 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "Workpulse"
-ORG_NAME = "WorkpulseApp"
+APP_NAME = "iHRMS Desktop"
+ORG_NAME = "iHRMS"
 
 
 def _read_pe_file_version(exe_path: str | Path) -> str | None:

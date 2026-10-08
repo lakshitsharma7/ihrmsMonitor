@@ -677,8 +677,8 @@ class MainWindow(QMainWindow):
                 msg.setWindowTitle("Screen Recording Permission Required")
                 msg.setIcon(QMessageBox.Icon.Warning)
                 msg.setText(
-                    "Workpulse needs Screen Recording permission to capture "
-                    "screenshots for attendance workpulse.\n\n"
+                    "iHRMS Desktop needs Screen Recording permission to capture "
+                    "screenshots for attendance tracking.\n\n"
                     f"{reason}"
                 )
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -689,12 +689,12 @@ class MainWindow(QMainWindow):
             msg.setWindowTitle("Screen Recording Permission Required")
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setText(
-                "Workpulse needs Screen Recording permission to capture "
-                "screenshots for attendance workpulse."
+                "iHRMS Desktop needs Screen Recording permission to capture "
+                "screenshots for attendance tracking."
             )
             msg.setInformativeText(
                 "1. Click \"Open Settings\" below.\n"
-                "2. Find Workpulse in the list and enable the toggle.\n"
+                "2. Find iHRMS Desktop in the list and enable the toggle.\n"
                 "3. Return here and click \"Quit & Reopen\"."
             )
             open_btn = msg.addButton("Open Settings", QMessageBox.ButtonRole.ActionRole)

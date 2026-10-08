@@ -250,8 +250,8 @@ app = BUNDLE(
     icon='assets/ihrms-logo-icon.icns',
     bundle_identifier='com.indovision.workpulse',
     info_plist={
-        'CFBundleName': 'Workpulse',
-        'CFBundleDisplayName': 'Workpulse',
+        'CFBundleName': 'iHRMS Desktop',
+        'CFBundleDisplayName': 'iHRMS Desktop',
         'CFBundleIdentifier': 'com.indovision.workpulse',
         'CFBundleVersion': app_version,
         'CFBundleShortVersionString': app_version,
@@ -262,7 +262,7 @@ app = BUNDLE(
         'NSHighResolutionCapable': 'True',
         'NSRequiresAquaSystemAppearance': 'False',
         'LSMinimumSystemVersion': '11.0',
-        'NSAppleEventsUsageDescription': 'Workpulse monitors active applications and window titles to track employee work activity.',
-        'NSScreenCaptureUsageDescription': 'Workpulse takes periodic desktop screenshots for work activity verification.',
+        'NSAppleEventsUsageDescription': 'iHRMS Desktop monitors active applications and window titles to track employee work activity.',
+        'NSScreenCaptureUsageDescription': 'iHRMS Desktop takes periodic desktop screenshots for work activity verification.',
     },
 )

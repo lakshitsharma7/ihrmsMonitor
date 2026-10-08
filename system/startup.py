@@ -102,6 +102,10 @@ def _find_windows_executable(explicit_path: str | Path | None = None) -> Path | 
     project_root = Path(__file__).resolve().parent.parent
 
     candidate_paths = [
+        Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        project_root / "dist" / "iHRMS Desktop" / "iHRMS Desktop.exe",
         Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe",
         Path(prog_files) / "Workpulse" / "Workpulse.exe",
         Path(prog_files_x86) / "Workpulse" / "Workpulse.exe",
@@ -137,7 +141,7 @@ def _windows_is_enabled() -> bool:
         import winreg  # type: ignore
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH, 0, winreg.KEY_READ) as key:
-            for key_name in (APP_NAME, "iHRMS Monitor"):
+            for key_name in (APP_NAME, "Workpulse", "iHRMS Monitor"):
                 try:
                     val, _ = winreg.QueryValueEx(key, key_name)
                     if val:
@@ -200,7 +204,7 @@ def _windows_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
             return True
         else:
             removed_any = False
-            for k in (APP_NAME, "iHRMS Monitor"):
+            for k in (APP_NAME, "Workpulse", "iHRMS Monitor"):
                 try:
                     winreg.DeleteValue(key, k)
                     logger.info("Removed Windows auto-start Run key for: %s", k)

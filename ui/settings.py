@@ -42,7 +42,7 @@ class SettingsPage(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        group = QGroupBox("WorkPulse")
+        group = QGroupBox("iHRMS Desktop")
         form = QFormLayout()
 
         self.start_with_system_checkbox = QCheckBox("Start with system")
