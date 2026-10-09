@@ -102,17 +102,21 @@ def _find_windows_executable(explicit_path: str | Path | None = None) -> Path | 
     project_root = Path(__file__).resolve().parent.parent
 
     candidate_paths = [
+        Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS-Desktop.exe",
         Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS Desktop.exe",
-        Path(prog_files) / "iHRMS Desktop" / "iHRMS Desktop.exe",
-        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS Desktop.exe",
-        project_root / "dist" / "iHRMS Desktop" / "iHRMS Desktop.exe",
         Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe",
-        Path(prog_files) / "Workpulse" / "Workpulse.exe",
-        Path(prog_files_x86) / "Workpulse" / "Workpulse.exe",
-        project_root / "dist" / "Workpulse" / "Workpulse.exe",
         Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe",
+        Path(prog_files) / "iHRMS Desktop" / "iHRMS-Desktop.exe",
+        Path(prog_files) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files) / "Workpulse" / "Workpulse.exe",
         Path(prog_files) / "iHRMS Monitor" / "iHRMS Monitor.exe",
+        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS-Desktop.exe",
+        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files_x86) / "Workpulse" / "Workpulse.exe",
         Path(prog_files_x86) / "iHRMS Monitor" / "iHRMS Monitor.exe",
+        project_root / "dist" / "iHRMS-Desktop" / "iHRMS-Desktop.exe",
+        project_root / "dist" / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        project_root / "dist" / "Workpulse" / "Workpulse.exe",
         project_root / "dist" / "iHRMS Monitor" / "iHRMS Monitor.exe",
     ]
 

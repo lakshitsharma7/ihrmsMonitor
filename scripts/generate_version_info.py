@@ -50,9 +50,9 @@ VSVersionInfo(
             StringStruct('CompanyName', 'Indovision Services'),
             StringStruct('FileDescription', '{APP_NAME} Desktop Client'),
             StringStruct('FileVersion', '{v_str}'),
-            StringStruct('InternalName', '{APP_NAME}'),
+            StringStruct('InternalName', 'iHRMS-Desktop'),
             StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),
-            StringStruct('OriginalFilename', '{APP_NAME}.exe'),
+            StringStruct('OriginalFilename', 'iHRMS-Desktop.exe'),
             StringStruct('ProductName', '{APP_NAME}'),
             StringStruct('ProductVersion', '{v_str}')
           ]

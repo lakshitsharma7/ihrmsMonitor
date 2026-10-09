@@ -75,7 +75,10 @@ if ($null -eq $payload -and -not $ProcessPendingOnly) {
     # Dynamically resolve app version
     $appVer = "2.0.2"
     try {
-        $exePath = Join-Path $PSScriptRoot "..\Workpulse.exe"
+        $exePath = Join-Path $PSScriptRoot "..\iHRMS-Desktop.exe"
+        if (-not (Test-Path $exePath)) {
+            $exePath = Join-Path $PSScriptRoot "..\Workpulse.exe"
+        }
         if (-not (Test-Path $exePath)) {
             $exePath = Join-Path $PSScriptRoot "..\iHRMS Monitor.exe"
         }
