@@ -14,5 +14,8 @@
     <!-- Required for monitoring active application and window titles via AppleEvents / NSWorkspace -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <!-- Required for PyInstaller bootloader and dynamic library resolution under Hardened Runtime -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
 </dict>
 </plist>

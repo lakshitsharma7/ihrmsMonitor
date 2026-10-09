@@ -1,4 +1,4 @@
-name: Build macOS Workpulse
+name: Build macOS iHRMS Desktop
 
 on:
   workflow_dispatch:
@@ -71,9 +71,9 @@ jobs:
           print("[OK] Relaunch guard state I/O works correctly")
 
           # 4. NSScreenCaptureUsageDescription present in spec
-          spec = Path("Workpulse-macos.spec").read_text()
+          spec = Path("iHRMS-Desktop-macos.spec").read_text()
           assert "NSScreenCaptureUsageDescription" in spec, \
-              "NSScreenCaptureUsageDescription missing from Workpulse-macos.spec"
+              "NSScreenCaptureUsageDescription missing from iHRMS-Desktop-macos.spec"
           print("[OK] NSScreenCaptureUsageDescription present in spec")
 
           print("\n=== macOS Screen Recording permission smoke-test: ALL PASSED ===")
@@ -90,7 +90,7 @@ jobs:
           echo "version=${APP_VER}" >> $GITHUB_OUTPUT
 
       - name: Configure Apple Developer ID Keychain
-        if: env.APPLE_CERTIFICATE_BASE64 != ''
+        if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' || secrets.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -109,9 +109,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-      - name: Build, Sign, Notarize & Staple Workpulse (macOS)
+      - name: Build, Sign, Notarize & Staple iHRMS Desktop (macOS)
         env:
           SKIP_TESTS: "1"
+          REQUIRE_SIGNING: "1"
+          REQUIRE_NOTARIZATION: "1"
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -133,48 +135,48 @@ jobs:
 
       - name: Validate built application bundle & dmg
         run: |
-          echo "Verifying Workpulse.app structure..."
-          test -d dist/Workpulse.app
-          test -f dist/Workpulse.app/Contents/MacOS/Workpulse
-          test -f dist/Workpulse.app/Contents/Info.plist
+          echo "Verifying iHRMS-Desktop.app structure..."
+          test -d dist/iHRMS-Desktop.app
+          test -f dist/iHRMS-Desktop.app/Contents/MacOS/iHRMS-Desktop
+          test -f dist/iHRMS-Desktop.app/Contents/Info.plist
           
           echo "Inspecting Info.plist..."
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/Workpulse.app/Contents/Info.plist
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/Workpulse.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/iHRMS-Desktop.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/iHRMS-Desktop.app/Contents/Info.plist
 
-          echo "Verifying Workpulse.dmg..."
-          test -f dist/macOS/Workpulse.dmg
-          ls -lh dist/macOS/Workpulse.dmg
+          echo "Verifying DMG..."
+          TARGET_DMG="dist/macOS/iHRMS-Desktop-${{ env.APP_VER }}.dmg"
+          test -f "${TARGET_DMG}"
+          ls -lh "${TARGET_DMG}"
 
           echo "Mounting and verifying DMG payload..."
           MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
-          hdiutil attach dist/macOS/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
-          test -d "${MOUNT_PT}/Workpulse.app"
-          test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
-          MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
+          hdiutil attach "${TARGET_DMG}" -mountpoint "${MOUNT_PT}" -nobrowse -readonly
+          test -d "${MOUNT_PT}/iHRMS-Desktop.app"
+          test -f "${MOUNT_PT}/iHRMS-Desktop.app/Contents/MacOS/iHRMS-Desktop"
+          MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/iHRMS-Desktop.app/Contents/Info.plist")
           echo "Mounted DMG version: ${MOUNT_VER}"
           hdiutil detach "${MOUNT_PT}"
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
 
-          if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
-            echo "Validating Developer ID signature & stapling..."
-            codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
-            spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
-            spctl --assess --type install --verbose=4 dist/macOS/Workpulse.dmg || true
-            xcrun stapler validate dist/macOS/Workpulse.dmg || true
-          fi
+          echo "Validating Developer ID signature, Hardened Runtime & stapling..."
+          codesign --verify --deep --strict --verbose=2 dist/iHRMS-Desktop.app
+          codesign --verify --verbose=2 "${TARGET_DMG}"
+          spctl --assess --type execute --verbose=4 dist/iHRMS-Desktop.app
+          spctl --assess --type install --verbose=4 "${TARGET_DMG}"
+          xcrun stapler validate "${TARGET_DMG}"
 
       - name: Prepare bundle for artifact upload
         run: |
           cd dist
-          zip -ry Workpulse.app.zip Workpulse.app
+          zip -ry iHRMS-Desktop.app.zip iHRMS-Desktop.app
 
       - name: Upload macOS Distribution Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: workpulse-macos-dist
+          name: ihrms-desktop-macos-dist
           path: |
-            dist/macOS/*.dmg
-            dist/Workpulse.app.zip
+            dist/macOS/iHRMS-Desktop-*.dmg
+            dist/iHRMS-Desktop.app.zip
           retention-days: 7

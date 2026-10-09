@@ -1,13 +1,12 @@
-# Workpulse Build & Packaging Instructions
+# iHRMS Desktop Build & Packaging Instructions
 
 1. Install Inno Setup 6 (https://jrsoftware.org/isdl.php)
 2. Build Standalone PyInstaller Bundle (No UPX, Full Dependencies):
-   python -m PyInstaller --noconfirm --clean "Workpulse.spec"
+   python -m PyInstaller --noconfirm --clean "iHRMS-Desktop.spec"
 
 3. Compile Inno Setup Installer:
-   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "Workpulse.iss"
-   (or "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "Workpulse.iss")
+   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" "iHRMS-Desktop.iss"
+   (or "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "iHRMS-Desktop.iss")
 
 4. Generated Installer:
-   installer\WorkpulseSetup.exe
-   dist\installer\WorkpulseSetup.exe
+   dist\Windows\iHRMS-Desktop-Setup-1.1.exe

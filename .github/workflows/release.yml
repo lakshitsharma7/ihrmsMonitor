@@ -50,61 +50,47 @@ jobs:
           echo "APP_VER=$ver" >> $env:GITHUB_ENV
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
-      - name: Build Windows Executable (PyInstaller)
+      - name: [Step 1/5] Build Application Executable (PyInstaller)
         run: |
-          pyinstaller Workpulse.spec --clean --noconfirm
+          pyinstaller iHRMS-Desktop.spec --clean --noconfirm
 
-      - name: Sign Workpulse Executable with Authenticode
+      - name: [Step 2/5] Sign iHRMS-Desktop Executable with Authenticode
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+          REQUIRE_SIGNING: "1"
         run: |
-          .\scripts\sign_windows.ps1 -Target "dist\Workpulse\Workpulse.exe"
+          .\scripts\sign_windows.ps1 -Target "dist\iHRMS-Desktop\iHRMS-Desktop.exe" -Description "iHRMS Desktop" -AppUrl "https://indovisionservices.in" -RequireSigning
 
       - name: Install Inno Setup
         run: |
           choco install innosetup --no-progress
 
-      - name: Compile Inno Setup Installer
+      - name: [Step 3/5] Compile Inno Setup Installer
+        shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="${{ env.APP_VER }}" Workpulse.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="${{ env.APP_VER }}" iHRMS-Desktop.iss
 
-      - name: Prepare & Sign Windows Installers
+      - name: [Step 4/5] Sign Windows Installer
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+          REQUIRE_SIGNING: "1"
         run: |
           mkdir dist\windows_release -Force
           $ver = "${{ env.APP_VER }}"
-          
-          # Canonical and version-tagged installer filenames
-          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\Workpulse-Setup-$ver.exe" -Force
-          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\WorkpulseSetup.exe" -Force
-          Copy-Item dist\Windows\WorkpulseSetup.exe "dist\windows_release\Workpulse-Installer.exe" -Force
+          Copy-Item "dist\Windows\iHRMS-Desktop-Setup-$ver.exe" "dist\windows_release\iHRMS-Desktop-Setup-$ver.exe" -Force
+          .\scripts\sign_windows.ps1 -Target "dist\windows_release\iHRMS-Desktop-Setup-$ver.exe" -Description "iHRMS Desktop Setup" -AppUrl "https://indovisionservices.in" -RequireSigning
 
-          # Sign all installer artifacts
-          $targets = @(
-            "dist\windows_release\Workpulse-Setup-$ver.exe",
-            "dist\windows_release\WorkpulseSetup.exe",
-            "dist\windows_release\Workpulse-Installer.exe"
-          )
-          .\scripts\sign_windows.ps1 -Target $targets
-
-      - name: Verify Windows Signatures
+      - name: [Step 5/5] Verify Windows Signatures (Application & Installer)
         shell: pwsh
         run: |
-          $files = Get-ChildItem "dist\windows_release\*.exe"
-          foreach ($f in $files) {
-            $sig = Get-AuthenticodeSignature $f.FullName
-            Write-Host "Verifying $($f.Name): Status=$($sig.Status) | Signer=$($sig.SignerCertificate.Subject)"
-            if ($env:WINDOWS_CERTIFICATE_BASE64 -and $sig.Status -ne "Valid") {
-              throw "Signature verification failed for $($f.Name)"
-            }
-          }
+          $ver = "${{ env.APP_VER }}"
+          .\scripts\verify_windows_signature.ps1 -Target "dist\iHRMS-Desktop\iHRMS-Desktop.exe" "dist\windows_release\iHRMS-Desktop-Setup-$ver.exe" -RequireValid
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -148,7 +134,7 @@ jobs:
           echo "version=${APP_VER}" >> $GITHUB_OUTPUT
 
       - name: Configure Apple Developer ID Keychain
-        if: env.APPLE_CERTIFICATE_BASE64 != ''
+        if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' || secrets.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -167,9 +153,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-      - name: Build, Sign, Notarize & Staple Workpulse (macOS)
+      - name: Build, Sign, Notarize & Staple iHRMS Desktop (macOS)
         env:
           SKIP_TESTS: "1"
+          REQUIRE_SIGNING: "1"
+          REQUIRE_NOTARIZATION: "1"
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -191,35 +179,32 @@ jobs:
 
       - name: Validate built application bundle & dmg
         run: |
-          test -d dist/Workpulse.app
-          test -f dist/Workpulse.app/Contents/MacOS/Workpulse
-          test -f dist/macOS/Workpulse.dmg
+          test -d dist/iHRMS-Desktop.app
+          test -f "dist/macOS/iHRMS-Desktop-${{ env.APP_VER }}.dmg"
           ls -lh dist/macOS/
 
-          echo "Mounting and verifying DMG payload..."
+          TARGET_DMG="dist/macOS/iHRMS-Desktop-${{ env.APP_VER }}.dmg"
+
+          echo "Mounting and verifying DMG payload from ${TARGET_DMG}..."
           MOUNT_PT=$(mktemp -d /tmp/ci_dmg_mount.XXXXXX)
-          hdiutil attach dist/macOS/Workpulse.dmg -mountpoint "${MOUNT_PT}" -nobrowse -readonly
-          test -d "${MOUNT_PT}/Workpulse.app"
-          test -f "${MOUNT_PT}/Workpulse.app/Contents/MacOS/Workpulse"
-          MOUNT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_PT}/Workpulse.app/Contents/Info.plist")
-          echo "Mounted DMG version: ${MOUNT_VER}"
+          hdiutil attach "${TARGET_DMG}" -mountpoint "${MOUNT_PT}" -nobrowse -readonly
+          test -d "${MOUNT_PT}/iHRMS-Desktop.app"
           hdiutil detach "${MOUNT_PT}"
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
 
-          if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then
-            echo "Validating Developer ID signature & stapling..."
-            codesign --verify --deep --strict --verbose=2 dist/Workpulse.app
-            spctl --assess --type execute --verbose=4 dist/Workpulse.app || true
-            spctl --assess --type install --verbose=4 dist/macOS/Workpulse.dmg || true
-            xcrun stapler validate dist/macOS/Workpulse.dmg || true
-          fi
+          echo "Validating Developer ID signature, Hardened Runtime & stapling..."
+          codesign --verify --deep --strict --verbose=2 "dist/iHRMS-Desktop.app"
+          codesign --verify --verbose=2 "${TARGET_DMG}"
+          spctl --assess --type execute --verbose=4 "dist/iHRMS-Desktop.app"
+          spctl --assess --type install --verbose=4 "${TARGET_DMG}"
+          xcrun stapler validate "${TARGET_DMG}"
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-release-assets
-          path: dist/macOS/*.dmg
+          path: dist/macOS/iHRMS-Desktop-*.dmg
           retention-days: 5
 
   publish-release:
@@ -255,13 +240,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
-          name: Workpulse ${{ steps.vars.outputs.tag }}
+          name: iHRMS Desktop ${{ steps.vars.outputs.tag }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           files: |
-            release_assets/windows/Workpulse-Setup-*.exe
-            release_assets/windows/WorkpulseSetup.exe
-            release_assets/windows/Workpulse-Installer.exe
-            release_assets/macos/Workpulse-*.dmg
-            release_assets/macos/Workpulse.dmg
+            release_assets/windows/iHRMS-Desktop-Setup-*.exe
+            release_assets/windows/iHRMS-Desktop-Setup.exe
+            release_assets/macos/iHRMS-Desktop-*.dmg
+            release_assets/macos/iHRMS-Desktop.dmg

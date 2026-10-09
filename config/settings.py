@@ -69,7 +69,11 @@ def get_running_app_version() -> str:
     # 3. Check installed application binary if available
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        for folder, exe_name in (("Workpulse", "Workpulse.exe"), ("iHRMS Monitor", "iHRMS Monitor.exe")):
+        for folder, exe_name in (
+            ("iHRMS Desktop", "iHRMS-Desktop.exe"),
+            ("Workpulse", "Workpulse.exe"),
+            ("iHRMS Monitor", "iHRMS Monitor.exe"),
+        ):
             installed_exe = Path(local_app_data) / "Programs" / folder / exe_name
             if installed_exe.exists():
                 v = _read_pe_file_version(installed_exe)

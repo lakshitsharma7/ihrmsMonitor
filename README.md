@@ -136,18 +136,18 @@ For detailed request/response schemas and architectural workflows, see [docs/WOR
 ### Windows Executable & Inno Setup Installer
 ```powershell
 # Build executable via PyInstaller
-pyinstaller Workpulse.spec --clean --noconfirm
+pyinstaller iHRMS-Desktop.spec --clean --noconfirm
 
 # Build installer via Inno Setup
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\WorkpulseSetup.iss
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" iHRMS-Desktop.iss
 ```
-Output: `dist\installer\WorkpulseSetup.exe`
+Output: `dist\Windows\iHRMS-Desktop-Setup-1.1.exe`
 
 ### macOS App & DMG
 ```bash
 ./build_macos.sh
 ```
-Output: `dist/Workpulse.dmg` and `dist/Workpulse.app`
+Output: `dist/macOS/iHRMS-Desktop-1.1.dmg` and `dist/iHRMS-Desktop.app`
 
 ---
 

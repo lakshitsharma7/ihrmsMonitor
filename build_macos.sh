@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, sign, notarize, staple, and package a standalone native macOS Workpulse application and DMG.
+# Build, sign, notarize, staple, and package a standalone native macOS iHRMS Desktop application and DMG.
 # Run this script on macOS.
 
 set -euo pipefail
@@ -8,20 +8,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 ENTITLEMENTS_FILE="entitlements.mac.plist"
-APP_BUNDLE="dist/Workpulse.app"
-DMG_FILE="dist/macOS/Workpulse.dmg"
+APP_BUNDLE="dist/iHRMS-Desktop.app"
 DMG_STAGING="dist/dmg_staging"
 
 APP_VER="1.0"
 if [ -f "VERSION" ]; then
     APP_VER="$(tr -d '[:space:]' < VERSION)"
 fi
+DMG_FILE="dist/macOS/iHRMS-Desktop-${APP_VER}.dmg"
 
 echo "==================================================="
 echo "[1/6] Preparing Environment & Cleaning Stale Builds (v${APP_VER})"
 echo "==================================================="
 mkdir -p "dist/macOS"
-rm -rf build/ dist/Workpulse.app "${DMG_STAGING}" "dist/macOS"/*
+rm -rf build/ dist/Workpulse.app "dist/iHRMS-Desktop.app" "dist/iHRMS Desktop.app" "${DMG_STAGING}" "dist/macOS"/*
 python3 -m pip install --upgrade pip
 pip3 install -r requirements.txt -r requirements-macos.txt
 
@@ -36,17 +36,17 @@ fi
 
 echo ""
 echo "==================================================="
-echo "[3/6] Building Workpulse.app from current source..."
+echo "[3/6] Building iHRMS-Desktop.app from current source..."
 echo "==================================================="
-pyinstaller --noconfirm --clean Workpulse-macos.spec
+pyinstaller --noconfirm --clean iHRMS-Desktop-macos.spec
 
 if [ ! -d "${APP_BUNDLE}" ]; then
     echo "ERROR: ${APP_BUNDLE} was not generated!" >&2
     exit 1
 fi
 
-if [ ! -f "${APP_BUNDLE}/Contents/MacOS/Workpulse" ]; then
-    echo "ERROR: Main executable ${APP_BUNDLE}/Contents/MacOS/Workpulse missing!" >&2
+if [ ! -f "${APP_BUNDLE}/Contents/MacOS/iHRMS-Desktop" ]; then
+    echo "ERROR: Main executable ${APP_BUNDLE}/Contents/MacOS/iHRMS-Desktop missing!" >&2
     exit 1
 fi
 
@@ -59,11 +59,11 @@ fi
 PLIST_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true)"
 echo "Verified Info.plist version: ${PLIST_VER}"
 
-echo "Newly built Workpulse.app bundle verified at ${APP_BUNDLE}"
+echo "Newly built application bundle verified at ${APP_BUNDLE}"
 
 echo ""
 echo "==================================================="
-echo "[4/6] Code Signing Workpulse.app (Inside-Out with Hardened Runtime)..."
+echo "[4/6] Code Signing iHRMS-Desktop.app (Inside-Out with Hardened Runtime)..."
 echo "==================================================="
 
 # Discover Signing Identity
@@ -94,7 +94,7 @@ if [ -n "${SIGNING_IDENTITY}" ]; then
         codesign --force --timestamp --options runtime --sign "${SIGNING_IDENTITY}" "${lib}"
     done
 
-    echo "--> [4b] Signing embedded frameworks..."
+    echo "--> [4b] Signing embedded frameworks and helpers..."
     if [ -d "${APP_BUNDLE}/Contents/Frameworks" ]; then
         for fw in "${APP_BUNDLE}/Contents/Frameworks"/*.framework; do
             if [ -d "${fw}" ]; then
@@ -103,13 +103,23 @@ if [ -n "${SIGNING_IDENTITY}" ]; then
         done
     fi
 
+    # Sign any nested Mach-O helper executables inside Contents/MacOS (excluding main binary)
+    find "${APP_BUNDLE}/Contents/MacOS" -type f ! -name "iHRMS-Desktop" | while read -r helper; do
+        if file "${helper}" 2>/dev/null | grep -q "Mach-O"; then
+            codesign --force --timestamp --options runtime \
+                --entitlements "${ENTITLEMENTS_FILE}" \
+                --sign "${SIGNING_IDENTITY}" \
+                "${helper}"
+        fi
+    done
+
     echo "--> [4c] Signing main executable with Hardened Runtime & Entitlements..."
     codesign --force --timestamp --options runtime \
         --entitlements "${ENTITLEMENTS_FILE}" \
         --sign "${SIGNING_IDENTITY}" \
-        "${APP_BUNDLE}/Contents/MacOS/Workpulse"
+        "${APP_BUNDLE}/Contents/MacOS/iHRMS-Desktop"
 
-    echo "--> [4d] Signing top-level Workpulse.app bundle..."
+    echo "--> [4d] Signing top-level application bundle..."
     codesign --force --timestamp --options runtime \
         --entitlements "${ENTITLEMENTS_FILE}" \
         --sign "${SIGNING_IDENTITY}" \
@@ -123,11 +133,15 @@ if [ -n "${SIGNING_IDENTITY}" ]; then
 else
     echo "WARNING: No Apple Developer ID Application signing identity provided."
     echo "Set APPLE_SIGNING_IDENTITY or import Developer ID certificate to sign for production."
+    if [ "${REQUIRE_SIGNING:-0}" = "1" ]; then
+        echo "ERROR: Production release requires valid Apple Developer ID Application certificate!" >&2
+        exit 1
+    fi
 fi
 
 echo ""
 echo "==================================================="
-echo "[5/6] Creating & Verifying Workpulse.dmg..."
+echo "[5/6] Creating & Verifying iHRMS-Desktop-${APP_VER}.dmg..."
 echo "==================================================="
 rm -rf "${DMG_STAGING}" "${DMG_FILE}"
 mkdir -p "${DMG_STAGING}"
@@ -140,7 +154,7 @@ if [ -f "assets/ihrms-logo-icon.icns" ]; then
 fi
 
 hdiutil create \
-    -volname "Workpulse" \
+    -volname "iHRMS-Desktop" \
     -srcfolder "${DMG_STAGING}" \
     -ov \
     -format UDZO \
@@ -153,33 +167,27 @@ if [ ! -f "${DMG_FILE}" ]; then
     exit 1
 fi
 
-DMG_VERSION_FILE="dist/macOS/Workpulse-${APP_VER}.dmg"
-cp -f "${DMG_FILE}" "${DMG_VERSION_FILE}"
-
 if [ -n "${SIGNING_IDENTITY}" ]; then
-    echo "Signing DMG files with Developer ID..."
+    echo "Signing DMG file with Developer ID..."
     codesign --force --timestamp --sign "${SIGNING_IDENTITY}" "${DMG_FILE}"
     codesign --verify --verbose=2 "${DMG_FILE}"
-
-    codesign --force --timestamp --sign "${SIGNING_IDENTITY}" "${DMG_VERSION_FILE}"
-    codesign --verify --verbose=2 "${DMG_VERSION_FILE}"
 fi
 
-echo "DMG created at ${DMG_FILE} and ${DMG_VERSION_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
+echo "DMG created at ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
 
 # Test mounting the newly created DMG and verify payload
 echo "Verifying DMG mount and installation structure..."
-MOUNT_DIR="$(mktemp -d /tmp/workpulse_dmg_mount.XXXXXX)"
+MOUNT_DIR="$(mktemp -d /tmp/ihrms_dmg_mount.XXXXXX)"
 hdiutil attach "${DMG_FILE}" -mountpoint "${MOUNT_DIR}" -nobrowse -readonly
 
-if [ ! -d "${MOUNT_DIR}/Workpulse.app" ]; then
-    echo "ERROR: Workpulse.app not present inside mounted DMG!" >&2
+if [ ! -d "${MOUNT_DIR}/iHRMS-Desktop.app" ]; then
+    echo "ERROR: iHRMS-Desktop.app not present inside mounted DMG!" >&2
     hdiutil detach "${MOUNT_DIR}" || true
     rm -rf "${MOUNT_DIR}"
     exit 1
 fi
 
-MOUNTED_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_DIR}/Workpulse.app/Contents/Info.plist" 2>/dev/null || true)"
+MOUNTED_VER="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${MOUNT_DIR}/iHRMS-Desktop.app/Contents/Info.plist" 2>/dev/null || true)"
 echo "Verified version inside mounted DMG: ${MOUNTED_VER}"
 
 hdiutil detach "${MOUNT_DIR}"
@@ -261,22 +269,23 @@ if [ ${#NOTARY_ARGS[@]} -gt 0 ]; then
     xcrun stapler staple "${APP_BUNDLE}" || true
     xcrun stapler staple "${DMG_FILE}"
     xcrun stapler validate "${DMG_FILE}"
-    if [ -f "${DMG_VERSION_FILE}" ]; then
-        xcrun stapler staple "${DMG_VERSION_FILE}" || true
-        xcrun stapler validate "${DMG_VERSION_FILE}" || true
-    fi
     echo "Ticket successfully stapled and validated."
 
     # Assess the app with spctl Gatekeeper
     if command -v spctl >/dev/null 2>&1; then
         echo ""
         echo "Running Gatekeeper assessment (spctl)..."
-        spctl --assess --type execute --verbose=4 "${APP_BUNDLE}" || true
-        spctl --assess --type install --verbose=4 "${DMG_FILE}" || true
+        spctl --assess --type execute --verbose=4 "${APP_BUNDLE}"
+        spctl --assess --type install --verbose=4 "${DMG_FILE}"
+        echo "Gatekeeper assessments passed successfully: accepted as recognized developer application."
     fi
 else
     echo "Notice: Apple Notarization credentials not configured. Skipping notarytool."
     echo "To notarize, supply APPLE_API_KEY_BASE64/ID/ISSUER or APPLE_ID/PASSWORD/TEAM_ID."
+    if [ "${REQUIRE_NOTARIZATION:-0}" = "1" ]; then
+        echo "ERROR: Production release requires valid Apple Notarization credentials!" >&2
+        exit 1
+    fi
 fi
 
 echo ""
@@ -284,5 +293,4 @@ echo "==================================================="
 echo "macOS Build Pipeline Completed Successfully!"
 echo "  1. App: ${APP_BUNDLE}"
 echo "  2. DMG: ${DMG_FILE} ($(du -h "${DMG_FILE}" | cut -f1))"
-echo "  3. Version DMG: ${DMG_VERSION_FILE}"
 echo "==================================================="

@@ -31,22 +31,18 @@ We are excited to release **iHRMS Desktop v1.1**, introducing native macOS & Win
 
 | Platform | File | Type | Description |
 | :--- | :--- | :--- | :--- |
-| **Windows** | `WorkpulseSetup.exe` | Inno Setup Installer | Recommended primary installer for Windows 10/11 |
-| **Windows** | `Workpulse.exe` | Standalone Executable | Portable executable for standalone execution |
-| **Windows** | `Workpulse-Installer.exe` | Inno Setup Installer | Alternate installer name for legacy update endpoints |
-| **Windows** | `iHRMSMonitorSetup.exe` | Inno Setup Installer | Legacy compatibility installer |
-| **macOS** | `Workpulse.dmg` | Apple Disk Image | Standard drag-and-drop installer for macOS |
+| **Windows** | `iHRMS-Desktop-Setup-1.1.exe` | Inno Setup Installer | Recommended primary installer for Windows 10/11 |
+| **Windows** | `iHRMS-Desktop.exe` | Standalone Executable | Portable executable for standalone execution |
+| **macOS** | `iHRMS-Desktop-1.1.dmg` | Apple Disk Image | Standard drag-and-drop installer for macOS |
 
 ---
 
 ### Verification & Checksums
 
-| File | SHA-256 Checksum |
-| :--- | :--- |
-| `WorkpulseSetup.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
-| `Workpulse.dmg` | `a8abd1de6748bf768107f1e11297b5741379c038c035e470c124fe6c61672d77` |
-| `Workpulse.exe` | `abf763d6145bc93178c3195033165f8a9fb46f487206203d9c10664a6da3207b` |
-| `Workpulse-Installer.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
-| `iHRMSMonitorSetup.exe` | `d0f5b1533c362a3a02fcc6f19af07b7c0e520229bcab7ff216ba7c09f1d6f629` |
+| File | Type | Target Platform |
+| :--- | :--- | :--- |
+| `iHRMS-Desktop-Setup-1.1.exe` | Inno Setup Package | Windows 10 / 11 |
+| `iHRMS-Desktop-1.1.dmg` | Apple Disk Image (UDZO) | macOS 11+ |
+| `iHRMS-Desktop.exe` | Standalone Binary | Windows x64 |
 
 All binaries are built directly from source tag `v2.0.2` on the `feature/activity-tracker` branch.
