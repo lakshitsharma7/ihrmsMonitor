@@ -110,6 +110,11 @@ class SessionService:
             raw_login_data=raw_login_data or {},
             session_credential=session_credential,
         )
+        try:
+            from services.attendance_service import AttendanceService
+            AttendanceService().clear_cache()
+        except Exception:
+            pass
         self.notify_permission_listeners()
 
     def restore_session(

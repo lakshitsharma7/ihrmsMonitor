@@ -1410,7 +1410,11 @@ class MainWindow(QMainWindow):
             self._last_rendered_app = state.current_application
             self._last_rendered_idle = state.is_idle
             self.dashboard_page.refresh(async_mode=True)
-            if hasattr(self, "weekly_page") and self.weekly_page.isVisible():
+            if (
+                hasattr(self, "weekly_page")
+                and self.weekly_page.isVisible()
+                and isinstance(self.weekly_page, WeeklyTimelinePage)
+            ):
                 self.weekly_page.refresh(async_mode=True)
             self._apply_rbac_permissions()
 

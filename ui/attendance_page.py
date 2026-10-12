@@ -134,7 +134,7 @@ class CalendarDayCard(QFrame):
             badge_text   = "transparent"
             icon         = ""
 
-        elif label_upper == "PRESENT" or raw_code in ("P", "PRESENT"):
+        elif "PRESENT" in label_upper or raw_code in ("P", "PRESENT", "WARNING", "WARN") or label_upper in ("WARNING", "WARN"):
             card_bg      = (
                 "background-color: #F0FDF4; "
                 "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
@@ -149,7 +149,7 @@ class CalendarDayCard(QFrame):
         elif (
             "MISSED" in label_upper
             or "MISPUNCH" in label_upper
-            or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH")
+            or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH", "M")
         ):
             card_bg      = (
                 "background-color: #FFF7ED; "
@@ -162,7 +162,7 @@ class CalendarDayCard(QFrame):
             badge_text   = "#FFFFFF"
             icon         = "!"
 
-        elif label_upper == "ABSENT" or raw_code in ("A", "ABSENT"):
+        elif "ABSENT" in label_upper or raw_code in ("A", "ABSENT"):
             card_bg      = (
                 "background-color: #FEF2F2; "
                 "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
@@ -178,11 +178,11 @@ class CalendarDayCard(QFrame):
             card_bg      = (
                 "background-color: #EFF6FF; "
                 "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                "stop:0 rgba(167, 139, 250, 0.28), stop:1 rgba(167, 139, 250, 0.05));"
+                "stop:0 rgba(37, 99, 235, 0.28), stop:1 rgba(37, 99, 235, 0.05));"
             )
-            card_border  = "border: 1px solid #BFDBFE; border-color: rgba(167, 139, 250, 0.40);"
-            card_hover   = "#7C3AED"
-            badge_bg     = "#7C3AED"
+            card_border  = "border: 1px solid #BFDBFE; border-color: rgba(37, 99, 235, 0.40);"
+            card_hover   = "#2563EB"
+            badge_bg     = "#2563EB"
             badge_text   = "#FFFFFF"
             icon         = "☾"
 
@@ -190,9 +190,9 @@ class CalendarDayCard(QFrame):
             card_bg      = (
                 "background-color: #F0F9FF; "
                 "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                "stop:0 rgba(76, 201, 255, 0.28), stop:1 rgba(76, 201, 255, 0.05));"
+                "stop:0 rgba(14, 165, 233, 0.28), stop:1 rgba(14, 165, 233, 0.05));"
             )
-            card_border  = "border: 1px solid #BAE6FD; border-color: rgba(76, 201, 255, 0.40);"
+            card_border  = "border: 1px solid #BAE6FD; border-color: rgba(14, 165, 233, 0.40);"
             card_hover   = "#0EA5E9"
             badge_bg     = "#0EA5E9"
             badge_text   = "#FFFFFF"
@@ -204,13 +204,13 @@ class CalendarDayCard(QFrame):
             or "LEAVE" in raw_code
         ):
             card_bg      = (
-                "background-color: #F5F3FF; "
+                "background-color: #FAF5FF; "
                 "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                "stop:0 rgba(76, 201, 255, 0.28), stop:1 rgba(76, 201, 255, 0.05));"
+                "stop:0 rgba(147, 51, 234, 0.28), stop:1 rgba(147, 51, 234, 0.05));"
             )
-            card_border  = "border: 1px solid #DDD6FE; border-color: rgba(76, 201, 255, 0.40);"
-            card_hover   = "#0EA5E9"
-            badge_bg     = "#0EA5E9"
+            card_border  = "border: 1px solid #E9D5FF; border-color: rgba(147, 51, 234, 0.40);"
+            card_hover   = "#9333EA"
+            badge_bg     = "#9333EA"
             badge_text   = "#FFFFFF"
             icon         = "★"
 
@@ -256,24 +256,24 @@ class CalendarDayCard(QFrame):
         # Status circle background color
         status_circle_bg = None
         if has_status:
-            if label_upper == "PRESENT" or raw_code in ("P", "PRESENT"):
+            if "PRESENT" in label_upper or raw_code in ("P", "PRESENT", "WARNING", "WARN") or label_upper in ("WARNING", "WARN"):
                 status_circle_bg = "#16A34A"  # green
                 badge_lbl = "Present"
-            elif label_upper == "ABSENT" or raw_code in ("A", "ABSENT"):
+            elif "ABSENT" in label_upper or raw_code in ("A", "ABSENT"):
                 status_circle_bg = "#EF4444"  # red
                 badge_lbl = "Absent"
             elif (
                 "MISSED" in label_upper
                 or "MISPUNCH" in label_upper
-                or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH")
+                or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH", "M")
             ):
-                status_circle_bg = "#F59E0B"  # orange
+                status_circle_bg = "#F59E0B"  # amber
                 badge_lbl = "MP"
             elif "WEEK OFF" in label_upper or "WEEK OFF" in raw_code or raw_code in ("WO", "W/O"):
-                status_circle_bg = "#7C3AED"  # grey/violet
+                status_circle_bg = "#2563EB"  # blue
                 badge_lbl = "WO"
             elif "HOLIDAY" in label_upper or raw_code in ("H", "HOLIDAY"):
-                status_circle_bg = "#0EA5E9"  # blue/cyan
+                status_circle_bg = "#0EA5E9"  # cyan
                 badge_lbl = "Holiday"
             elif (
                 "LEAVE" in label_upper
@@ -320,20 +320,18 @@ class CalendarDayCard(QFrame):
 
         if self._is_today:
             bg = self._status_circle_bg if self._status_circle_bg else "#4F46E5"
-            border = "border: 2.5px solid #2563EB;" if self._status_circle_bg else "border: none;"
-            if is_selected:
-                border = "border: 2.5px solid #1D4ED8;"
+            border = "border: 2.5px solid #1E1B4B;" if is_selected else ("border: 2.5px solid #2563EB;" if self._status_circle_bg else "border: none;")
             self.num_label.setStyleSheet(
                 f"{base_circle} background: {bg}; color: #FFFFFF; font-size: 12px; font-weight: 800; {border}"
             )
         elif self._status_circle_bg:
-            border = "border: 2.5px solid #3B82F6;" if is_selected else "border: none;"
+            border = "border: 2.5px solid #1E1B4B;" if is_selected else "border: none;"
             self.num_label.setStyleSheet(
                 f"{base_circle} background: {self._status_circle_bg}; color: #FFFFFF; font-size: 12px; font-weight: 800; {border}"
             )
         elif is_selected:
             self.num_label.setStyleSheet(
-                f"{base_circle} background: #3B82F6; color: #FFFFFF; font-size: 12px; font-weight: 800; border: 2px solid #93C5FD;"
+                f"{base_circle} background: #2563EB; color: #FFFFFF; font-size: 12px; font-weight: 800; border: 2.5px solid #1E1B4B;"
             )
         else:
             self.num_label.setStyleSheet(
@@ -352,6 +350,70 @@ class CalendarDayCard(QFrame):
             return
         self._is_selected = bool(selected)
         self._update_num_label_style(is_selected=self._is_selected)
+
+    def update_status(self, new_day_data: dict) -> None:
+        """Update day data and refresh styling dynamically."""
+        if self._is_padding:
+            return
+        self._day_data = new_day_data
+        status_label = (new_day_data.get("status_label") or "").strip()
+        raw_code = str(new_day_data.get("status_code", "")).strip().upper()
+        label_upper = status_label.upper()
+        has_status = bool(
+            status_label
+            and status_label not in ("—", "-", "None", "null")
+            and raw_code not in ("—", "-", "NONE", "NULL")
+        )
+        if has_status:
+            if "PRESENT" in label_upper or raw_code in ("P", "PRESENT", "WARNING", "WARN") or label_upper in ("WARNING", "WARN"):
+                self._status_circle_bg = "#16A34A"
+                badge_lbl = "Present"
+            elif "ABSENT" in label_upper or raw_code in ("A", "ABSENT"):
+                self._status_circle_bg = "#EF4444"
+                badge_lbl = "Absent"
+            elif (
+                "MISSED" in label_upper
+                or "MISPUNCH" in label_upper
+                or raw_code in ("MP", "MISSED PUNCH", "MISPUNCH", "MISSED_PUNCH", "M")
+            ):
+                self._status_circle_bg = "#F59E0B"
+                badge_lbl = "MP"
+            elif "WEEK OFF" in label_upper or "WEEK OFF" in raw_code or raw_code in ("WO", "W/O"):
+                self._status_circle_bg = "#2563EB"
+                badge_lbl = "WO"
+            elif "HOLIDAY" in label_upper or raw_code in ("H", "HOLIDAY"):
+                self._status_circle_bg = "#0EA5E9"
+                badge_lbl = "Holiday"
+            elif (
+                "LEAVE" in label_upper
+                or raw_code in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP", "LEAVE")
+                or "LEAVE" in raw_code
+            ):
+                self._status_circle_bg = "#9333EA"
+                badge_lbl = raw_code if raw_code in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP") else "Leave"
+            elif "HALF DAY" in label_upper or raw_code in ("HD", "HALF DAY", "HALF_DAY"):
+                self._status_circle_bg = "#2563EB"
+                badge_lbl = "HD"
+            else:
+                self._status_circle_bg = "#64748B"
+                badge_lbl = status_label[:7]
+        else:
+            self._status_circle_bg = None
+            badge_lbl = ""
+
+        if hasattr(self, "status_badge"):
+            self.status_badge.setText(badge_lbl)
+        self._update_num_label_style(is_selected=self._is_selected)
+
+        date_str = new_day_data.get("date", "")
+        day_name = new_day_data.get("day_name", "")
+        details = new_day_data.get("details")
+        tooltip_lines = [f"Date: {date_str} ({day_name})"]
+        if has_status:
+            tooltip_lines.append(f"Status: {status_label}")
+        if details:
+            tooltip_lines.append(f"Details: {details}")
+        self.setToolTip("\n".join(tooltip_lines))
 
 
 # ============================================================================
@@ -487,14 +549,15 @@ class AttendanceDistributionBar(QWidget):
             _colors = {
                 "P":  QColor("#16A34A"),
                 "H":  QColor("#0EA5E9"),
-                "WO": QColor("#7C3AED"),
+                "WO": QColor("#2563EB"),
+                "L":  QColor("#9333EA"),
                 "MP": QColor("#F59E0B"),
                 "A":  QColor("#EF4444"),
             }
             self._segments = [
                 (counts[k] / float(total_days), _colors[k])
-                for k in ("P", "H", "WO", "MP", "A")
-                if counts.get(k, 0) > 0
+                for k in ("P", "H", "WO", "L", "MP", "A")
+                if counts.get(k, 0) > 0 and k in _colors
             ]
         self.update()
 
@@ -541,6 +604,7 @@ class AttendancePage(QWidget):
         self._service       = service or AttendanceService()
         self._is_refreshing = False
         self._day_cards: list[CalendarDayCard] = []
+        self._last_rendered_data_key: tuple | None = None
         self.attendance_data_refreshed.connect(self._apply_attendance_data)
         self._setup_ui()
 
@@ -718,8 +782,8 @@ class AttendancePage(QWidget):
         self.absent_val_label       = _stat_row("Absent",         "AttendanceStatAbsent",     "#EF4444")
         self.missed_punch_val_label = _stat_row("Missed Punch",   "AttendanceStatMissedPunch","#F59E0B")
         self.half_day_val_label     = _stat_row("Half Days",      "AttendanceStatHalfDay",    "#2563EB")
-        self.leave_val_label        = _stat_row("Leave / Holiday","AttendanceStatLeave",      "#0EA5E9")
-        self.weekoff_val_label      = _stat_row("Week Off",       "AttendanceStatWeekOff",    "#7C3AED")
+        self.leave_val_label        = _stat_row("Leave / Holiday","AttendanceStatLeave",      "#9333EA")
+        self.weekoff_val_label      = _stat_row("Week Off",       "AttendanceStatWeekOff",    "#2563EB")
         self.total_days_val_label   = _stat_row("Total Days",     "AttendanceStatTotal",      "#334155")
 
         sb.addSpacing(12)
@@ -935,11 +999,12 @@ class AttendancePage(QWidget):
         cal_layout.setContentsMargins(36, 24, 28, 22)
         cal_layout.setSpacing(14)
 
-        # Top row: Date label (e.g. Oct 08, Thu) + nav arrows
+        # Top row: Month label (e.g. October) + nav arrows
         cal_hdr_row = QHBoxLayout()
         cal_hdr_row.setSpacing(10)
 
-        self.cal_header_date_label = QLabel(now.strftime("%b %d, %a"), self.cal_right_panel)
+        initial_month = self.month_combo.currentText() or MONTH_NAMES[now.month - 1]
+        self.cal_header_date_label = QLabel(initial_month, self.cal_right_panel)
         self.cal_header_date_label.setObjectName("CalHeaderDateLabel")
         self.cal_header_date_label.setStyleSheet(
             "font-size: 20px; font-weight: 800; color: #1E1B4B; border: none; background: transparent;"
@@ -986,29 +1051,13 @@ class AttendancePage(QWidget):
         cal_hdr_row.addLayout(cal_nav_box)
         cal_layout.addLayout(cal_hdr_row)
 
-        # Calendar wrapper (7 x 52px + 6 x 6px spacing)
+        # Calendar wrapper
         self.cal_table_wrapper = QWidget(self.cal_right_panel)
         ctl = QVBoxLayout(self.cal_table_wrapper)
         ctl.setContentsMargins(0, 0, 0, 0)
         ctl.setSpacing(6)
 
-        # Weekday headers (SUN … SAT)
-        wd_row = QHBoxLayout()
-        wd_row.setSpacing(6)
-        wd_row.setContentsMargins(0, 0, 0, 4)
-        for dow in WEEKDAY_NAMES:
-            hdr = QLabel(dow.upper())
-            hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hdr.setFixedWidth(52)
-            hdr.setStyleSheet(
-                "QLabel { background: transparent; color: #4F46E5; "
-                "font-size: 11px; font-weight: 800; border: none; letter-spacing: 0.8px; }"
-            )
-            wd_row.addWidget(hdr)
-        wd_row.addStretch(1)
-        ctl.addLayout(wd_row)
-
-        # Calendar grid
+        # Calendar grid container
         self.calendar_grid_container = QWidget(self.cal_table_wrapper)
         self.calendar_grid_container.setObjectName("CalendarGridContainer")
         self.calendar_grid_container.setStyleSheet(
@@ -1017,6 +1066,9 @@ class AttendancePage(QWidget):
         self.calendar_grid = QGridLayout(self.calendar_grid_container)
         self.calendar_grid.setContentsMargins(0, 0, 0, 0)
         self.calendar_grid.setSpacing(6)
+        for c in range(7):
+            self.calendar_grid.setColumnStretch(c, 1)
+
         ctl.addWidget(self.calendar_grid_container)
 
         cal_layout.addWidget(self.cal_table_wrapper)
@@ -1037,7 +1089,7 @@ class AttendancePage(QWidget):
             ("Present",       "#16A34A"),
             ("Absent",        "#EF4444"),
             ("Missed punch",  "#F59E0B"),
-            ("Week off",      "#7C3AED"),
+            ("Week off",      "#2563EB"),
             ("Leave",         "#9333EA"),
             ("Holiday",       "#0EA5E9"),
         ]:
@@ -1066,7 +1118,7 @@ class AttendancePage(QWidget):
         self.root_layout.addWidget(self.calendar_group)
 
         # Initial data load
-        self.refresh(async_mode=True)
+        self.refresh()
 
     # ------------------------------------------------------------------
     # Employee display & Combo population helpers
@@ -1163,6 +1215,8 @@ class AttendancePage(QWidget):
         m_text = self.month_combo.currentText()
         y_text = self.year_combo.currentText()
         self.month_year_display.setText(f"{m_text} {y_text}")
+        if hasattr(self, "cal_header_date_label") and m_text:
+            self.cal_header_date_label.setText(m_text)
         self._update_sidebar_calendar_state()
         self.refresh()
 
@@ -1242,6 +1296,8 @@ class AttendancePage(QWidget):
         cur_year_str = self.year_combo.currentText()
         cur_month_str = self.month_combo.currentText()
         self.cal_side_year_label.setText(cur_year_str)
+        if hasattr(self, "cal_header_date_label") and cur_month_str:
+            self.cal_header_date_label.setText(cur_month_str)
 
         while self.cal_side_months_layout.count():
             item = self.cal_side_months_layout.takeAt(0)
@@ -1327,6 +1383,9 @@ class AttendancePage(QWidget):
 
     def refresh(self, async_mode: bool | None = None, force: bool = False) -> None:
         """Reload monthly attendance data dynamically from the backend API."""
+        if force:
+            self._last_rendered_data_key = None
+
         if async_mode is None:
             import sys
             async_mode = not any(
@@ -1366,10 +1425,33 @@ class AttendancePage(QWidget):
         selected_year  = self.year_combo.currentText()  or str(sel_y)
         self.month_year_display.setText(f"{selected_month} {selected_year}")
 
+        self._update_employee_info()
+
+        self._fetch_seq = getattr(self, "_fetch_seq", 0) + 1
+        req_id = self._fetch_seq
+        self.error_banner.setVisible(False)
+
+        active_indo = None
+        try:
+            from services.session_service import SessionService
+            session = SessionService().current_user
+            if session:
+                active_indo = getattr(session, "indo_code", None) or getattr(session, "employee_id", None)
+        except Exception:
+            pass
+        if not active_indo:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s:
+                    active_indo = s.get("indo_code") or s.get("employee_id")
+            except Exception:
+                pass
+
         if not async_mode:
             try:
                 data = self._service.get_monthly_attendance_record(
-                    month=selected_month, year=selected_year, force=force
+                    month=selected_month, year=selected_year, force=force, indo_code=active_indo
                 )
                 self._apply_attendance_data(data)
             except Exception as err:
@@ -1377,24 +1459,25 @@ class AttendancePage(QWidget):
                 self._show_error("Unable to load attendance. Please try again.")
             return
 
-        if self._is_refreshing:
-            return
-        self._is_refreshing = True
-        self.error_banner.setVisible(False)
-
-        def _bg_fetch() -> None:
+        def _bg_fetch(expected_seq: int) -> None:
             try:
                 data = self._service.get_monthly_attendance_record(
-                    month=selected_month, year=selected_year, force=force
+                    month=selected_month, year=selected_year, force=force, indo_code=active_indo
                 )
-                self.attendance_data_refreshed.emit(data)
+                if expected_seq == getattr(self, "_fetch_seq", 0):
+                    try:
+                        self.attendance_data_refreshed.emit(data)
+                    except RuntimeError:
+                        pass
             except Exception as err:
                 logger.warning("Background attendance fetch error: %s", err)
-                self.attendance_data_refreshed.emit({"error": str(err), "days": []})
-            finally:
-                self._is_refreshing = False
+                if expected_seq == getattr(self, "_fetch_seq", 0):
+                    try:
+                        self.attendance_data_refreshed.emit({"error": str(err), "days": []})
+                    except RuntimeError:
+                        pass
 
-        threading.Thread(target=_bg_fetch, daemon=True, name="AttendanceFetchThread").start()
+        threading.Thread(target=_bg_fetch, args=(req_id,), daemon=True, name=f"AttendanceFetchThread-{req_id}").start()
 
     # ------------------------------------------------------------------
     # Data application (logic unchanged; cosmetic colour updates only)
@@ -1528,7 +1611,44 @@ class AttendancePage(QWidget):
         except (ValueError, TypeError):
             year_num = datetime.now().year
 
-        self._populate_calendar(days, month_num, year_num)
+        emp_id = None
+        try:
+            from services.session_service import SessionService
+            cur_u = SessionService().current_user
+            if cur_u:
+                emp_id = cur_u.indo_code or cur_u.employee_id or cur_u.username
+        except Exception:
+            pass
+
+        days_fingerprint = tuple(
+            (
+                d.get("day_num"),
+                str(d.get("status_code", "")).strip().upper(),
+                str(d.get("status_label", "")).strip().upper(),
+                d.get("details"),
+                bool(d.get("is_today")),
+            )
+            for d in days
+            if isinstance(d, dict)
+        )
+        current_data_key = (emp_id, year_num, month_num, days_fingerprint)
+
+        # Only rebuild the calendar grid when the underlying month/year or daily records actually change
+        if current_data_key != getattr(self, "_last_rendered_data_key", None) or not self._day_cards:
+            selected_day_num = None
+            for c in self._day_cards:
+                if getattr(c, "_is_selected", False):
+                    selected_day_num = c._day_data.get("day_num")
+                    break
+
+            self._populate_calendar(days, month_num, year_num)
+            self._last_rendered_data_key = current_data_key
+
+            if selected_day_num is not None:
+                for c in self._day_cards:
+                    if c._day_data.get("day_num") == selected_day_num:
+                        c.set_selected(True)
+                        break
         if hasattr(self, "cal_summary_note"):
             self.cal_summary_note.setText(
                 f"Monthly Attendance · {working_days} Working Days · {present_cnt} Present"
@@ -1545,8 +1665,23 @@ class AttendancePage(QWidget):
             item = self.calendar_grid.takeAt(0)
             w = item.widget()
             if w:
+                w.setParent(None)
                 w.deleteLater()
         self._day_cards.clear()
+
+        # Ensure all 7 columns have identical width stretch
+        for c in range(7):
+            self.calendar_grid.setColumnStretch(c, 1)
+
+        # Row 0: Weekday headers (SUN ... SAT) centered directly over the 7 date columns
+        for c, dow in enumerate(WEEKDAY_NAMES):
+            hdr = QLabel(dow.upper())
+            hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hdr.setStyleSheet(
+                "QLabel { background: transparent; color: #4F46E5; "
+                "font-size: 11px; font-weight: 800; border: none; letter-spacing: 0.8px; padding-bottom: 2px; }"
+            )
+            self.calendar_grid.addWidget(hdr, 0, c, Qt.AlignmentFlag.AlignCenter)
 
         days_map: dict[int, dict] = {}
         for d in days:
@@ -1581,18 +1716,18 @@ class AttendancePage(QWidget):
             prev_y, prev_m = year_num, month_num - 1
         _, num_days_prev_month = calendar.monthrange(prev_y, prev_m)
 
-        # Leading padding
+        # Leading padding (Row 1)
         for pad_col in range(leading_padding):
             pad_day_num = num_days_prev_month - leading_padding + 1 + pad_col
             self.calendar_grid.addWidget(
                 CalendarDayCard(day_data={"day_num": pad_day_num}, is_padding=True, parent=self),
-                0, pad_col
+                1, pad_col, Qt.AlignmentFlag.AlignCenter
             )
 
-        # Day cells
+        # Day cells (Row 1 onward)
         for day_idx in range(1, num_days_in_month + 1):
             slot_idx = leading_padding + (day_idx - 1)
-            row_idx  = slot_idx // 7
+            row_idx  = (slot_idx // 7) + 1
             col_idx  = slot_idx %  7
 
             if day_idx in days_map:
@@ -1606,7 +1741,7 @@ class AttendancePage(QWidget):
                     is_past     = cur_dt.date() <= now_dt.date()
                     if is_weekend:
                         st_code, st_lbl = "Week Off", "Week Off"
-                        col, bg_col = "#7C3AED", "rgba(124, 58, 237, 0.12)"
+                        col, bg_col = "#2563EB", "rgba(37, 99, 235, 0.12)"
                     elif is_past:
                         st_code, st_lbl = "A", "Absent"
                         col, bg_col = "#EF4444", "rgba(239, 68, 68, 0.12)"
@@ -1641,20 +1776,52 @@ class AttendancePage(QWidget):
 
             card = CalendarDayCard(day_data=day_info, parent=self)
             card.clicked.connect(lambda d, c=card: self._on_card_clicked(d, c))
-            self.calendar_grid.addWidget(card, row_idx, col_idx)
+            self.calendar_grid.addWidget(card, row_idx, col_idx, Qt.AlignmentFlag.AlignCenter)
             self._day_cards.append(card)
+
+            # Stage D: UI Rendering Log for each calendar card
+            logger.debug(
+                "UI Calendar Card Rendered: date=%s, status_code=%s, status_label=%s, is_today=%s",
+                day_info.get("date"),
+                day_info.get("status_code"),
+                day_info.get("status_label"),
+                day_info.get("is_today"),
+            )
 
         # Trailing padding
         total_slots     = leading_padding + num_days_in_month
         remaining_slots = (7 - (total_slots % 7)) % 7
         for pad_idx in range(remaining_slots):
             slot_idx = total_slots + pad_idx
+            row_idx  = (slot_idx // 7) + 1
+            col_idx  = slot_idx %  7
             next_day_num = pad_idx + 1
             self.calendar_grid.addWidget(
                 CalendarDayCard(day_data={"day_num": next_day_num}, is_padding=True, parent=self),
-                slot_idx // 7,
-                slot_idx %  7,
+                row_idx, col_idx, Qt.AlignmentFlag.AlignCenter
             )
+
+        emp_id = None
+        try:
+            from services.session_service import SessionService
+            cur_u = SessionService().current_user
+            if cur_u:
+                emp_id = cur_u.indo_code or cur_u.employee_id or cur_u.username
+        except Exception:
+            pass
+
+        days_fingerprint = tuple(
+            (
+                d.get("day_num"),
+                str(d.get("status_code", "")).strip().upper(),
+                str(d.get("status_label", "")).strip().upper(),
+                d.get("details"),
+                bool(d.get("is_today")),
+            )
+            for d in days
+            if isinstance(d, dict)
+        )
+        self._last_rendered_data_key = (emp_id, year_num, month_num, days_fingerprint)
 
     # ------------------------------------------------------------------
     # Day detail popup & card selection
@@ -1667,30 +1834,100 @@ class AttendancePage(QWidget):
                 c.set_selected(False)
         card.set_selected(True)
 
-        date_str = day_info.get("date", "")
-        day_name = day_info.get("day_name", "")
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            m_abbr = dt.strftime("%b")
-            if hasattr(self, "cal_header_date_label"):
-                self.cal_header_date_label.setText(f"{m_abbr} {dt.day:02d}, {day_name}")
-        except Exception:
-            pass
+        # Month header remains stable displaying the selected month
 
-        self._show_day_detail(day_info)
+        self._show_day_detail(day_info, card=card)
 
-    def _show_day_detail(self, day_info: dict) -> None:
+    def _show_day_detail(self, day_info: dict, card: CalendarDayCard | None = None) -> None:
         """Display an attendance detail popup when the user clicks a day card."""
         details      = day_info.get("details")
         date_str     = day_info.get("date", "")
         day_name     = day_info.get("day_name", "")
         status_label = (day_info.get("status_label") or "").strip()
+        service_code = str(day_info.get("status_code", "")).strip().upper()
+
+        # On-demand biometric punch lookup if details were not pre-loaded in monthly payload
+        reconciled = False
+        if not details and date_str:
+            try:
+                punch_rec = self._service.get_punch_time(date_str)
+                if punch_rec:
+                    p_in = punch_rec.get("punch_in")
+                    p_out = punch_rec.get("punch_out")
+                    if p_in or p_out:
+                        details = f"Biometric Punches: {p_in or '--'} - {p_out or '--'}"
+                        if status_label.upper() in ("WARNING", "WARN", "ABSENT", "—", "-"):
+                            if p_in and p_out and p_in != p_out:
+                                status_label = "Present"
+                                day_info["status_code"] = "P"
+                                day_info["status_label"] = "Present"
+                                day_info["color"] = "#16A34A"
+                                day_info["details"] = details
+                                reconciled = True
+                            else:
+                                status_label = "Missed Punch"
+                                day_info["status_code"] = "Missed Punch"
+                                day_info["status_label"] = "Missed Punch"
+                                day_info["color"] = "#F59E0B"
+                                day_info["details"] = details
+                                reconciled = True
+            except Exception as punch_err:
+                logger.debug("Failed on-demand punch lookup for %s: %s", date_str, punch_err)
+
+        if reconciled and card:
+            try:
+                card.update_status(day_info)
+            except Exception:
+                pass
+
+        if status_label.upper() in ("WARNING", "WARN"):
+            status_label = "Present"
+            status_color = "#16A34A"
+        elif "MISSED" in status_label.upper() or "MISPUNCH" in status_label.upper():
+            status_color = "#F59E0B"
+        elif "WEEK OFF" in status_label.upper() or status_label.upper() in ("WO", "W/O"):
+            status_color = "#2563EB"
+        elif (
+            "LEAVE" in status_label.upper()
+            or day_info.get("status_code", "").upper() in ("EL", "CL", "SL", "PL", "ML", "RH", "LWP")
+        ):
+            status_color = "#9333EA"
+        elif "HOLIDAY" in status_label.upper() or day_info.get("status_code", "").upper() == "H":
+            status_color = "#0EA5E9"
+        elif "PRESENT" in status_label.upper():
+            status_color = "#16A34A"
+        elif "ABSENT" in status_label.upper():
+            status_color = "#EF4444"
+        else:
+            status_color = day_info.get("color") or "#64748B"
+
+        # Stage D: UI Rendering Log for Popup & Mismatch Identification
+        if service_code in ("P", "PRESENT") and status_label.upper() in ("ABSENT", "WARNING", "WARN"):
+            logger.warning(
+                "UI Rendering Mismatch: Service indicates Present for %s, but detail popup displays %s",
+                date_str,
+                status_label,
+            )
+        elif service_code in ("A", "ABSENT") and status_label.upper() in ("PRESENT", "P"):
+            logger.warning(
+                "UI Rendering Mismatch: Service indicates Absent for %s, but detail popup displays %s",
+                date_str,
+                status_label,
+            )
+        else:
+            logger.info(
+                "UI Detail Popup Opened: date=%s, service_code=%s, service_label=%s, popup_label=%s, details=%s",
+                date_str,
+                day_info.get("status_code"),
+                day_info.get("status_label"),
+                status_label,
+                details or "None",
+            )
         has_status   = bool(status_label and status_label not in ("—", "-", "None", "null"))
-        status_color = day_info.get("color") or "#16A34A"
 
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Attendance — {date_str}")
-        dlg.resize(400, 240)
+        dlg.resize(420, 260)
         dlg.setStyleSheet(
             """
             QDialog {
@@ -1740,7 +1977,38 @@ class AttendancePage(QWidget):
             dtl_l.addWidget(dtl_lbl)
             dl.addWidget(dtl_box)
 
+        # Regularization guidance when punches exist but day was flagged
+        if details and status_label in ("Absent", "Missed Punch"):
+            note_lbl = QLabel("ℹ️ Biometric punches exist for this date. If this was frozen as an irregularity, please submit a regularization request via the HRMS Portal.")
+            note_lbl.setStyleSheet("font-size: 11px; color: #6B7280; line-height: 1.3;")
+            note_lbl.setWordWrap(True)
+            dl.addWidget(note_lbl)
+
         dl.addStretch(1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        try:
+            from services.hrms_portal_service import HrmsPortalService
+            btn_portal = QPushButton("🌐 HRMS Portal")
+            btn_portal.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_portal.setStyleSheet(
+                """
+                QPushButton {
+                    background: #EEF2FF; border: 1px solid #C7D2FE;
+                    color: #4F46E5; border-radius: 8px;
+                    padding: 6px 14px; font-weight: 600; font-size: 12px;
+                }
+                QPushButton:hover {
+                    background: #4F46E5; color: #FFFFFF;
+                }
+                """
+            )
+            btn_portal.clicked.connect(lambda: HrmsPortalService().open_portal_with_autologin())
+            btn_row.addWidget(btn_portal)
+        except Exception:
+            pass
 
         btn_close = QPushButton("Close")
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1757,7 +2025,9 @@ class AttendancePage(QWidget):
             """
         )
         btn_close.clicked.connect(dlg.accept)
-        dl.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_close)
+        dl.addLayout(btn_row)
 
         dlg.exec()
 
