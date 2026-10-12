@@ -200,8 +200,9 @@ class TestMultiUserWorkPulseFlow(unittest.TestCase):
         session_svc = SessionService()
 
         # When no user is active, return None
-        token = SyncService._require_device_token()
-        self.assertIsNone(token)
+        with patch("services.secure_session.SessionStore.load_session", return_value=None):
+            token = SyncService._require_device_token()
+            self.assertIsNone(token)
 
         # Set User A
         session_svc.login(

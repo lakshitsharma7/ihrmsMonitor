@@ -987,7 +987,14 @@ class TestAttendanceRecordApiAndUi(unittest.TestCase):
             }
         }
 
-        with patch("requests.post") as mock_post:
+        from datetime import datetime as real_datetime
+
+        class MockDateTime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real_datetime(2026, 10, 6, 12, 0, 0)
+
+        with patch("requests.post") as mock_post, patch("services.attendance_service.datetime", MockDateTime):
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.content = b'{"response": 200}'
