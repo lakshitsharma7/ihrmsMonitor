@@ -1327,7 +1327,7 @@ class AttendanceService:
                     else:
                         items.append(v)
                 return items
-            return []
+            return [] 
 
         # -----------------------------------------------------------------
         # Dynamic freezed detection (supports "0", 0, "1", 1, bool, etc.)
@@ -2127,6 +2127,7 @@ class AttendanceService:
                 parsed_days.append({
                     "day_num": day_idx,
                     "date": date_str,
+                    "display_date": f"{day_idx:02d}-{resolved_month_num:02d}-{resolved_year:04d}",
                     "day_name": day_name,
                     "status_code": status_code if status_label else "",
                     "status_label": status_label,

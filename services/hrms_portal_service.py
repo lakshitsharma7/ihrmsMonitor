@@ -114,7 +114,7 @@ class HrmsPortalService:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Workpulse Portal - Connecting...</title>
+  <title>iHRMS Portal - Connecting...</title>
   <style>
     body {{
       margin: 0;
@@ -175,7 +175,7 @@ class HrmsPortalService:
 <body>
   <div class="card">
     <div class="spinner"></div>
-    <h2>Connecting to HRMS Portal</h2>
+    <h2>Connecting to iHRMS Portal</h2>
     <p>Signing in automatically...</p>
     <div class="user-pill">{safe_disp_uname}</div>
   </div>

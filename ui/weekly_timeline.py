@@ -401,8 +401,8 @@ class WeeklyTimelinePage(QWidget):
             first_date = first_day["date_obj"]
             last_date = last_day["date_obj"]
             self.week_range_label.setText(
-                f"Week of {first_day['day_name']}, {first_date.strftime('%d %b')} – "
-                f"{last_day['day_name']}, {last_date.strftime('%d %b %Y')}"
+                f"Week of {first_day['day_name']}, {first_date.strftime('%d-%m-%Y')} – "
+                f"{last_day['day_name']}, {last_date.strftime('%d-%m-%Y')}"
             )
 
         # Compute totals & stats

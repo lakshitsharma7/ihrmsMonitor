@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.attendance_service import AttendanceService
+from utils.date_utils import format_date_display
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -301,7 +302,8 @@ class CalendarDayCard(QFrame):
         self.status_badge.setVisible(False)
 
         # Tooltip
-        tooltip_lines = [f"Date: {date_str} ({day_name})"]
+        disp_date = self._day_data.get("display_date") or format_date_display(date_str)
+        tooltip_lines = [f"Date: {disp_date} ({day_name})"]
         if has_status:
             tooltip_lines.append(f"Status: {status_label}")
         if details:
@@ -408,7 +410,8 @@ class CalendarDayCard(QFrame):
         date_str = new_day_data.get("date", "")
         day_name = new_day_data.get("day_name", "")
         details = new_day_data.get("details")
-        tooltip_lines = [f"Date: {date_str} ({day_name})"]
+        disp_date = new_day_data.get("display_date") or format_date_display(date_str)
+        tooltip_lines = [f"Date: {disp_date} ({day_name})"]
         if has_status:
             tooltip_lines.append(f"Status: {status_label}")
         if details:
@@ -1925,8 +1928,9 @@ class AttendancePage(QWidget):
             )
         has_status   = bool(status_label and status_label not in ("—", "-", "None", "null"))
 
+        disp_date = day_info.get("display_date") or format_date_display(date_str)
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Attendance — {date_str}")
+        dlg.setWindowTitle(f"Attendance — {disp_date}")
         dlg.resize(420, 260)
         dlg.setStyleSheet(
             """
@@ -1942,7 +1946,7 @@ class AttendancePage(QWidget):
         dl.setContentsMargins(22, 20, 22, 20)
         dl.setSpacing(12)
 
-        title_lbl = QLabel(f"Attendance: {date_str} ({day_name})")
+        title_lbl = QLabel(f"Attendance: {disp_date} ({day_name})")
         title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #111827;")
         dl.addWidget(title_lbl)
 
@@ -1979,7 +1983,7 @@ class AttendancePage(QWidget):
 
         # Regularization guidance when punches exist but day was flagged
         if details and status_label in ("Absent", "Missed Punch"):
-            note_lbl = QLabel("ℹ️ Biometric punches exist for this date. If this was frozen as an irregularity, please submit a regularization request via the HRMS Portal.")
+            note_lbl = QLabel("ℹ️ Biometric punches exist for this date. If this was frozen as an irregularity, please submit a regularization request via the iHRMS Portal.")
             note_lbl.setStyleSheet("font-size: 11px; color: #6B7280; line-height: 1.3;")
             note_lbl.setWordWrap(True)
             dl.addWidget(note_lbl)
@@ -1991,7 +1995,7 @@ class AttendancePage(QWidget):
 
         try:
             from services.hrms_portal_service import HrmsPortalService
-            btn_portal = QPushButton("🌐 HRMS Portal")
+            btn_portal = QPushButton("🌐 iHRMS Portal")
             btn_portal.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_portal.setStyleSheet(
                 """

@@ -812,12 +812,12 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
-        # HRMS Portal Button (with Globe Icon)
+        # iHRMS Portal Button (with Globe Icon)
         # ------------------------------------------------------
-        self.hrms_button = QPushButton(" HRMS", header)
+        self.hrms_button = QPushButton(" iHRMS", header)
         self.hrms_button.setObjectName("SecondaryButton")
         self.hrms_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.hrms_button.setToolTip("Open HRMS Web Portal (https://ihrms.indovisionservices.in)")
+        self.hrms_button.setToolTip("Open iHRMS Web Portal (https://ihrms.indovisionservices.in)")
 
         globe_icon = _load_icon("globe")
         if not globe_icon.isNull():

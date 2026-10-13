@@ -273,7 +273,7 @@ class ActivityService:
                 total_seconds = self.get_day_total_seconds(day_date)
 
             day_name = day_date.strftime("%A")
-            date_str = day_date.strftime("%d %b")
+            date_str = day_date.strftime("%d-%m-%Y")
             formatted_time = self.format_hours_minutes(total_seconds)
             display_line = f"{day_name} — {date_str} — {formatted_time}"
 
