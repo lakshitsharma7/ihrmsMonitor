@@ -713,11 +713,13 @@ class AttendancePage(QWidget):
         ring_info = QVBoxLayout()
         ring_info.setSpacing(4)
         ring_info.setContentsMargins(0, 0, 0, 0)
-        rate_lbl = QLabel("Attendance\nRate", sidebar)
-        rate_lbl.setStyleSheet(
-            "color: #6B7280; font-size: 10px; font-weight: 500; border: none; background: transparent;"
+        self.rate_label = QLabel("Attendance Rate", sidebar)
+        self.rate_label.setObjectName("AttendanceRateLabel")
+        self.rate_label.setWordWrap(False)
+        self.rate_label.setStyleSheet(
+            "color: #6B7280; font-size: 11px; font-weight: 600; border: none; background: transparent;"
         )
-        ring_info.addWidget(rate_lbl)
+        ring_info.addWidget(self.rate_label)
 
         self.rating_badge = QLabel("Good", sidebar)
         self.rating_badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)

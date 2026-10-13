@@ -17,6 +17,7 @@ from services.sync_service import SyncService
 from tracker.activity_tracker import TrackerState
 from ui.dashboard import DashboardPage, _format_last_update_display
 from ui.main_window import MainWindow, _asset_path
+from ui.attendance_page import AttendancePage
 from ui.leave_balance_dialog import LeaveBalanceDialog
 from ui.update_dialog import UpdateDialog
 
@@ -236,6 +237,52 @@ class TestStatusCardAndLogo(unittest.TestCase):
             self.assertIn((32, 32), sizes)
             self.assertIn((64, 64), sizes)
             self.assertIn((256, 256), sizes)
+
+    # ------------------------------------------------------------------
+    # 7. Attendance Rate Card Single-Line Display
+    # ------------------------------------------------------------------
+
+    def test_attendance_rate_displayed_on_single_line(self):
+        """Verify Attendance Rate label displays on a single line without wrapping or newline."""
+        page = AttendancePage()
+        try:
+            self.assertTrue(hasattr(page, "rate_label"))
+            self.assertEqual(page.rate_label.text(), "Attendance Rate")
+            self.assertNotIn("\n", page.rate_label.text())
+            self.assertFalse(page.rate_label.wordWrap())
+        finally:
+            page.close()
+            page.deleteLater()
+
+    def test_needs_improvement_badge_preserved(self):
+        """Verify Needs Improvement badge and styling are preserved when attendance rate is below 75%."""
+        page = AttendancePage()
+        try:
+            # Simulate low attendance (e.g. 5 present out of 20 working days = 25%)
+            mock_data = {
+                "month": "October",
+                "days": [
+                    {"status_code": "P"} for _ in range(5)
+                ] + [
+                    {"status_code": "A"} for _ in range(15)
+                ],
+                "summary": {
+                    "total_days": 20,
+                    "present": 5,
+                    "absent": 15,
+                    "holiday": 0,
+                    "weekoff": 0,
+                },
+            }
+            page._apply_attendance_data(mock_data)
+            self.assertEqual(page.rating_badge.text(), "Needs Improvement")
+            style = page.rating_badge.styleSheet()
+            self.assertIn("#FEF3C7", style)  # background
+            self.assertIn("#92400E", style)  # text color
+            self.assertIn("#FCD34D", style)  # border color
+        finally:
+            page.close()
+            page.deleteLater()
 
 
 if __name__ == "__main__":
