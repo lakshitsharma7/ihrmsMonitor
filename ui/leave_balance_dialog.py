@@ -1,3 +1,4 @@
+
 """Leave Balance Modal Dialog for iHRMS Desktop.
 
 Displays employee leave quota and current balance breakdown with

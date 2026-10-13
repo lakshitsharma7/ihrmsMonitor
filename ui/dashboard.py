@@ -68,6 +68,30 @@ def format_hh_mm_ss(total_seconds: int | float) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
+def _format_last_update_display(raw_val: str | None) -> str:
+    """Format the last successful sync timestamp into DD-MM-YYYY, hh:mm AM/PM format."""
+    if not raw_val or str(raw_val).strip().lower() in ("never", "none", "", "null"):
+        return "Not available"
+    s = str(raw_val).strip()
+    for fmt in (
+        "%d %b %Y, %I:%M:%S %p",
+        "%d %b %Y, %I:%M %p",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %I:%M:%S %p",
+        "%d-%m-%Y, %I:%M:%S %p",
+        "%d-%m-%Y, %I:%M %p",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %I:%M %p",
+        "%Y-%m-%d",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.strftime("%d-%m-%Y, %I:%M %p")
+        except ValueError:
+            pass
+    return s
+
+
 class DashboardPage(QWidget):
     """Main Activity Tracker dashboard."""
 
@@ -378,7 +402,7 @@ class DashboardPage(QWidget):
         today_layout.addWidget(self.attendance_button)
         today_layout.addStretch(1)
 
-        today_group.setMinimumHeight(135)
+        today_group.setMinimumHeight(150)
         today_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -456,27 +480,11 @@ class DashboardPage(QWidget):
         attendance_layout.addLayout(info_columns)
         attendance_layout.addSpacing(2)
 
-        # 3. Status Row (Single Compact Row)
-        status_row = QHBoxLayout()
-        status_row.setSpacing(6)
-        status_row.setContentsMargins(0, 0, 0, 0)
-
-        status_heading = QLabel("Attendance Status", attendance_group)
-        status_heading.setObjectName("AttendanceStatusHeading")
-        status_heading.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b;")
-        status_row.addWidget(status_heading)
-
-        self.attendance_status_badge = QLabel("● Not Punched", attendance_group)
-        self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
-        self.attendance_status_badge.setStyleSheet(
-            "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #cbd5e1;"
-        )
-        status_row.addWidget(self.attendance_status_badge)
-        status_row.addStretch(1)
-
-        attendance_layout.addLayout(status_row)
-
         # Retain backward-compatible labels for test suite and existing references
+        self.attendance_status_badge = QLabel("● Not Punched", self)
+        self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
+        self.attendance_status_badge.setVisible(False)
+
         self.start_time_label = QLabel("Start Time: --:-- --", self)
         self.start_time_label.setObjectName("StatusLabel")
         self.start_time_label.setVisible(False)
@@ -484,6 +492,7 @@ class DashboardPage(QWidget):
         self.punch_time_label.setObjectName("StatusLabel")
         self.punch_time_label.setVisible(False)
 
+        attendance_group.setMinimumHeight(150)
         attendance_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -491,91 +500,100 @@ class DashboardPage(QWidget):
         top_row.addWidget(attendance_group, stretch=1)
 
         # --------------------------------------------------------------
-        # 3. Tracking & Sync Status
-        # Contains: Network Status (● Online / ● Offline), Idle Time, Version, Records Uploaded,
-        # Status, Last Successful Sync, and WorkPulse button
+        # 3. Status Card
+        # Displays dynamic Network Status, Version, Idle Time, Last Update, and Paused Button
         # --------------------------------------------------------------
-        status_group = QGroupBox("Tracking && Sync Status", content)
-        status_grid = QGridLayout(status_group)
-        status_grid.setContentsMargins(14, 12, 14, 12)
-        status_grid.setHorizontalSpacing(18)
-        status_grid.setVerticalSpacing(8)
+        status_group = QGroupBox("Status", content)
+        status_group.setObjectName("StatusCard")
+        status_layout = QVBoxLayout(status_group)
+        status_layout.setContentsMargins(14, 10, 14, 10)
+        status_layout.setSpacing(4)
 
         is_initially_active = getattr(self, "_is_workpulse", False)
 
-        # Network status indicator (Row 0, Col 0): ● Online or ● Offline
+        # 1. Status: ● Online / ● Offline
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(6)
+        self.status_title_label = QLabel("Status:", status_group)
+        self.status_title_label.setObjectName("StatusTitleLabel")
+        self.status_title_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
+
         initial_online = getattr(self, "_is_network_online", True)
         self.network_status_label = QLabel("● Online" if initial_online else "● Offline", status_group)
         self.network_status_label.setObjectName("NetworkStatusLabel")
         if initial_online:
-            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+            self.network_status_label.setStyleSheet("color: #10b981; font-weight: 700; font-size: 12px;")
         else:
-            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 13px;")
+            self.network_status_label.setStyleSheet("color: #ef4444; font-weight: 700; font-size: 12px;")
+        status_row.addWidget(self.status_title_label)
+        status_row.addWidget(self.network_status_label)
+        status_row.addStretch(1)
+        status_layout.addLayout(status_row)
 
-        # Retain workpulse_status_label for error reporting and backward compatibility
-        self.workpulse_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}", self)
-        self.workpulse_status_label.setObjectName("WorkPulseStatusLabel")
-        self.workpulse_status_label.setVisible(False)
-
-        self.idle_time_label = QLabel("Idle Time: 0 seconds", status_group)
-        self.idle_time_label.setObjectName("StatusLabel")
-
-        self.unsynced_records_label = QLabel("Records uploading: 0", self)
-        self.unsynced_records_label.setObjectName("StatusLabel")
-        self.unsynced_records_label.setVisible(False)  # hidden from UI
-
+        # 2. Version
         self.version_label = QLabel(f"Version: {get_running_app_version()}", status_group)
         self.version_label.setObjectName("StatusLabel")
+        self.version_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
+        status_layout.addWidget(self.version_label)
 
-        self.records_uploaded_label = QLabel("Records Uploaded: 0", status_group)
-        self.records_uploaded_label.setObjectName("StatusLabel")
+        # 3. Idle Time
+        self.idle_time_label = QLabel("Idle Time: 0 seconds", status_group)
+        self.idle_time_label.setObjectName("StatusLabel")
+        self.idle_time_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
+        status_layout.addWidget(self.idle_time_label)
 
-        self.update_status_label = QLabel("Status: Online", self)
-        self.update_status_label.setObjectName("StatusLabel")
-        self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
-        self.update_status_label.setVisible(False)  # Hidden to avoid duplicate network status line
-        self.sync_status_label = self.update_status_label
-
-        # Initial last successful sync timestamp
+        # 4. Last Update
         from services.sync_service import SyncService
         init_sync_time = (
             SyncService.get_last_successful_sync_time()
             if hasattr(SyncService, "get_last_successful_sync_time")
             else SyncService.last_successful_sync_time
         )
-        self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}", status_group)
+        self.last_update_label = QLabel(f"Last Update: {_format_last_update_display(init_sync_time)}", status_group)
+        self.last_update_label.setObjectName("StatusLastUpdateLabel")
+        self.last_update_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
+        status_layout.addWidget(self.last_update_label)
+
+        status_layout.addSpacing(2)
+
+        # 5. Single WorkPulse / Tracking button: [ Paused ] when running, [ Resume ] when paused
+        initial_btn_text = "Paused" if is_initially_active else "Resume"
+        self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
+        self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
+        self.workpulse_toggle_button.setFixedHeight(28)
+        self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.workpulse_toggle_button.clicked.connect(self._on_workpulse_toggle_clicked)
+        self.start_workpulse_button = self.workpulse_toggle_button
+        self.stop_workpulse_button = self.workpulse_toggle_button
+        self._apply_toggle_button_style(is_initially_active)
+        status_layout.addWidget(self.workpulse_toggle_button)
+
+        # Retain backward-compatible and background-updated fields
+        self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}", self)
         self.last_sync_label.setObjectName("StatusLabel")
+        self.last_sync_label.setVisible(False)
+
+        self.records_uploaded_label = QLabel("Records Uploaded: 0", self)
+        self.records_uploaded_label.setObjectName("StatusLabel")
+        self.records_uploaded_label.setVisible(False)
+
+        self.workpulse_status_label = QLabel(f"Online: {'Active' if is_initially_active else 'Inactive'}", self)
+        self.workpulse_status_label.setObjectName("WorkPulseStatusLabel")
+        self.workpulse_status_label.setVisible(False)
+
+        self.update_status_label = QLabel("Status: Online", self)
+        self.update_status_label.setObjectName("StatusLabel")
+        self.update_status_label.setStyleSheet("color: #10b981; font-weight: bold;")
+        self.update_status_label.setVisible(False)
+        self.sync_status_label = self.update_status_label
 
         self.current_app_label = QLabel("Not workpulse", self)
         self.current_app_label.setVisible(False)
         self.current_window_label = QLabel("", self)
         self.current_window_label.setVisible(False)
 
-        # Single workpulse button on Dashboard: [ Paused ] when running, [ Resume ] when paused
-        initial_btn_text = "Paused" if is_initially_active else "Resume"
-        self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
-        self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
-        self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.workpulse_toggle_button.clicked.connect(self._on_workpulse_toggle_clicked)
-        self.start_workpulse_button = self.workpulse_toggle_button
-        self.stop_workpulse_button = self.workpulse_toggle_button
-        self._apply_toggle_button_style(is_initially_active)
-
-        # Layout: Row 0 – Network Status | Idle Time
-        #         Row 1 – Version        | Records Uploaded
-        #         Row 2 – Last Sync      (full width)
-        #         Row 3 – Single WorkPulse Button (full width)
-        status_grid.addWidget(self.network_status_label, 0, 0)
-        status_grid.addWidget(self.idle_time_label, 0, 1)
-
-        status_grid.addWidget(self.version_label, 1, 0)
-        status_grid.addWidget(self.records_uploaded_label, 1, 1)
-
-        status_grid.addWidget(self.last_sync_label, 2, 0, 1, 2)
-
-        status_grid.addWidget(self.workpulse_toggle_button, 3, 0, 1, 2)
-
-        status_group.setMinimumHeight(140)
+        status_group.setMinimumHeight(150)
         status_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -774,6 +792,8 @@ class DashboardPage(QWidget):
             else SyncService.last_successful_sync_time
         )
         self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
+        if hasattr(self, "last_update_label"):
+            self.last_update_label.setText(f"Last Update: {_format_last_update_display(sync_time_str)}")
 
         self.set_records_uploaded(self._cached_uploaded_count)
 
@@ -880,6 +900,8 @@ class DashboardPage(QWidget):
                     else SyncService.last_successful_sync_time
                 )
                 self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
+                if hasattr(self, "last_update_label"):
+                    self.last_update_label.setText(f"Last Update: {_format_last_update_display(sync_time_str)}")
             except Exception as err:
                 logger.debug("Sync refresh last_sync_label error: %s", err)
             return
@@ -998,6 +1020,8 @@ class DashboardPage(QWidget):
                 else SyncService.last_successful_sync_time
             )
             self.last_sync_label.setText(f"Last Successful Sync: {sync_time_str}")
+            if hasattr(self, "last_update_label"):
+                self.last_update_label.setText(f"Last Update: {_format_last_update_display(sync_time_str)}")
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 
