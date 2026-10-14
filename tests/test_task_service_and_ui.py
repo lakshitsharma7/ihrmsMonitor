@@ -466,13 +466,19 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertIsNotNone(comment_widget)
         self.assertEqual(comment_widget.text(), "Existing work notes")
 
-        action_widget = table.cellWidget(0, 10)
-        save_btn = action_widget.findChild(QPushButton)
-        self.assertIsNotNone(save_btn)
-        self.assertEqual(save_btn.text(), "Save")
+        # Verify no individual per-row Save button or column 10
+        self.assertEqual(table.columnCount(), 10)
+        self.assertIsNone(table.cellWidget(0, 10))
+
+        # Verify common action buttons below the table exist
+        self.assertIsNotNone(table.actions_widget)
+        self.assertIsNotNone(table.save_draft_btn)
+        self.assertIsNotNone(table.submit_btn)
+        self.assertEqual(table.save_draft_btn.text(), "Save as Draft")
+        self.assertEqual(table.submit_btn.text(), "Submit")
 
     def test_assigned_tasks_table_save_flow_and_validation(self):
-        """Verify Save flow, validation of empty comment / negative number, and successful save handling with re-fetch."""
+        """Verify Save as Draft and Submit flow, validation of empty comment / negative number, and successful save handling."""
         table = AssignedTasksTable()
         tasks = [
             {
@@ -492,23 +498,24 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         completed_edit = table._get_line_edit(0, 8)
         comment_edit = table._get_line_edit(0, 9)
-        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
+        submit_btn = table.submit_btn
+        save_draft_btn = table.save_draft_btn
 
-        # 1. Validation test: empty comment should highlight error and not trigger save
-        save_btn.click()
+        # 1. Validation test: empty comment should highlight error and not trigger submit
+        submit_btn.click()
         QCoreApplication.processEvents()
-        self.assertEqual(save_btn.text(), "Save")  # Still "Save", not "Saving..."
+        self.assertEqual(submit_btn.text(), "Submit")  # Still "Submit", not "Submitting..."
 
         # 2. Validation test: negative number should highlight error
         completed_edit.setText("-5")
         comment_edit.setText("Finished feature implementation")
-        save_btn.click()
+        submit_btn.click()
         QCoreApplication.processEvents()
-        self.assertEqual(save_btn.text(), "Save")
+        self.assertEqual(submit_btn.text(), "Submit")
 
-        # 3. Enter valid numeric task_completed and comment, then click Save
+        # 3. Enter valid numeric task_completed and comment, then click Submit
         completed_edit.setText("30")
-        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Timesheet saved successfully.", {"TimeSheet_id": "587"})):
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Timesheet submitted successfully.", {"TimeSheet_id": "587"})) as mock_save:
             with patch.object(TaskService, "fetch_assigned_tasks", return_value=[{
                 "id": "192",
                 "kra_id": "192",
@@ -521,15 +528,27 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 "date": "2025-07-24",
                 "weightage": "20%",
             }]):
-                save_btn.click()
+                submit_btn.click()
                 time.sleep(0.1)
                 QCoreApplication.processEvents()
-                self.assertEqual(save_btn.text(), "Saved ✓")
+                self.assertEqual(submit_btn.text(), "Submitted ✓")
                 self.assertEqual(completed_edit.text(), "30")
                 self.assertEqual(comment_edit.text(), "Finished feature implementation")
+                mock_save.assert_called_once()
+                self.assertEqual(mock_save.call_args[1]["submit_status"], "1")
+
+        # 4. Test Save as Draft functionality
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Draft saved successfully.", {"TimeSheet_id": "587"})) as mock_draft:
+            with patch.object(TaskService, "fetch_assigned_tasks", return_value=tasks):
+                save_draft_btn.click()
+                time.sleep(0.1)
+                QCoreApplication.processEvents()
+                self.assertEqual(save_draft_btn.text(), "Draft Saved ✓")
+                mock_draft.assert_called_once()
+                self.assertEqual(mock_draft.call_args[1]["submit_status"], "0")
 
     def test_assigned_tasks_table_prevent_duplicate_save(self):
-        """Verify double-clicking save button prevents duplicate API calls while in progress."""
+        """Verify double-clicking submit button prevents duplicate API calls while in progress."""
         table = AssignedTasksTable()
         tasks = [
             {
@@ -546,7 +565,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
             }
         ]
         table.set_tasks(tasks)
-        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
+        submit_btn = table.submit_btn
 
         call_count = 0
         def mock_save(*args, **kwargs):
@@ -557,8 +576,8 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         with patch.object(TaskService, "save_time_sheet", side_effect=mock_save):
             with patch.object(TaskService, "fetch_assigned_tasks", return_value=tasks):
-                save_btn.click()
-                save_btn.click()  # Second click while disabled/in-progress
+                submit_btn.click()
+                submit_btn.click()  # Second click while disabled/in-progress
                 time.sleep(0.15)
                 QCoreApplication.processEvents()
                 self.assertEqual(call_count, 1)
@@ -677,7 +696,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         completed_edit = table._get_line_edit(0, 8)
         comment_edit = table._get_line_edit(0, 9)
-        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
+        submit_btn = table.submit_btn
 
         # Edit values
         completed_edit.setText("75")
@@ -685,19 +704,19 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         # Simulate API failure
         with patch.object(TaskService, "save_time_sheet", return_value=(False, "Internal Server Error", None)):
-            save_btn.click()
+            submit_btn.click()
             time.sleep(0.1)
             QCoreApplication.processEvents()
 
             # Verify button shows retry state
-            self.assertEqual(save_btn.text(), "Retry ⚠️")
+            self.assertEqual(submit_btn.text(), "Retry Submit ⚠️")
 
             # Verify user-entered inputs are preserved exactly
             self.assertEqual(completed_edit.text(), "75")
             self.assertEqual(comment_edit.text(), "Updated comment before failure")
 
-    def test_assigned_tasks_table_action_column_and_save_button_dimensions(self):
-        """Verify Action column is wide enough (>= 125px), Save button fits without clipping, and responsive resizing works."""
+    def test_assigned_tasks_table_common_action_buttons_and_dimensions(self):
+        """Verify no per-row Action column exists (10 columns), common action buttons exist below table, and responsive resizing works."""
         table = AssignedTasksTable()
         tasks = [
             {
@@ -720,35 +739,24 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.resize(1000, 300)
         QCoreApplication.processEvents()
 
-        # 1. Action column width must be at least 125px (set to 130px)
-        action_col_idx = 10
-        action_col_width = table.columnWidth(action_col_idx)
-        self.assertGreaterEqual(action_col_width, 125)
+        # 1. Table must have exactly 10 columns (no individual Action column)
+        self.assertEqual(table.columnCount(), 10)
+        self.assertIsNone(table.cellWidget(0, 10))
 
-        # 2. Save button must fit fully within the action container without clipping
-        action_container = table.cellWidget(0, action_col_idx)
-        self.assertIsNotNone(action_container)
-        save_btn = action_container.findChild(QPushButton)
-        self.assertIsNotNone(save_btn)
+        # 2. Common action buttons are present in actions_widget
+        self.assertIsNotNone(table.actions_widget)
+        self.assertIsNotNone(table.save_draft_btn)
+        self.assertIsNotNone(table.submit_btn)
+        self.assertEqual(table.save_draft_btn.text(), "Save as Draft")
+        self.assertEqual(table.submit_btn.text(), "Submit")
 
-        # Check button size relative to column width
-        btn_width = save_btn.sizeHint().width()
-        self.assertLess(btn_width, action_col_width)
-        # Verify generous padding exists (at least 15px total horizontal padding)
-        self.assertGreaterEqual(action_col_width - btn_width, 15)
-
-        # 3. Test button states (Save, Saving..., Saved) all fit within the Action column
-        for state_text in ["Save", "Saving...", "Saved ✓", "Retry ⚠️"]:
-            save_btn.setText(state_text)
-            self.assertLess(save_btn.sizeHint().width(), action_col_width)
-
-        # 4. Responsive expansion on wide viewport
+        # 3. Responsive expansion on wide viewport
         table.resize(1600, 300)
         table._adjust_column_widths()
         QCoreApplication.processEvents()
         # Sum of columns should fill the viewport without empty dead space
         total_cols_width = sum(table.columnWidth(i) for i in range(table.columnCount()))
-        self.assertGreaterEqual(total_cols_width, 1250)
+        self.assertGreaterEqual(total_cols_width, 1200)
 
     def test_assigned_tasks_table_sno_column_and_dynamic_numbering(self):
         """Verify S.No. appears as the first column, numbers rows dynamically, and updates correctly."""
@@ -838,6 +846,173 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertEqual(table.horizontalScrollBar().value(), 100)
         table.horizontalScrollBar().setValue(300)
         self.assertEqual(table.horizontalScrollBar().value(), 300)
+
+    def test_assigned_tasks_table_header_labels_not_clipped(self):
+        """Verify that every column header text has sufficient width and padding so that no label is clipped."""
+        from PySide6.QtGui import QFontMetrics
+
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "1",
+                "name": "Frontend Task",
+                "description": "Header clipping test",
+                "category": "Development",
+                "target": "100%",
+                "measurement_criteria": "Code review",
+                "weightage": "20%",
+                "task_done": "10%",
+                "task_completed": "15",
+                "comment": "Testing all headers",
+                "date": "2026-10-14",
+            }
+        ]
+        table.set_tasks(tasks)
+
+        for w in [500, 800, 1000, 1400, 1920]:
+            table.resize(w, 400)
+            table._adjust_column_widths()
+            QCoreApplication.processEvents()
+
+            for col_idx, (col_name, _base_w, _align) in enumerate(table.COLUMN_CONFIG):
+                actual_w = table.columnWidth(col_idx)
+                item = table.horizontalHeaderItem(col_idx)
+                self.assertIsNotNone(item)
+                fm = QFontMetrics(item.font())
+                text_w = fm.horizontalAdvance(col_name)
+
+                # Available width considering 6px padding on each side (12px total)
+                avail_w = actual_w - 12
+                self.assertGreaterEqual(
+                    avail_w,
+                    text_w,
+                    f"Header for column '{col_name}' (col {col_idx}) is clipped at width {w}: "
+                    f"text_w={text_w} > avail_w={avail_w} (actual_w={actual_w})",
+                )
+
+    def test_format_task_date(self):
+        """Verify format_task_date correctly formats dates to 'DD Month YYYY' matching reference UI."""
+        from ui.task_table import format_task_date
+
+        # Standard YYYY-MM-DD
+        self.assertEqual(format_task_date("2026-10-01"), "01 October 2026")
+        self.assertEqual(format_task_date("2026-10-14"), "14 October 2026")
+        self.assertEqual(format_task_date("2025-07-24"), "24 July 2025")
+
+        # Already formatted
+        self.assertEqual(format_task_date("01 October 2026"), "01 October 2026")
+
+        # DD-MM-YYYY
+        self.assertEqual(format_task_date("01-10-2026"), "01 October 2026")
+
+        # Empty / None falls back to today formatted as DD Month YYYY
+        from datetime import datetime
+        today_expected = datetime.now().strftime("%d %B %Y")
+        self.assertEqual(format_task_date(None), today_expected)
+        self.assertEqual(format_task_date(""), today_expected)
+
+    def test_task_title_heading_dynamic_rendering_and_centering(self):
+        """Verify the heading above the table matches 'Task for {name} ({code}) on {DD Month YYYY}' and updates dynamically."""
+        from services.session_service import SessionService
+        from PySide6.QtCore import Qt
+
+        SessionService().clear()
+        SessionService().login(
+            username="dinesh",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+            full_name="Dinesh Dev",
+        )
+
+        table = AssignedTasksTable()
+
+        # 1. Title label exists, is centered, and matches logged-in user
+        self.assertIsNotNone(table.title_label)
+        self.assertEqual(table.title_label.alignment(), Qt.AlignmentFlag.AlignCenter)
+
+        # 2. Populate tasks with date 2026-10-01
+        tasks_oct1 = [
+            {
+                "id": "190",
+                "kra_id": "190",
+                "name": "Feature Delivery",
+                "date": "2026-10-01",
+                "task_completed": "10",
+                "comment": "In progress",
+            }
+        ]
+        table.set_tasks(tasks_oct1)
+        self.assertEqual(
+            table.title_label.text(),
+            "Task for Dinesh Dev (EC-098) on 01 October 2026",
+        )
+
+        # 3. Dynamic update when task date changes to 2025-07-24
+        tasks_july24 = [
+            {
+                "id": "191",
+                "kra_id": "191",
+                "name": "Backend Refactor",
+                "date": "2025-07-24",
+                "task_completed": "5",
+                "comment": "Working on API",
+            }
+        ]
+        table.set_tasks(tasks_july24)
+        self.assertEqual(
+            table.title_label.text(),
+            "Task for Dinesh Dev (EC-098) on 24 July 2025",
+        )
+
+        # 4. Direct update_title call with explicit date
+        table.update_title(date="2026-10-01")
+        self.assertEqual(
+            table.title_label.text(),
+            "Task for Dinesh Dev (EC-098) on 01 October 2026",
+        )
+
+        # 5. Dynamic employee resolution from task item if different user
+        tasks_other = [
+            {
+                "id": "192",
+                "name": "Task for colleague",
+                "employee_name": "Priya Sharma",
+                "indo_code": "EC-105",
+                "date": "2026-10-01",
+            }
+        ]
+        table.set_tasks(tasks_other)
+        self.assertEqual(
+            table.title_label.text(),
+            "Task for Priya Sharma (EC-105) on 01 October 2026",
+        )
+
+    def test_dashboard_page_has_task_title_label(self):
+        """Verify DashboardPage exposes task_title_label above the task_table."""
+        mock_activity_svc = MagicMock(spec=ActivityService)
+        mock_activity_svc.get_today_total_seconds.return_value = 1800
+        mock_activity_svc.get_uploaded_records_count.return_value = 15
+        mock_activity_svc.get_today_total_idle_seconds.return_value = 120
+        mock_activity_svc.get_today_timeline.return_value = []
+
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="dinesh",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+            full_name="Dinesh Dev",
+        )
+
+        dashboard = DashboardPage(activity_service=mock_activity_svc)
+        self.assertTrue(hasattr(dashboard, "task_title_label"))
+        self.assertIs(dashboard.task_title_label, dashboard.task_table.title_label)
+        self.assertIn("Task for Dinesh Dev (EC-098)", dashboard.task_title_label.text())
 
 
 if __name__ == "__main__":

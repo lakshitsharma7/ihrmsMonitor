@@ -608,10 +608,15 @@ class DashboardPage(QWidget):
         tasks_group = QGroupBox("Assigned Tasks", content)
         tasks_layout = QVBoxLayout(tasks_group)
         tasks_layout.setContentsMargins(12, 14, 12, 12)
-        tasks_layout.setSpacing(0)
+        tasks_layout.setSpacing(6)
 
         self.task_table = AssignedTasksTable(parent=self)
+        tasks_layout.addWidget(self.task_table.title_label)
         tasks_layout.addWidget(self.task_table)
+        tasks_layout.addWidget(self.task_table.actions_widget)
+        self.task_title_label = self.task_table.title_label
+        self.save_draft_button = self.task_table.save_draft_btn
+        self.submit_button = self.task_table.submit_btn
 
         root.addWidget(tasks_group)
         root.addStretch(1)
@@ -1004,10 +1009,11 @@ class DashboardPage(QWidget):
             self.timeline_table.set_entries(timeline)
 
             tasks = data.get("tasks")
+            task_date = str(data.get("fetch_date") or "")
             if tasks is not None:
-                self.task_table.set_tasks(tasks)
+                self.task_table.set_tasks(tasks, date=task_date or None)
             elif data.get("task_error"):
-                self.task_table.show_error(data.get("task_error"))
+                self.task_table.show_error(data.get("task_error"), date=task_date or None)
 
             attendance = data.get("attendance")
             if attendance:
