@@ -79,11 +79,48 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
         page = DashboardPage(self.mock_service)
         try:
             page.set_version("2.5.0")
-            self.assertIn("2.5.0", page.version_button.text())
-            self.assertIn("2.5.0", page.version_label.text())
+            self.assertEqual(page.version_button.text(), "Version: 2.5.0")
+            self.assertEqual(page.version_label.text(), "Version: 2.5.0")
 
             page.set_version("v3.1")
-            self.assertIn("3.1", page.version_button.text())
+            self.assertEqual(page.version_button.text(), "Version: 3.1")
+            self.assertEqual(page.version_label.text(), "Version: 3.1")
+        finally:
+            page.close()
+            page.deleteLater()
+
+    def test_version_badge_displays_version_number_and_never_only_prefix(self):
+        """Verify badge displays 'Version: 1.1' instead of only 'Version:', handles empty/prefix inputs, and transitions dynamically."""
+        page = DashboardPage(self.mock_service)
+        try:
+            running_v = get_running_app_version()
+            # Initial state
+            self.assertEqual(page.version_label.text(), f"Version: {running_v}")
+            self.assertEqual(page.version_button.text(), f"Version: {running_v}")
+            self.assertNotEqual(page.version_label.text(), "Version:")
+            self.assertNotEqual(page.version_label.text(), "Version")
+
+            # Passing 'Version:' should cleanly resolve using single source of truth
+            page.set_version("Version:")
+            self.assertEqual(page.version_label.text(), f"Version: {running_v}")
+
+            # Passing empty string or None should cleanly fallback to running version
+            page.set_version("")
+            self.assertEqual(page.version_label.text(), f"Version: {running_v}")
+            page.set_version(None)
+            self.assertEqual(page.version_label.text(), f"Version: {running_v}")
+
+            # Dynamic updates (1.1 -> 1.2 -> 1.3)
+            page.set_version("1.2")
+            self.assertEqual(page.version_label.text(), "Version: 1.2")
+            self.assertEqual(page.version_button.text(), "Version: 1.2")
+
+            page.set_version("1.3")
+            self.assertEqual(page.version_label.text(), "Version: 1.3")
+            self.assertEqual(page.version_button.text(), "Version: 1.3")
+
+            # Verify sizeHint does not clip the version text
+            self.assertGreaterEqual(page.version_button.sizeHint().width(), page.version_label.sizeHint().width())
         finally:
             page.close()
             page.deleteLater()

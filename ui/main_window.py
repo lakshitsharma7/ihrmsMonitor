@@ -1801,6 +1801,7 @@ class MainWindow(QMainWindow):
                 self._offline_update_pending = False
                 self._latest_version = version
                 self._is_force_update = force
+                self.dashboard_page.set_latest_version(version)
                 self.dashboard_page.set_update_status(f"Downloading v{version} in background...")
                 self.update_button.setVisible(True)
                 self.update_button.setText(f"🚀 Updating v{version}...")
@@ -1810,6 +1811,7 @@ class MainWindow(QMainWindow):
                 self._latest_installer_path = installer_path
                 self._latest_version = version
                 self._is_force_update = force
+                self.dashboard_page.set_latest_version(version)
                 self.dashboard_page.set_update_status(f"Ready to Restart (v{version})")
 
                 self.update_button.setVisible(True)

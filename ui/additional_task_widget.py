@@ -193,6 +193,24 @@ class LinedTaskTextEdit(QPlainTextEdit):
             "}"
         )
 
+    @staticmethod
+    def _readonly_stylesheet() -> str:
+        return (
+            "QPlainTextEdit#LinedTaskTextEdit {"
+            "    background-color: #fafbfc;"
+            "    color: #1e293b;"
+            "    border: 1px solid #cbd5e1;"
+            "    border-radius: 8px;"
+            "    selection-background-color: #bfdbfe;"
+            "    selection-color: #0f172a;"
+            "    font-size: 13px;"
+            "}"
+            "QPlainTextEdit#LinedTaskTextEdit:focus {"
+            "    background-color: #fafbfc;"
+            "    border: 1px solid #cbd5e1;"
+            "}"
+        )
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("LinedTaskTextEdit")
@@ -380,16 +398,20 @@ class AdditionalTaskWidget(QWidget):
         return self._is_submitted
 
     def set_submitted(self, submitted: bool) -> None:
-        """Update submission state and button visibility according to backend status."""
+        """Update submission state, text edit read-only mode, and button visibility according to backend status."""
         self._is_submitted = bool(submitted)
         if self._is_submitted:
             self.save_draft_btn.hide()
             self.submit_btn.hide()
+            self.text_edit.setReadOnly(True)
+            self.text_edit.setStyleSheet(self.text_edit._readonly_stylesheet())
         else:
             self.save_draft_btn.show()
             self.submit_btn.show()
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
+            self.text_edit.setReadOnly(False)
+            self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
 
     def set_date(self, date_str: Optional[str]) -> None:
         """Set working date for additional task submissions."""
@@ -413,6 +435,8 @@ class AdditionalTaskWidget(QWidget):
             self.text_edit.setPlainText(new_val)
         if is_submitted is not None:
             self.set_submitted(is_submitted)
+        else:
+            self.set_submitted(self._is_submitted)
 
     def task_content(self) -> str:
         """Get the current additional task text content."""
@@ -424,7 +448,7 @@ class AdditionalTaskWidget(QWidget):
 
     def _on_text_changed(self) -> None:
         """Clear error border styling when user starts typing."""
-        if "border: 1.5px solid #ef4444" in self.text_edit.styleSheet():
+        if not self._is_submitted and "border: 1.5px solid #ef4444" in self.text_edit.styleSheet():
             self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
             self.text_edit.setToolTip("")
 
@@ -503,7 +527,7 @@ class AdditionalTaskWidget(QWidget):
         self._is_submitting = False
 
         if is_draft:
-            self._is_submitted = False
+            self.set_submitted(False)
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
             self.save_draft_btn.show()
@@ -513,10 +537,8 @@ class AdditionalTaskWidget(QWidget):
             self._show_status("Draft saved successfully.", is_error=False)
             QTimer.singleShot(3500, self._reset_action_buttons)
         else:
-            # Successfully submitted: hide BOTH Save As Draft and Submit Task buttons
-            self._is_submitted = True
-            self.save_draft_btn.hide()
-            self.submit_btn.hide()
+            # Successfully submitted: make read-only and hide BOTH Save As Draft and Submit Task buttons
+            self.set_submitted(True)
             self._show_status("Additional task submitted successfully.", is_error=False)
 
         self.task_saved.emit({
@@ -530,7 +552,7 @@ class AdditionalTaskWidget(QWidget):
         """Handle save error while preserving user entered text."""
         logger.warning("AdditionalTaskWidget: save error is_draft=%s: %s", is_draft, err_msg)
         self._is_submitting = False
-        self._is_submitted = False
+        self.set_submitted(False)
         self.save_draft_btn.setEnabled(True)
         self.submit_btn.setEnabled(True)
         self.save_draft_btn.show()
@@ -560,6 +582,8 @@ class AdditionalTaskWidget(QWidget):
         if self._is_submitted:
             self.save_draft_btn.hide()
             self.submit_btn.hide()
+            self.text_edit.setReadOnly(True)
+            self.text_edit.setStyleSheet(self.text_edit._readonly_stylesheet())
         else:
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
@@ -569,6 +593,8 @@ class AdditionalTaskWidget(QWidget):
             self.submit_btn.setStyleSheet(self._submit_btn_style_default())
             self.save_draft_btn.show()
             self.submit_btn.show()
+            self.text_edit.setReadOnly(False)
+            self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
 
     @staticmethod
     def _draft_btn_style_default() -> str:

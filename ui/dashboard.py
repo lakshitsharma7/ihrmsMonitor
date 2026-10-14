@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -512,7 +513,7 @@ class DashboardPage(QWidget):
 
         is_initially_active = getattr(self, "_is_workpulse", False)
 
-        # 1. Status: ● Online / ● Offline
+        # 1. Status: ● Online / ● Offline (Left) and Version Badge (Right)
         status_row = QHBoxLayout()
         status_row.setContentsMargins(0, 0, 0, 0)
         status_row.setSpacing(6)
@@ -530,13 +531,47 @@ class DashboardPage(QWidget):
         status_row.addWidget(self.status_title_label)
         status_row.addWidget(self.network_status_label)
         status_row.addStretch(1)
-        status_layout.addLayout(status_row)
 
-        # 2. Version
-        self.version_label = QLabel(f"Version: {get_running_app_version()}", status_group)
+        # 2. Version Display moved to the right side of the card, styled as a compact clickable badge
+        self.version_button = QPushButton(status_group)
+        self.version_button.setObjectName("StatusVersionButton")
+        self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.version_button.setToolTip("Click to view release summary and version history")
+        self.version_button.setStyleSheet(
+            """
+            QPushButton#StatusVersionButton {
+                background-color: #f1f5f9;
+                border: 1px solid #cbd5e1;
+                border-radius: 11px;
+                padding: 1px 8px;
+            }
+            QPushButton#StatusVersionButton:hover {
+                background-color: #e2e8f0;
+                border-color: #94a3b8;
+            }
+            QPushButton#StatusVersionButton:pressed {
+                background-color: #cbd5e1;
+            }
+            """
+        )
+        ver_btn_layout = QHBoxLayout(self.version_button)
+        ver_btn_layout.setContentsMargins(8, 2, 8, 2)
+        ver_btn_layout.setSpacing(2)
+        ver_btn_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+
+        self.version_label = QLabel(f"Version: {get_running_app_version()}", self.version_button)
         self.version_label.setObjectName("StatusLabel")
-        self.version_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
-        status_layout.addWidget(self.version_label)
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version_label.setStyleSheet("color: #2563eb; font-size: 11px; font-weight: 600; background: transparent;")
+        self.version_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        ver_btn_layout.addWidget(self.version_label)
+        self.version_button.text = lambda: self.version_label.text()
+        self.version_button.sizeHint = lambda: self.version_button.layout().sizeHint()
+        self.version_button.minimumSizeHint = lambda: self.version_button.layout().minimumSize()
+
+        self.version_button.clicked.connect(self._on_version_clicked)
+        status_row.addWidget(self.version_button)
+        status_layout.addLayout(status_row)
 
         # 3. Idle Time
         self.idle_time_label = QLabel("Idle Time: 0 seconds", status_group)
@@ -898,10 +933,20 @@ class DashboardPage(QWidget):
                 today_str = self._cached_calendar_date.strftime("%Y-%m-%d")
                 if hasattr(self, "additional_task_widget"):
                     self.additional_task_widget.set_date(today_str)
+                    found_add = False
                     for t in (tasks or []):
                         if t.get("is_additional") and t.get("description"):
-                            self.additional_task_widget.set_task_content(t.get("description"))
+                            found_add = True
+                            is_sub = (
+                                str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                                or str(t.get("task_completed") or "").strip() in ("1", "100")
+                                or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
+                                or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                            )
+                            self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
                             break
+                    if not found_add:
+                        self.additional_task_widget.set_submitted(False)
             except Exception as err:
                 logger.debug("Sync refresh tasks error: %s", err)
 
@@ -1033,11 +1078,21 @@ class DashboardPage(QWidget):
             if hasattr(self, "additional_task_widget"):
                 if task_date:
                     self.additional_task_widget.set_date(task_date)
+                found_add = False
                 if tasks:
                     for t in tasks:
                         if t.get("is_additional") and t.get("description"):
-                            self.additional_task_widget.set_task_content(t.get("description"))
+                            found_add = True
+                            is_sub = (
+                                str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                                or str(t.get("task_completed") or "").strip() in ("1", "100")
+                                or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
+                                or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                            )
+                            self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
                             break
+                if not found_add:
+                    self.additional_task_widget.set_submitted(False)
 
             attendance = data.get("attendance")
             if attendance:
@@ -1055,13 +1110,55 @@ class DashboardPage(QWidget):
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
 
-    def set_version(self, version: str) -> None:
-        """Dynamically update the displayed application version."""
-        if version:
-            v_str = str(version).strip()
-            if not v_str.lower().startswith("version"):
-                v_str = f"Version: {v_str}"
+    def set_version(self, version: str | None = None) -> None:
+        """Dynamically update the displayed application version using the single source of truth."""
+        raw_v = str(version or "").strip()
+        # Clean potential prefixes like 'Version:', 'Version', 'v'
+        clean_v = ""
+        if raw_v.lower().startswith("version:"):
+            clean_v = raw_v[8:].strip()
+        elif raw_v.lower().startswith("version"):
+            clean_v = raw_v[7:].strip()
+        elif raw_v.lower().startswith("v") and len(raw_v) > 1 and raw_v[1].isdigit():
+            clean_v = raw_v[1:].strip()
+        else:
+            clean_v = raw_v
+
+        # If clean version is empty or invalid (e.g. 'Version:', '', None), fetch dynamically from single source of truth
+        if not clean_v:
+            clean_v = get_running_app_version()
+
+        v_str = f"Version: {clean_v}"
+        if hasattr(self, "version_label") and self.version_label:
             self.version_label.setText(v_str)
+        if hasattr(self, "version_button") and self.version_button:
+            self.version_button.setToolTip(f"Click to view release summary for {v_str}")
+            if hasattr(self.version_button, "setAccessibleName"):
+                self.version_button.setAccessibleName(v_str)
+            self.version_button.updateGeometry()
+
+    def set_latest_version(self, version: str) -> None:
+        """Set the server-reported latest version when available."""
+        self._server_version = str(version).strip() if version else None
+
+    def _on_version_clicked(self) -> None:
+        """Open the Release Summary Dialog."""
+        try:
+            from ui.release_summary_dialog import ReleaseSummaryDialog
+            installed_ver = get_running_app_version()
+            server_ver = getattr(self, "_server_version", None)
+            if not server_ver:
+                win = self.window()
+                if hasattr(win, "_latest_version"):
+                    server_ver = getattr(win, "_latest_version")
+            dlg = ReleaseSummaryDialog(
+                installed_version=installed_ver,
+                server_version=server_ver,
+                parent=self,
+            )
+            dlg.exec()
+        except Exception as exc:
+            logger.exception("Failed to open release summary dialog: %s", exc)
 
     @staticmethod
     def _clean_status_text(raw_text: str) -> str:

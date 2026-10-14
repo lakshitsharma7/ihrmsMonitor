@@ -1731,7 +1731,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
     # ── Additional Task Post-Submission Button Visibility Scenarios ───────────
 
     def test_additional_task_scenario_1_buttons_appear_before_submission(self):
-        """1. Before submission: Show both Save As Draft and Submit Task buttons; task-entry fully functional."""
+        """1. Before submission: Show both Save As Draft and Submit Task buttons; task-entry fully editable."""
         widget = AdditionalTaskWidget()
         widget.set_date("2026-10-14")
         widget.set_task_content("Working on client documentation")
@@ -1745,13 +1745,14 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertEqual(widget.save_draft_btn.text(), "Save As Draft")
         self.assertEqual(widget.submit_btn.text(), "Submit Task")
 
-        # Task-entry area is fully functional and retains content
+        # Task-entry area is fully editable and retains content
+        self.assertFalse(widget.text_edit.isReadOnly())
         self.assertEqual(widget.task_content(), "Working on client documentation")
         widget.text_edit.setPlainText("Updated notes")
         self.assertEqual(widget.task_content(), "Updated notes")
 
     def test_additional_task_scenario_2_buttons_disappear_after_successful_submission(self):
-        """2. After successful submission: Hide BOTH Save As Draft and Submit Task buttons; keep content."""
+        """2. After successful submission: Make read-only and hide BOTH Save As Draft and Submit Task buttons; keep content."""
         widget = AdditionalTaskWidget()
         widget.set_date("2026-10-14")
         widget.set_task_content("Completed infrastructure deployment")
@@ -1768,21 +1769,23 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 status="1",
             )
 
-            # Both buttons must be hidden
+            # Both buttons must be hidden and editor is read-only
             self.assertTrue(widget.is_submitted)
+            self.assertTrue(widget.text_edit.isReadOnly())
             self.assertTrue(widget.save_draft_btn.isHidden())
             self.assertTrue(widget.submit_btn.isHidden())
 
             # Submitted content remains unchanged
             self.assertEqual(widget.task_content(), "Completed infrastructure deployment")
 
-            # Resetting action buttons must keep them hidden
+            # Resetting action buttons must keep them hidden and read-only
             widget._reset_action_buttons()
             self.assertTrue(widget.save_draft_btn.isHidden())
             self.assertTrue(widget.submit_btn.isHidden())
+            self.assertTrue(widget.text_edit.isReadOnly())
 
     def test_additional_task_scenario_3_buttons_remain_visible_after_failed_submission(self):
-        """3. If submission fails: Keep both buttons visible so user can retry or save draft; display error."""
+        """3. If submission fails: Keep both buttons visible and editor editable so user can retry or save draft; display error."""
         widget = AdditionalTaskWidget()
         widget.set_date("2026-10-14")
         widget.set_task_content("Attempted server sync")
@@ -1793,8 +1796,9 @@ class TestTaskServiceAndUI(unittest.TestCase):
             QCoreApplication.processEvents()
 
             mock_save.assert_called_once()
-            # Task must NOT be marked submitted
+            # Task must NOT be marked submitted and must remain editable
             self.assertFalse(widget.is_submitted)
+            self.assertFalse(widget.text_edit.isReadOnly())
 
             # Both buttons must remain visible
             self.assertFalse(widget.save_draft_btn.isHidden())
@@ -1808,7 +1812,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
             self.assertEqual(widget.task_content(), "Attempted server sync")
 
     def test_additional_task_scenario_4_reopening_page_respects_actual_saved_submission_status(self):
-        """4. Reopening/refreshing page: Keep both buttons hidden when API confirms task is already submitted."""
+        """4. Reopening/refreshing page: Keep read-only and buttons hidden when API confirms task is already submitted."""
         widget = AdditionalTaskWidget()
 
         # Case A: API returns submitted additional task (additional_task_status = 1)
@@ -1818,6 +1822,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
         QCoreApplication.processEvents()
 
         self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.text_edit.isReadOnly())
         self.assertTrue(widget.save_draft_btn.isHidden())
         self.assertTrue(widget.submit_btn.isHidden())
         self.assertEqual(widget.task_content(), api_submitted_task)
@@ -1828,20 +1833,22 @@ class TestTaskServiceAndUI(unittest.TestCase):
         QCoreApplication.processEvents()
 
         self.assertFalse(widget.is_submitted)
+        self.assertFalse(widget.text_edit.isReadOnly())
         self.assertFalse(widget.save_draft_btn.isHidden())
         self.assertFalse(widget.submit_btn.isHidden())
 
-        # Case C: Switching back to submitted date restores hidden buttons
+        # Case C: Switching back to submitted date restores read-only and hidden buttons
         widget.set_date("2026-10-14")
         widget.set_task_content(api_submitted_task, is_submitted=True)
         QCoreApplication.processEvents()
 
         self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.text_edit.isReadOnly())
         self.assertTrue(widget.save_draft_btn.isHidden())
         self.assertTrue(widget.submit_btn.isHidden())
 
     def test_additional_task_scenario_5_existing_api_integration_and_draft_unchanged(self):
-        """5. Existing API integration and task content remain unchanged; draft keeps buttons visible."""
+        """5. Existing API integration and task content remain unchanged; draft keeps editor editable and buttons visible."""
         widget = AdditionalTaskWidget()
         widget.set_date("2026-10-14")
         widget.set_task_content("Draft activity for review")
@@ -1858,8 +1865,9 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 status="0",
             )
 
-            # Draft save must NOT hide buttons
+            # Draft save must NOT make editor read-only or hide buttons
             self.assertFalse(widget.is_submitted)
+            self.assertFalse(widget.text_edit.isReadOnly())
             self.assertFalse(widget.save_draft_btn.isHidden())
             self.assertFalse(widget.submit_btn.isHidden())
             self.assertTrue(widget.save_draft_btn.isEnabled())
