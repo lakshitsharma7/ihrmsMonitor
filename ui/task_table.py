@@ -350,25 +350,25 @@ class AssignedTasksTable(QTableWidget):
         self.status_msg_label.setVisible(False)
         actions_layout.addWidget(self.status_msg_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        buttons_container = QWidget(self.actions_widget)
-        buttons_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        buttons_layout = CenteredFlowLayout(buttons_container, margin=0, h_spacing=16, v_spacing=8)
+        self.buttons_container = QWidget(self.actions_widget)
+        self.buttons_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        buttons_layout = CenteredFlowLayout(self.buttons_container, margin=0, h_spacing=16, v_spacing=8)
 
-        self.save_draft_btn = QPushButton("Save as Draft", buttons_container)
+        self.save_draft_btn = QPushButton("Save as Draft", self.buttons_container)
         self.save_draft_btn.setObjectName("SaveDraftButton")
         self.save_draft_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
         self.save_draft_btn.clicked.connect(lambda: self.submit_all_tasks(is_draft=True))
         buttons_layout.addWidget(self.save_draft_btn)
 
-        self.submit_btn = QPushButton("Submit", buttons_container)
+        self.submit_btn = QPushButton("Submit", self.buttons_container)
         self.submit_btn.setObjectName("SubmitTasksButton")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.submit_btn.setStyleSheet(self._submit_btn_style_default())
         self.submit_btn.clicked.connect(lambda: self.submit_all_tasks(is_draft=False))
         buttons_layout.addWidget(self.submit_btn)
 
-        actions_layout.addWidget(buttons_container)
+        actions_layout.addWidget(self.buttons_container)
 
         self.additional_task_widget: Optional[Any] = None
 
@@ -473,6 +473,22 @@ class AssignedTasksTable(QTableWidget):
     def is_submitted(self) -> bool:
         """Return whether the currently displayed Timesheet is in a submitted state."""
         return self._is_submitted
+
+    def set_submitted(self, submitted: bool) -> None:
+        """Update submission state and button visibility according to authoritative backend status."""
+        self._is_submitted = bool(submitted)
+        if self._is_submitted:
+            self.save_draft_btn.hide()
+            self.submit_btn.hide()
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.hide()
+        else:
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.show()
+            self.save_draft_btn.show()
+            self.submit_btn.show()
+            self.save_draft_btn.setEnabled(True)
+            self.submit_btn.setEnabled(True)
 
     def _is_submitted_data(self, tasks: Optional[List[Dict[str, Any]]] = None) -> bool:
         """
@@ -817,10 +833,20 @@ class AssignedTasksTable(QTableWidget):
                 task_date = selected_task.get("date")
             if task_date:
                 self.additional_task_widget.set_date(task_date)
+            found_additional = False
             for t in (self._tasks or []):
                 if t.get("is_additional") and t.get("description"):
-                    self.additional_task_widget.set_task_content(t.get("description"))
+                    found_additional = True
+                    is_sub = (
+                        str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                        or str(t.get("task_completed") or "").strip() in ("1", "100")
+                        or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
+                        or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                    )
+                    self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
                     break
+            if not found_additional:
+                self.additional_task_widget.set_submitted(False)
 
         # Capture focus state if an edit field is active
         focused_widget = QApplication.focusWidget()
@@ -855,18 +881,14 @@ class AssignedTasksTable(QTableWidget):
             self.setMinimumHeight(115)
             self.save_draft_btn.setEnabled(False)
             self.submit_btn.setEnabled(False)
+            self.save_draft_btn.setVisible(True)
             self.submit_btn.setVisible(True)
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.show()
             self.setUpdatesEnabled(True)
             return
 
-        self.save_draft_btn.setEnabled(True)
-        self.save_draft_btn.show()
-
-        if self._is_submitted:
-            self.submit_btn.hide()
-        else:
-            self.submit_btn.show()
-            self.submit_btn.setEnabled(True)
+        self.set_submitted(self._is_submitted_data(self._tasks))
 
         # Clear any spans
         self.clearSpans()
@@ -1234,7 +1256,6 @@ class AssignedTasksTable(QTableWidget):
 
         if not is_draft:
             # Backend has authoritatively confirmed Timesheet submission succeeded
-            self._is_submitted = True
             if fresh_tasks:
                 for ft in fresh_tasks:
                     if not ft.get("submit_status"):
@@ -1246,18 +1267,19 @@ class AssignedTasksTable(QTableWidget):
                     if isinstance(local_t.get("raw"), dict):
                         local_t["raw"]["submit_status"] = "1"
 
-            self.submit_btn.hide()
-            self.save_draft_btn.setEnabled(True)
-            self.save_draft_btn.show()
+            self.set_submitted(True)
             self._show_status("Timesheet submitted successfully.", is_error=False)
         else:
             # Draft saved successfully
-            self._is_submitted = False
+            self.set_submitted(False)
             if fresh_tasks:
                 self.set_tasks(fresh_tasks, date=submission_date)
 
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.show()
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
+            self.save_draft_btn.show()
             self.submit_btn.show()
             self.save_draft_btn.setText("Draft Saved ✓")
             self.save_draft_btn.setStyleSheet(self._btn_style_success())
@@ -1272,8 +1294,7 @@ class AssignedTasksTable(QTableWidget):
         """Handle failed batch submission while preserving entered values."""
         logger.warning("AssignedTasksTable: batch error is_draft=%s: %s", is_draft, err_msg)
         self._is_submitting = False
-        self.save_draft_btn.setEnabled(True)
-        self.submit_btn.setEnabled(True)
+        self.set_submitted(False)
 
         if is_draft:
             self.save_draft_btn.setText("Retry Draft ⚠️")
@@ -1281,7 +1302,6 @@ class AssignedTasksTable(QTableWidget):
         else:
             self.submit_btn.setText("Retry Submit ⚠️")
             self.submit_btn.setStyleSheet(self._btn_style_error())
-            self.submit_btn.show()
 
         self._show_status(f"Error: {err_msg}", is_error=True)
 
@@ -1299,13 +1319,18 @@ class AssignedTasksTable(QTableWidget):
     def _reset_action_buttons(self) -> None:
         """Reset action buttons back to default styling."""
         self._is_submitting = False
-        self.save_draft_btn.setEnabled(True)
-        self.save_draft_btn.setText("Save as Draft")
-        self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
-
         if self._is_submitted:
+            self.save_draft_btn.hide()
             self.submit_btn.hide()
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.hide()
         else:
+            if hasattr(self, "buttons_container"):
+                self.buttons_container.show()
+            self.save_draft_btn.setEnabled(True)
+            self.save_draft_btn.setText("Save as Draft")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
+            self.save_draft_btn.show()
             self.submit_btn.setEnabled(True)
             self.submit_btn.setText("Submit")
             self.submit_btn.setStyleSheet(self._submit_btn_style_default())

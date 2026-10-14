@@ -309,6 +309,7 @@ class AdditionalTaskWidget(QWidget):
 
         self._date: str = datetime.now().strftime("%Y-%m-%d")
         self._is_submitting: bool = False
+        self._is_submitted: bool = False
 
         self._signals = AdditionalTaskSignals()
         self._signals.save_success.connect(self._handle_save_success)
@@ -373,10 +374,30 @@ class AdditionalTaskWidget(QWidget):
         actions_layout.addWidget(btn_container)
         layout.addLayout(actions_layout)
 
+    @property
+    def is_submitted(self) -> bool:
+        """Return whether the additional task is submitted."""
+        return self._is_submitted
+
+    def set_submitted(self, submitted: bool) -> None:
+        """Update submission state and button visibility according to backend status."""
+        self._is_submitted = bool(submitted)
+        if self._is_submitted:
+            self.save_draft_btn.hide()
+            self.submit_btn.hide()
+        else:
+            self.save_draft_btn.show()
+            self.submit_btn.show()
+            self.save_draft_btn.setEnabled(True)
+            self.submit_btn.setEnabled(True)
+
     def set_date(self, date_str: Optional[str]) -> None:
         """Set working date for additional task submissions."""
         if date_str and str(date_str).strip():
-            self._date = str(date_str).strip()
+            new_date = str(date_str).strip()
+            if new_date != self._date:
+                self._date = new_date
+                self.set_submitted(False)
         else:
             self._date = datetime.now().strftime("%Y-%m-%d")
 
@@ -384,12 +405,14 @@ class AdditionalTaskWidget(QWidget):
         """Return the current working date."""
         return self._date
 
-    def set_task_content(self, text: str) -> None:
-        """Set task text content programmatically without losing cursor position unnecessarily."""
+    def set_task_content(self, text: str, is_submitted: Optional[bool] = None) -> None:
+        """Set task text content programmatically and update submission status if provided."""
         curr = self.text_edit.toPlainText().strip()
         new_val = (text or "").strip()
-        if new_val and not curr:
+        if new_val != curr:
             self.text_edit.setPlainText(new_val)
+        if is_submitted is not None:
+            self.set_submitted(is_submitted)
 
     def task_content(self) -> str:
         """Get the current additional task text content."""
@@ -445,6 +468,7 @@ class AdditionalTaskWidget(QWidget):
         else:
             self.submit_btn.setText("Submitting...")
             self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.submit_btn.show()
             self._show_status("Submitting additional task...", is_error=False)
 
         target_date = self._date or datetime.now().strftime("%Y-%m-%d")
@@ -477,16 +501,22 @@ class AdditionalTaskWidget(QWidget):
         """Handle successful save or draft response."""
         logger.info("AdditionalTaskWidget: save success is_draft=%s: %s", is_draft, msg)
         self._is_submitting = False
-        self.save_draft_btn.setEnabled(True)
-        self.submit_btn.setEnabled(True)
 
         if is_draft:
+            self._is_submitted = False
+            self.save_draft_btn.setEnabled(True)
+            self.submit_btn.setEnabled(True)
+            self.save_draft_btn.show()
+            self.submit_btn.show()
             self.save_draft_btn.setText("Draft Saved ✓")
             self.save_draft_btn.setStyleSheet(self._btn_style_success())
             self._show_status("Draft saved successfully.", is_error=False)
+            QTimer.singleShot(3500, self._reset_action_buttons)
         else:
-            self.submit_btn.setText("Submitted ✓")
-            self.submit_btn.setStyleSheet(self._btn_style_success())
+            # Successfully submitted: hide BOTH Save As Draft and Submit Task buttons
+            self._is_submitted = True
+            self.save_draft_btn.hide()
+            self.submit_btn.hide()
             self._show_status("Additional task submitted successfully.", is_error=False)
 
         self.task_saved.emit({
@@ -496,14 +526,15 @@ class AdditionalTaskWidget(QWidget):
             "response": data,
         })
 
-        QTimer.singleShot(3500, self._reset_action_buttons)
-
     def _handle_save_error(self, is_draft: bool, err_msg: str) -> None:
         """Handle save error while preserving user entered text."""
         logger.warning("AdditionalTaskWidget: save error is_draft=%s: %s", is_draft, err_msg)
         self._is_submitting = False
+        self._is_submitted = False
         self.save_draft_btn.setEnabled(True)
         self.submit_btn.setEnabled(True)
+        self.save_draft_btn.show()
+        self.submit_btn.show()
 
         if is_draft:
             self.save_draft_btn.setText("Retry Draft ⚠️")
@@ -526,12 +557,18 @@ class AdditionalTaskWidget(QWidget):
     def _reset_action_buttons(self) -> None:
         """Reset action buttons back to default styling."""
         self._is_submitting = False
-        self.save_draft_btn.setEnabled(True)
-        self.submit_btn.setEnabled(True)
-        self.save_draft_btn.setText("Save As Draft")
-        self.submit_btn.setText("Submit Task")
-        self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
-        self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+        if self._is_submitted:
+            self.save_draft_btn.hide()
+            self.submit_btn.hide()
+        else:
+            self.save_draft_btn.setEnabled(True)
+            self.submit_btn.setEnabled(True)
+            self.save_draft_btn.setText("Save As Draft")
+            self.submit_btn.setText("Submit Task")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.save_draft_btn.show()
+            self.submit_btn.show()
 
     @staticmethod
     def _draft_btn_style_default() -> str:

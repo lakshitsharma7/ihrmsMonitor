@@ -540,6 +540,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 self.assertEqual(mock_save.call_args[1]["submit_status"], "1")
 
         # 4. Test Save as Draft functionality
+        table.set_tasks(tasks)
         with patch.object(TaskService, "save_time_sheet", return_value=(True, "Draft saved successfully.", {"TimeSheet_id": "587"})) as mock_draft:
             with patch.object(TaskService, "fetch_assigned_tasks", return_value=tasks):
                 save_draft_btn.click()
@@ -1402,16 +1403,17 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 mock_save.assert_called_once()
                 self.assertEqual(mock_save.call_args[1]["submit_status"], "1")
 
-                # Submit button must be hidden
+                # Submit and Save as Draft buttons must both be hidden, leaving no empty container
                 self.assertTrue(table.is_submitted)
                 self.assertTrue(table.submit_btn.isHidden())
-                # Save as Draft remains available
-                self.assertFalse(table.save_draft_btn.isHidden())
-                self.assertTrue(table.save_draft_btn.isEnabled())
+                self.assertTrue(table.save_draft_btn.isHidden())
+                self.assertTrue(table.buttons_container.isHidden())
 
-                # Even after timer resets action buttons, Submit must NOT reappear
+                # Even after timer resets action buttons, both buttons must NOT reappear
                 table._reset_action_buttons()
                 self.assertTrue(table.submit_btn.isHidden())
+                self.assertTrue(table.save_draft_btn.isHidden())
+                self.assertTrue(table.buttons_container.isHidden())
 
     def test_post_submission_scenario_3_failed_submission_keeps_submit_available(self):
         """Scenario 3: A failed submission keeps Submit available for retry and preserves entered values."""
@@ -1444,10 +1446,13 @@ class TestTaskServiceAndUI(unittest.TestCase):
             QCoreApplication.processEvents()
 
             mock_save.assert_called_once()
-            # Submit button must remain available for retry
+            # Submit and Save as Draft buttons must remain available for retry
             self.assertFalse(table.is_submitted)
             self.assertFalse(table.submit_btn.isHidden())
             self.assertTrue(table.submit_btn.isEnabled())
+            self.assertFalse(table.save_draft_btn.isHidden())
+            self.assertTrue(table.save_draft_btn.isEnabled())
+            self.assertFalse(table.buttons_container.isHidden())
             self.assertEqual(table.submit_btn.text(), "Retry Submit ⚠️")
             # Entered values must be preserved
             self.assertEqual(table._get_line_edit(0, 8).text(), "80")
@@ -1483,7 +1488,8 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         self.assertTrue(table.is_submitted)
         self.assertTrue(table.submit_btn.isHidden())
-        self.assertFalse(table.save_draft_btn.isHidden())
+        self.assertTrue(table.save_draft_btn.isHidden())
+        self.assertTrue(table.buttons_container.isHidden())
 
         # Page refresh with fresh fetch from API
         table.set_tasks(submitted_tasks_from_api, date="2026-10-14")
@@ -1491,6 +1497,8 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         self.assertTrue(table.is_submitted)
         self.assertTrue(table.submit_btn.isHidden())
+        self.assertTrue(table.save_draft_btn.isHidden())
+        self.assertTrue(table.buttons_container.isHidden())
 
         # Switching to unsubmitted date restores Submit button
         unsubmitted_tasks = [{
@@ -1518,6 +1526,9 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertFalse(table.is_submitted)
         self.assertFalse(table.submit_btn.isHidden())
         self.assertTrue(table.submit_btn.isEnabled())
+        self.assertFalse(table.save_draft_btn.isHidden())
+        self.assertTrue(table.save_draft_btn.isEnabled())
+        self.assertFalse(table.buttons_container.isHidden())
 
         # Switching back to submitted date hides Submit button again
         table.set_tasks(submitted_tasks_from_api, date="2026-10-14")
@@ -1525,6 +1536,8 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         self.assertTrue(table.is_submitted)
         self.assertTrue(table.submit_btn.isHidden())
+        self.assertTrue(table.save_draft_btn.isHidden())
+        self.assertTrue(table.buttons_container.isHidden())
 
     def test_post_submission_scenario_5_submitted_values_and_comments_match_api_response(self):
         """Scenario 5: Display latest submitted Timesheet data dynamically from actual API response."""
@@ -1583,8 +1596,10 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 self.assertEqual(table._get_line_edit(0, 9).text(), "Token expiry and refresh flow verified against server")
                 # Title heading dynamically populates employee name, code, date
                 self.assertEqual(table.title_label.text(), "Timesheet for Dinesh Dev (EC-098) on 14 October 2026")
-                # Submit button is hidden
+                # Both buttons and container are hidden
                 self.assertTrue(table.submit_btn.isHidden())
+                self.assertTrue(table.save_draft_btn.isHidden())
+                self.assertTrue(table.buttons_container.isHidden())
 
     def test_post_submission_scenario_6_draft_functionality_and_unrelated_behavior_unchanged(self):
         """Scenario 6: Draft functionality and unrelated Timesheet behavior remain unchanged."""
@@ -1651,6 +1666,147 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 # Table structure preserved: columns 3 and 5 remain hidden
                 self.assertTrue(table.isColumnHidden(3))
                 self.assertTrue(table.isColumnHidden(5))
+
+    # ── Additional Task Post-Submission Button Visibility Scenarios ───────────
+
+    def test_additional_task_scenario_1_buttons_appear_before_submission(self):
+        """1. Before submission: Show both Save As Draft and Submit Task buttons; task-entry fully functional."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-14")
+        widget.set_task_content("Working on client documentation")
+
+        # Both buttons appear and are enabled
+        self.assertFalse(widget.is_submitted)
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.save_draft_btn.isEnabled())
+        self.assertFalse(widget.submit_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isEnabled())
+        self.assertEqual(widget.save_draft_btn.text(), "Save As Draft")
+        self.assertEqual(widget.submit_btn.text(), "Submit Task")
+
+        # Task-entry area is fully functional and retains content
+        self.assertEqual(widget.task_content(), "Working on client documentation")
+        widget.text_edit.setPlainText("Updated notes")
+        self.assertEqual(widget.task_content(), "Updated notes")
+
+    def test_additional_task_scenario_2_buttons_disappear_after_successful_submission(self):
+        """2. After successful submission: Hide BOTH Save As Draft and Submit Task buttons; keep content."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-14")
+        widget.set_task_content("Completed infrastructure deployment")
+
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Additional task saved successfully.", {"status": 1})) as mock_save:
+            # Click Submit Task
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            mock_save.assert_called_once_with(
+                task="Completed infrastructure deployment",
+                date="2026-10-14",
+                status="1",
+            )
+
+            # Both buttons must be hidden
+            self.assertTrue(widget.is_submitted)
+            self.assertTrue(widget.save_draft_btn.isHidden())
+            self.assertTrue(widget.submit_btn.isHidden())
+
+            # Submitted content remains unchanged
+            self.assertEqual(widget.task_content(), "Completed infrastructure deployment")
+
+            # Resetting action buttons must keep them hidden
+            widget._reset_action_buttons()
+            self.assertTrue(widget.save_draft_btn.isHidden())
+            self.assertTrue(widget.submit_btn.isHidden())
+
+    def test_additional_task_scenario_3_buttons_remain_visible_after_failed_submission(self):
+        """3. If submission fails: Keep both buttons visible so user can retry or save draft; display error."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-14")
+        widget.set_task_content("Attempted server sync")
+
+        with patch.object(TaskService, "save_additional_task", return_value=(False, "Gateway Timeout", None)) as mock_save:
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            mock_save.assert_called_once()
+            # Task must NOT be marked submitted
+            self.assertFalse(widget.is_submitted)
+
+            # Both buttons must remain visible
+            self.assertFalse(widget.save_draft_btn.isHidden())
+            self.assertFalse(widget.submit_btn.isHidden())
+            self.assertTrue(widget.save_draft_btn.isEnabled())
+            self.assertTrue(widget.submit_btn.isEnabled())
+            self.assertEqual(widget.submit_btn.text(), "Retry Submit ⚠️")
+            self.assertIn("Gateway Timeout", widget.status_msg_label.text())
+
+            # Content is preserved
+            self.assertEqual(widget.task_content(), "Attempted server sync")
+
+    def test_additional_task_scenario_4_reopening_page_respects_actual_saved_submission_status(self):
+        """4. Reopening/refreshing page: Keep both buttons hidden when API confirms task is already submitted."""
+        widget = AdditionalTaskWidget()
+
+        # Case A: API returns submitted additional task (additional_task_status = 1)
+        api_submitted_task = "Fixed production incident and migrated database"
+        widget.set_date("2026-10-14")
+        widget.set_task_content(api_submitted_task, is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isHidden())
+        self.assertEqual(widget.task_content(), api_submitted_task)
+
+        # Case B: Switching to a date where additional task is draft or unsubmitted
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Draft activity notes", is_submitted=False)
+        QCoreApplication.processEvents()
+
+        self.assertFalse(widget.is_submitted)
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertFalse(widget.submit_btn.isHidden())
+
+        # Case C: Switching back to submitted date restores hidden buttons
+        widget.set_date("2026-10-14")
+        widget.set_task_content(api_submitted_task, is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isHidden())
+
+    def test_additional_task_scenario_5_existing_api_integration_and_draft_unchanged(self):
+        """5. Existing API integration and task content remain unchanged; draft keeps buttons visible."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-14")
+        widget.set_task_content("Draft activity for review")
+
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Draft saved.", {"status": 1})) as mock_save:
+            # Click Save As Draft
+            widget.save_draft_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            mock_save.assert_called_once_with(
+                task="Draft activity for review",
+                date="2026-10-14",
+                status="0",
+            )
+
+            # Draft save must NOT hide buttons
+            self.assertFalse(widget.is_submitted)
+            self.assertFalse(widget.save_draft_btn.isHidden())
+            self.assertFalse(widget.submit_btn.isHidden())
+            self.assertTrue(widget.save_draft_btn.isEnabled())
+            self.assertTrue(widget.submit_btn.isEnabled())
+            self.assertEqual(widget.save_draft_btn.text(), "Draft Saved ✓")
+
+            # Content preserved
+            self.assertEqual(widget.task_content(), "Draft activity for review")
 
 
 if __name__ == "__main__":
