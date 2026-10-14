@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton
 
 from config.api_config import ApiConfig
@@ -814,7 +814,13 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks)
         QCoreApplication.processEvents()
 
-        # 1. User intentionally scrolls horizontally to inspect comment/action
+        # Under responsive fit, table fits within container with horizontal scrollbar disabled
+        self.assertEqual(table.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertEqual(table.horizontalScrollBar().maximum(), 0)
+
+        # 1. To test scroll stability, simulate a widened column and scroll horizontally
+        table.setColumnWidth(9, 500)
+        QCoreApplication.processEvents()
         target_scroll = 250
         table.horizontalScrollBar().setValue(target_scroll)
         QCoreApplication.processEvents()
@@ -849,6 +855,61 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertEqual(table.horizontalScrollBar().value(), 100)
         table.horizontalScrollBar().setValue(300)
         self.assertEqual(table.horizontalScrollBar().value(), 300)
+
+    def test_timesheet_table_has_no_horizontal_scrollbar_and_fits_container(self):
+        """Verify Timesheet table removes horizontal scrollbar and fits within its container across various widths."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "1",
+                "name": "Frontend Task",
+                "description": "Responsiveness and fit verification across container widths",
+                "category": "Development",
+                "target": "100%",
+                "measurement_criteria": "Code review",
+                "weightage": "20%",
+                "task_done": "10%",
+                "task_completed": "15",
+                "comment": "Testing no horizontal scrollbar across sizes",
+                "date": "2026-10-14",
+            }
+        ]
+        table.set_tasks(tasks)
+        table.show()
+        QCoreApplication.processEvents()
+
+        # Policy must always be ScrollBarAlwaysOff
+        self.assertEqual(table.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertFalse(table.horizontalScrollBar().isVisible())
+
+        # Test responsiveness across different container widths (laptop, desktop, widescreen)
+        for container_width in [650, 750, 800, 1000, 1200, 1600]:
+            table.resize(container_width, 350)
+            table._adjust_column_widths()
+            QCoreApplication.processEvents()
+
+            # Horizontal scrollbar must remain not visible
+            self.assertFalse(table.horizontalScrollBar().isVisible())
+
+            visible_cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
+            total_cols_w = sum(table.columnWidth(c) for c in visible_cols)
+            vp_w = table.viewport().width()
+
+            # Columns must fill the viewport without exceeding it
+            self.assertEqual(total_cols_w, vp_w)
+
+            # Editable inputs in Col 8 (Task Completed) and Col 9 (Comment) must remain usable and unclipped
+            comp_container = table.cellWidget(0, 8)
+            comm_container = table.cellWidget(0, 9)
+            self.assertIsNotNone(comp_container)
+            self.assertIsNotNone(comm_container)
+
+            comp_edit = comp_container.findChild(QLineEdit)
+            comm_edit = comm_container.findChild(QLineEdit)
+            self.assertIsNotNone(comp_edit)
+            self.assertIsNotNone(comm_edit)
+            self.assertGreater(comp_edit.width(), 40)
+            self.assertGreater(comm_edit.width(), 60)
 
     def test_assigned_tasks_table_header_labels_not_clipped(self):
         """Verify that every column header text has sufficient width and padding so that no label is clipped."""
@@ -1807,6 +1868,328 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
             # Content preserved
             self.assertEqual(widget.task_content(), "Draft activity for review")
+
+    def test_separate_timesheet_and_additional_task_data(self):
+        """1. Separation: Assigned tasks appear in table; additional tasks appear only in additional task widget."""
+        table = AssignedTasksTable()
+        addl_widget = AdditionalTaskWidget()
+        table.additional_task_widget = addl_widget
+
+        tasks = [
+            {
+                "id": "kra_101",
+                "kra_id": "101",
+                "timesheet_id": "ts_1",
+                "name": "Backend API Optimization",
+                "description": "Optimize database queries",
+                "target": "10",
+                "weightage": "20%",
+                "task_done": "5",
+                "task_completed": "2",
+                "comment": "In progress",
+                "submit_status": "0",
+                "is_additional": False,
+            },
+            {
+                "id": "kra_102",
+                "kra_id": "102",
+                "timesheet_id": "ts_2",
+                "name": "Daily Activity / Resembling Additional Task",
+                "description": "Legitimate assigned task that mentions additional task in description",
+                "target": "5",
+                "weightage": "15%",
+                "task_done": "3",
+                "task_completed": "1",
+                "comment": "Verified",
+                "submit_status": "0",
+                "is_additional": False,
+            },
+            {
+                "id": "add_task_1",
+                "title": "Daily Activity / Additional Task",
+                "description": "Fixed urgent client bug off-schedule",
+                "task_completed": "1",
+                "status": "Completed",
+                "submit_status": "1",
+                "is_additional": True,
+            },
+        ]
+
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # Main table has exactly the 2 legitimate assigned tasks (row count = 2)
+        self.assertEqual(table.rowCount(), 2)
+        self.assertEqual(len(table.tasks), 2)
+        self.assertEqual(table.item(0, 1).text(), "Backend API Optimization")
+        self.assertEqual(table.item(1, 1).text(), "Daily Activity / Resembling Additional Task")
+
+        # Additional task record is NOT in the Timesheet table
+        for r in range(table.rowCount()):
+            self.assertNotEqual(table.item(r, 1).text(), "Daily Activity / Additional Task")
+
+        # Additional Task widget receives the additional task data
+        self.assertEqual(addl_widget.task_content(), "Fixed urgent client bug off-schedule")
+        self.assertTrue(addl_widget.is_submitted)
+
+    def test_comments_and_completed_preserved_across_rerenders_and_refreshes(self):
+        """3. Comments and task completed values are preserved across periodic refreshes and rerenders."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_201",
+                "kra_id": "201",
+                "timesheet_id": "ts_201",
+                "name": "Frontend Component Refactoring",
+                "description": "Refactor table view",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # User types long comments and task completion
+        comment_edit = table._get_line_edit(0, 9)
+        completed_edit = table._get_line_edit(0, 8)
+        self.assertIsNotNone(comment_edit)
+        self.assertIsNotNone(completed_edit)
+
+        user_comment = "Completed the refactoring and passed all unit test assertions without regressions."
+        user_comp = "4.5"
+
+        comment_edit.setText(user_comment)
+        completed_edit.setText(user_comp)
+        QCoreApplication.processEvents()
+
+        self.assertEqual(table._get_comment(0), user_comment)
+        self.assertEqual(table._get_task_completed(0), user_comp)
+
+        # Background sync / API refresh arrives with stale/empty comment data
+        stale_api_tasks = [
+            {
+                "id": "kra_201",
+                "kra_id": "201",
+                "timesheet_id": "ts_201",
+                "name": "Frontend Component Refactoring",
+                "description": "Refactor table view",
+                "comment": "",
+                "task_completed": "",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+
+        table.set_tasks(stale_api_tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # User-entered comment and completion are NOT wiped out
+        self.assertEqual(table._get_comment(0), user_comment)
+        self.assertEqual(table._get_task_completed(0), user_comp)
+        new_comment_edit = table._get_line_edit(0, 9)
+        self.assertEqual(new_comment_edit.text(), user_comment)
+
+    def test_save_draft_preserves_comments_and_keeps_timesheet_editable(self):
+        """4. Save as Draft preserves current comments and does not mark Timesheet as submitted."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_301",
+                "kra_id": "301",
+                "timesheet_id": "ts_301",
+                "name": "Database Migration",
+                "description": "Schema upgrade",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        comment_edit = table._get_line_edit(0, 9)
+        comment_edit.setText("Drafting migration scripts for table schema")
+        completed_edit = table._get_line_edit(0, 8)
+        completed_edit.setText("2")
+        QCoreApplication.processEvents()
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Draft saved.", {"status": 1})) as mock_save, \
+             patch.object(TaskService, "fetch_assigned_tasks", return_value=tasks):
+
+            table.save_draft_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            mock_save.assert_called_once()
+            _, kwargs = mock_save.call_args
+            self.assertEqual(kwargs.get("submit_status"), "0")
+
+            # Timesheet remains unsubmitted and editable
+            self.assertFalse(table.is_submitted)
+            self.assertFalse(table.save_draft_btn.isHidden())
+            self.assertFalse(table.submit_btn.isHidden())
+            self.assertEqual(table._get_comment(0), "Drafting migration scripts for table schema")
+
+    def test_failed_submission_preserves_comments_and_leaves_timesheet_editable(self):
+        """5b. Failed submission keeps Timesheet editable and preserves comments for retry."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_401",
+                "kra_id": "401",
+                "timesheet_id": "ts_401",
+                "name": "CI/CD Pipeline",
+                "description": "Fix docker runner",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        table._get_line_edit(0, 9).setText("Fixed docker config")
+        table._get_line_edit(0, 8).setText("1")
+        QCoreApplication.processEvents()
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(False, "Network connection error", {})):
+            table.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            # Timesheet must remain unsubmitted and editable
+            self.assertFalse(table.is_submitted)
+            self.assertFalse(table.submit_btn.isHidden())
+            self.assertFalse(table.save_draft_btn.isHidden())
+            self.assertEqual(table._get_comment(0), "Fixed docker config")
+            self.assertEqual(table._get_task_completed(0), "1")
+            self.assertFalse(table._get_line_edit(0, 9).isReadOnly())
+            self.assertIn("Retry", table.submit_btn.text())
+
+    def test_successful_submission_makes_timesheet_read_only_and_hides_buttons(self):
+        """5a. Confirmed submission disables editing and hides action buttons."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_501",
+                "kra_id": "501",
+                "timesheet_id": "ts_501",
+                "name": "Security Audit",
+                "description": "Audit token permissions",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        table._get_line_edit(0, 9).setText("Audit completed with zero vulnerabilities")
+        table._get_line_edit(0, 8).setText("5")
+        QCoreApplication.processEvents()
+
+        fresh_submitted_tasks = [
+            {
+                "id": "kra_501",
+                "kra_id": "501",
+                "timesheet_id": "ts_501",
+                "name": "Security Audit",
+                "description": "Audit token permissions",
+                "comment": "Audit completed with zero vulnerabilities",
+                "task_completed": "5",
+                "submit_status": "1",
+                "is_additional": False,
+            }
+        ]
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Submitted successfully.", {"status": 1})), \
+             patch.object(TaskService, "fetch_assigned_tasks", return_value=fresh_submitted_tasks):
+
+            table.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertTrue(table.is_submitted)
+            # Buttons hidden
+            self.assertTrue(table.save_draft_btn.isHidden())
+            self.assertTrue(table.submit_btn.isHidden())
+            self.assertTrue(table.buttons_container.isHidden())
+
+            # Submitted fields are read-only
+            self.assertTrue(table._get_line_edit(0, 8).isReadOnly())
+            self.assertTrue(table._get_line_edit(0, 9).isReadOnly())
+            self.assertEqual(table._get_comment(0), "Audit completed with zero vulnerabilities")
+
+    def test_reopen_or_refresh_already_submitted_timesheet_preserves_read_only(self):
+        """5c & 6. Opening an already-submitted Timesheet from the API is read-only with buttons hidden."""
+        table = AssignedTasksTable()
+        submitted_tasks = [
+            {
+                "id": "kra_601",
+                "kra_id": "601",
+                "timesheet_id": "ts_601",
+                "name": "Payment Gateway",
+                "description": "Stripe webhook integration",
+                "comment": "Processed 100% of webhooks",
+                "task_completed": "10",
+                "submit_status": "1",
+                "is_additional": False,
+            }
+        ]
+
+        table.set_tasks(submitted_tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(table.is_submitted)
+        self.assertTrue(table.save_draft_btn.isHidden())
+        self.assertTrue(table.submit_btn.isHidden())
+        self.assertTrue(table._get_line_edit(0, 8).isReadOnly())
+        self.assertTrue(table._get_line_edit(0, 9).isReadOnly())
+        self.assertEqual(table._get_comment(0), "Processed 100% of webhooks")
+
+    def test_additional_task_status_does_not_affect_timesheet_submission_status(self):
+        """1 & 6. Additional task being submitted does NOT mark the Timesheet table as submitted."""
+        table = AssignedTasksTable()
+        addl_widget = AdditionalTaskWidget()
+        table.additional_task_widget = addl_widget
+
+        # Timesheet task is unsubmitted (submit_status: "0"), additional task is submitted (status: "1")
+        mixed_tasks = [
+            {
+                "id": "kra_701",
+                "kra_id": "701",
+                "timesheet_id": "ts_701",
+                "name": "Core Engine",
+                "description": "Async loop improvements",
+                "comment": "Draft notes",
+                "task_completed": "1",
+                "submit_status": "0",
+                "is_additional": False,
+            },
+            {
+                "id": "add_task_1",
+                "title": "Daily Activity / Additional Task",
+                "description": "Submitted additional task",
+                "task_completed": "1",
+                "status": "Completed",
+                "submit_status": "1",
+                "additional_task_status": "1",
+                "is_additional": True,
+            },
+        ]
+
+        table.set_tasks(mixed_tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # Timesheet table MUST remain unsubmitted and editable
+        self.assertFalse(table.is_submitted)
+        self.assertFalse(table.save_draft_btn.isHidden())
+        self.assertFalse(table.submit_btn.isHidden())
+        self.assertFalse(table._get_line_edit(0, 8).isReadOnly())
+        self.assertFalse(table._get_line_edit(0, 9).isReadOnly())
+
+        # Additional task widget is submitted
+        self.assertTrue(addl_widget.is_submitted)
+        self.assertTrue(addl_widget.save_draft_btn.isHidden())
+        self.assertTrue(addl_widget.submit_btn.isHidden())
 
 
 if __name__ == "__main__":

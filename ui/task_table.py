@@ -7,7 +7,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QObject, QRegularExpression, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QRegularExpressionValidator
+from PySide6.QtGui import QFont, QFontMetrics, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractScrollArea,
@@ -46,7 +46,7 @@ QTableWidget#AssignedTasksTable {
 }
 
 QTableWidget#AssignedTasksTable::item {
-    padding: 6px 8px;
+    padding: 5px 6px;
     color: #1e293b;
     border-right: 1px solid #e2e8f0;
     border-bottom: 1px solid #e2e8f0;
@@ -80,8 +80,8 @@ QHeaderView::section {
     background-color: #f8fafc;
     color: #334155;
     font-weight: 700;
-    font-size: 12px;
-    padding: 7px 5px;
+    font-size: 11.5px;
+    padding: 6px 4px;
     border-top: none;
     border-left: none;
     border-right: 1px solid #e2e8f0;
@@ -98,29 +98,29 @@ QTableCornerButton::section {
     border-bottom: 1.5px solid #cbd5e1;
 }
 
-QScrollBar:horizontal {
-    height: 8px;
-    background: #f1f5f9;
-    border-radius: 4px;
-    margin: 0px;
-}
-
-QScrollBar::handle:horizontal {
-    background: #cbd5e1;
-    min-width: 24px;
-    border-radius: 4px;
-}
-
-QScrollBar::handle:horizontal:hover {
-    background: #94a3b8;
-}
-
-QScrollBar::add-line:horizontal,
-QScrollBar::sub-line:horizontal {
+QTableWidget#AssignedTasksTable QScrollBar:horizontal {
+    height: 0px;
     width: 0px;
+    border: none;
+    background: transparent;
 }
 
-QScrollBar::vertical {
+QTableWidget#AssignedTasksTable QScrollBar::handle:horizontal {
+    min-width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}
+
+QTableWidget#AssignedTasksTable QScrollBar::add-line:horizontal,
+QTableWidget#AssignedTasksTable QScrollBar::sub-line:horizontal {
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar:vertical {
     width: 8px;
     background: #f1f5f9;
     border-radius: 4px;
@@ -150,7 +150,7 @@ _LE_NORMAL = (
     "  background-color: #ffffff;"
     "  border: 1px solid #cbd5e1;"
     "  border-radius: 6px;"
-    "  padding: 4px 6px;"
+    "  padding: 3px 5px;"
     "  font-size: 12px;"
     "  font-weight: 500;"
     "  color: #1e293b;"
@@ -169,9 +169,25 @@ _LE_ERROR = (
     "  background-color: #fef2f2;"
     "  border: 1.5px solid #ef4444;"
     "  border-radius: 6px;"
-    "  padding: 4px 6px;"
+    "  padding: 3px 5px;"
     "  font-size: 12px;"
     "  color: #991b1b;"
+    "}"
+)
+
+_LE_READONLY = (
+    "QLineEdit {"
+    "  background-color: #f8fafc;"
+    "  border: 1px solid #e2e8f0;"
+    "  border-radius: 6px;"
+    "  padding: 3px 5px;"
+    "  font-size: 12px;"
+    "  font-weight: 500;"
+    "  color: #334155;"
+    "}"
+    "QLineEdit:focus {"
+    "  border: 1px solid #cbd5e1;"
+    "  background-color: #f8fafc;"
     "}"
 )
 
@@ -284,16 +300,16 @@ class AssignedTasksTable(QTableWidget):
 
     # Column config: (header_label, initial_width_px, header_alignment)
     COLUMN_CONFIG = [
-        ("S.No.",                  48, Qt.AlignmentFlag.AlignCenter),
-        ("Name",                 125, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Description",          155, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("S.No.",                  42, Qt.AlignmentFlag.AlignCenter),
+        ("Name",                 100, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Description",          135, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
         ("Category",              90, Qt.AlignmentFlag.AlignCenter),
-        ("Target",                70, Qt.AlignmentFlag.AlignCenter),
+        ("Target",                55, Qt.AlignmentFlag.AlignCenter),
         ("Measurement Criteria", 140, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Weightage",             80, Qt.AlignmentFlag.AlignCenter),
-        ("Task Done Till Now",   125, Qt.AlignmentFlag.AlignCenter),
-        ("Task Completed",       115, Qt.AlignmentFlag.AlignCenter),
-        ("Comment",              185, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Weightage",             74, Qt.AlignmentFlag.AlignCenter),
+        ("Task Done Till Now",   122, Qt.AlignmentFlag.AlignCenter),
+        ("Task Completed",       105, Qt.AlignmentFlag.AlignCenter),
+        ("Comment",              135, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
     ]
 
     task_saved = Signal(dict)  # Emitted when a timesheet is saved successfully
@@ -305,6 +321,7 @@ class AssignedTasksTable(QTableWidget):
         self._is_submitting: bool = False
         self._is_submitted: bool = False
         self._edited_rows: set[int] = set()
+        self._user_drafts: Dict[str, Dict[str, str]] = {}
 
         self._signals = TaskTableSignals()
         self._signals.submit_success.connect(self._handle_submit_success)
@@ -379,7 +396,7 @@ class AssignedTasksTable(QTableWidget):
         header = self.horizontalHeader()
         header.setFixedHeight(40)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-        header.setMinimumSectionSize(40)
+        header.setMinimumSectionSize(36)
         header.setStretchLastSection(False)
 
         for col_idx, (col_name, col_width, _col_align) in enumerate(self.COLUMN_CONFIG):
@@ -403,14 +420,14 @@ class AssignedTasksTable(QTableWidget):
         self.setAlternatingRowColors(True)
 
         # ── Scroll behaviour ──────────────────────────────────────────────────
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self.setAutoScroll(False)
 
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(250)
         self.setMinimumHeight(120)
 
         # Hide Category (col 3) and Measurement Criteria (col 5) on Timesheet page
@@ -427,56 +444,143 @@ class AssignedTasksTable(QTableWidget):
         if self.horizontalScrollBar().value() != prev_h:
             self.horizontalScrollBar().setValue(prev_h)
 
+    def showEvent(self, event) -> None:
+        """Ensure column widths are fitted to actual viewport width upon display."""
+        super().showEvent(event)
+        self._adjust_column_widths()
+
     def resizeEvent(self, event) -> None:
         """Dynamically adjust column widths when the table container resizes."""
         super().resizeEvent(event)
         self._adjust_column_widths()
 
     def _adjust_column_widths(self) -> None:
-        """Responsively adjust column widths to fill available width or allow clean scrolling."""
+        """Responsively adjust column widths to fit within container width without horizontal scrolling."""
         if self.columnCount() != len(self.COLUMN_CONFIG):
             return
 
-        prev_h = self.horizontalScrollBar().value()
-        target_width = max(self.viewport().width(), self.width() - 2)
-
         visible_cols = [c for c in range(len(self.COLUMN_CONFIG)) if not self.isColumnHidden(c)]
-        base_widths = [cfg[1] for cfg in self.COLUMN_CONFIG]
-        total_visible_base = sum(base_widths[c] for c in visible_cols)
+        if not visible_cols:
+            return
 
-        # Stretchable text columns among visible columns: Name (1), Description (2), Comment (9)
+        # Available width inside the table viewport (excludes frame and vertical scrollbar if present)
+        v_width = self.viewport().width() if self.viewport() else 0
+        w_width = self.width() - (self.frameWidth() * 2)
+        if self.verticalScrollBar() and self.verticalScrollBar().isVisible():
+            w_width -= self.verticalScrollBar().width()
+
+        target_width = v_width if (self.isVisible() and v_width > 0) else max(v_width, w_width)
+        if target_width <= 0:
+            target_width = 750
+
+        # Non-clipping minimum header widths based on actual header font metrics
+        header = self.horizontalHeader()
+        header_font = header.font()
+
+        header_min = {}
+        for c in visible_cols:
+            item = self.horizontalHeaderItem(c)
+            f = item.font() if item else header_font
+            col_name = self.COLUMN_CONFIG[c][0]
+            header_min[c] = QFontMetrics(f).horizontalAdvance(col_name) + 12
+
+        # Base preferred widths for columns
+        default_base_widths = {
+            0: 42,   # S.No.
+            1: 100,  # Name
+            2: 135,  # Description
+            3: 75,   # Category
+            4: 55,   # Target
+            5: 125,  # Measurement Criteria
+            6: 74,   # Weightage
+            7: 122,  # Task Done Till Now
+            8: 105,  # Task Completed
+            9: 135,  # Comment
+        }
+        base_widths = {
+            c: max(default_base_widths.get(c, self.COLUMN_CONFIG[c][1]), header_min[c])
+            for c in visible_cols
+        }
+
+        min_total = sum(header_min.values())
+        base_total = sum(base_widths.values())
+
+        # Stretchable text columns: Name (1), Description (2), Comment (9)
         stretchable = [c for c in [1, 2, 9] if c in visible_cols]
         weights = {1: 1, 2: 2, 9: 2}
-        total_weight = sum(weights[c] for c in stretchable) if stretchable else 1
+        tot_wt = sum(weights[c] for c in stretchable) if stretchable else 1
 
-        if target_width > total_visible_base:
-            extra = target_width - total_visible_base
-            for col_idx in range(len(self.COLUMN_CONFIG)):
-                if self.isColumnHidden(col_idx):
-                    self.setColumnWidth(col_idx, 0)
-                elif col_idx in stretchable:
-                    added = int(extra * weights[col_idx] / total_weight)
-                    self.setColumnWidth(col_idx, base_widths[col_idx] + added)
+        widths = {}
+        if target_width >= base_total:
+            extra = target_width - base_total
+            added_sum = 0
+            for c in visible_cols:
+                if c in stretchable:
+                    add = int(extra * weights[c] / tot_wt)
+                    widths[c] = base_widths[c] + add
+                    added_sum += add
                 else:
-                    self.setColumnWidth(col_idx, base_widths[col_idx])
+                    widths[c] = base_widths[c]
+            # Remainder pixels assigned to the last stretchable column
+            rem = extra - added_sum
+            last_stretch = stretchable[-1] if stretchable else visible_cols[-1]
+            widths[last_stretch] += rem
+        elif target_width >= min_total:
+            range_tot = max(1, base_total - min_total)
+            deficit = base_total - target_width
+            ratio = deficit / range_tot
+            for c in visible_cols:
+                col_range = base_widths[c] - header_min[c]
+                reduction = int(col_range * ratio)
+                widths[c] = base_widths[c] - reduction
+            rem = target_width - sum(widths.values())
+            last_stretch = stretchable[-1] if stretchable else visible_cols[-1]
+            widths[last_stretch] += rem
         else:
-            for col_idx in range(len(self.COLUMN_CONFIG)):
-                if self.isColumnHidden(col_idx):
-                    self.setColumnWidth(col_idx, 0)
-                else:
-                    self.setColumnWidth(col_idx, base_widths[col_idx])
+            # Extreme narrow width (< 573px): preserve non-clipping header minimums
+            widths = dict(header_min)
 
-        if self.horizontalScrollBar().value() != prev_h:
-            self.horizontalScrollBar().setValue(prev_h)
+        for col_idx in range(len(self.COLUMN_CONFIG)):
+            if self.isColumnHidden(col_idx):
+                self.setColumnWidth(col_idx, 0)
+            else:
+                self.setColumnWidth(col_idx, widths.get(col_idx, header_min.get(col_idx, 40)))
+
+        prev_h = self.horizontalScrollBar().value()
+        if prev_h != 0:
+            self.horizontalScrollBar().setValue(0)
 
     @property
     def is_submitted(self) -> bool:
         """Return whether the currently displayed Timesheet is in a submitted state."""
         return self._is_submitted
 
+    def _task_key(self, task: Dict[str, Any], fallback_idx: int = -1) -> str:
+        """Compute stable unique key for a task dictionary to preserve in-progress user drafts."""
+        timesheet_id = str(task.get("timesheet_id") or "").strip()
+        kra_id = str(task.get("kra_id") or task.get("id") or "").strip()
+        name = str(task.get("name") or task.get("title") or "").strip()
+        if timesheet_id and kra_id:
+            return f"{timesheet_id}_{kra_id}"
+        if kra_id:
+            return f"kra_{kra_id}"
+        if timesheet_id:
+            return f"ts_{timesheet_id}"
+        if name:
+            return f"name_{name}"
+        return f"row_{fallback_idx}"
+
     def set_submitted(self, submitted: bool) -> None:
-        """Update submission state and button visibility according to authoritative backend status."""
+        """Update submission state, widget read-only mode, and button visibility."""
         self._is_submitted = bool(submitted)
+
+        for r in range(self.rowCount()):
+            for c in (8, 9):
+                le = self._get_line_edit(r, c)
+                if le:
+                    le.setReadOnly(self._is_submitted)
+                    le.setStyleSheet(_LE_READONLY if self._is_submitted else _LE_NORMAL)
+
         if self._is_submitted:
             self.save_draft_btn.hide()
             self.submit_btn.hide()
@@ -503,6 +607,8 @@ class AssignedTasksTable(QTableWidget):
             return False
         for t in task_list:
             if not isinstance(t, dict):
+                continue
+            if bool(t.get("is_additional")):
                 continue
             for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
                 v = str(t.get(k) or "").strip()
@@ -815,11 +921,17 @@ class AssignedTasksTable(QTableWidget):
         self.title_label.setText(heading)
 
     def set_tasks(self, tasks: List[Dict[str, Any]], date: Optional[str] = None) -> None:
-        """Display assigned KRA tasks dynamically from API response."""
+        """Display assigned KRA tasks dynamically from API response, keeping Additional Tasks separate."""
         prev_h_scroll = self.horizontalScrollBar().value()
         prev_v_scroll = self.verticalScrollBar().value()
 
-        self._tasks = list(tasks or [])
+        raw_tasks = list(tasks or [])
+
+        # ── 1. Separate Timesheet tasks from Additional Tasks ────────────────
+        additional_items = [t for t in raw_tasks if bool(t.get("is_additional"))]
+        timesheet_tasks = [t for t in raw_tasks if not bool(t.get("is_additional"))]
+
+        self._tasks = timesheet_tasks
         self._selected_task_index = 0 if self._tasks else None
         selected_task = self._tasks[0] if self._tasks else None
         self._page_date = str(date).strip() if date else ""
@@ -827,25 +939,27 @@ class AssignedTasksTable(QTableWidget):
         # Update dynamic heading above table for the currently selected task
         self.update_title(date=date, task=selected_task, tasks=self._tasks)
 
+        # ── 2. Update Additional Task section exclusively ────────────────────
         if getattr(self, "additional_task_widget", None):
             task_date = date
             if not task_date and selected_task:
                 task_date = selected_task.get("date")
+            elif not task_date and additional_items:
+                task_date = additional_items[0].get("date")
             if task_date:
                 self.additional_task_widget.set_date(task_date)
-            found_additional = False
-            for t in (self._tasks or []):
-                if t.get("is_additional") and t.get("description"):
-                    found_additional = True
-                    is_sub = (
-                        str(t.get("submit_status") or "").strip() in ("1", "true", "True")
-                        or str(t.get("task_completed") or "").strip() in ("1", "100")
-                        or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
-                        or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
-                    )
-                    self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
-                    break
-            if not found_additional:
+
+            if additional_items:
+                t = additional_items[0]
+                desc = str(t.get("description") or t.get("remark") or "").strip()
+                is_sub = (
+                    str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                    or str(t.get("task_completed") or "").strip() in ("1", "100")
+                    or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
+                    or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                )
+                self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
+            else:
                 self.additional_task_widget.set_submitted(False)
 
         # Capture focus state if an edit field is active
@@ -860,10 +974,24 @@ class AssignedTasksTable(QTableWidget):
 
         self.setUpdatesEnabled(False)
         self.setRowCount(0)
-        self._tasks = list(tasks or [])
         self._edited_rows.clear()
 
+        # Check authoritative submission status
         self._is_submitted = self._is_submitted_data(self._tasks)
+
+        # ── 3. Merge in-progress user drafts if unsubmitted ──────────────────
+        if not self._is_submitted:
+            for r_idx, task in enumerate(self._tasks):
+                t_key = self._task_key(task, r_idx)
+                if t_key in self._user_drafts:
+                    draft = self._user_drafts[t_key]
+                    if "comment" in draft:
+                        task["comment"] = draft["comment"]
+                        task["remark"] = draft["comment"]
+                    if "task_completed" in draft:
+                        task["task_completed"] = draft["task_completed"]
+        else:
+            self._user_drafts.clear()
 
         if not self._tasks:
             self.setRowCount(1)
@@ -888,7 +1016,7 @@ class AssignedTasksTable(QTableWidget):
             self.setUpdatesEnabled(True)
             return
 
-        self.set_submitted(self._is_submitted_data(self._tasks))
+        self.set_submitted(self._is_submitted)
 
         # Clear any spans
         self.clearSpans()
@@ -967,7 +1095,7 @@ class AssignedTasksTable(QTableWidget):
             done_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 7, done_item)
 
-            # ── Col 8: Task Completed — editable numeric QLineEdit ────────────
+            # ── Col 8: Task Completed — numeric QLineEdit ────────────────────
             comp_container = QWidget(self)
             comp_layout = QHBoxLayout(comp_container)
             comp_layout.setContentsMargins(4, 3, 4, 3)
@@ -978,7 +1106,8 @@ class AssignedTasksTable(QTableWidget):
             completed_edit.setPlaceholderText("0")
             completed_edit.setValidator(QRegularExpressionValidator(num_regex, completed_edit))
             completed_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            completed_edit.setStyleSheet(_LE_NORMAL)
+            completed_edit.setReadOnly(self._is_submitted)
+            completed_edit.setStyleSheet(_LE_READONLY if self._is_submitted else _LE_NORMAL)
             completed_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
@@ -988,7 +1117,7 @@ class AssignedTasksTable(QTableWidget):
             comp_layout.addWidget(completed_edit)
             self.setCellWidget(row, 8, comp_container)
 
-            # ── Col 9: Comment — editable text QLineEdit ──────────────────────
+            # ── Col 9: Comment — text QLineEdit ──────────────────────────────
             comment_container = QWidget(self)
             comment_layout = QHBoxLayout(comment_container)
             comment_layout.setContentsMargins(4, 3, 4, 3)
@@ -996,7 +1125,8 @@ class AssignedTasksTable(QTableWidget):
 
             comment_edit = StableLineEdit(comment, comment_container, table=self)
             comment_edit.setPlaceholderText("Enter comments / work details...")
-            comment_edit.setStyleSheet(_LE_NORMAL)
+            comment_edit.setReadOnly(self._is_submitted)
+            comment_edit.setStyleSheet(_LE_READONLY if self._is_submitted else _LE_NORMAL)
             comment_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
@@ -1017,16 +1147,19 @@ class AssignedTasksTable(QTableWidget):
             if r < self.rowCount():
                 le = self._get_line_edit(r, c)
                 if le:
-                    le.setText(text)
                     le.setFocus()
                     le.setCursorPosition(cursor_pos)
 
     def _on_task_completed_changed(self, row: int, text: str) -> None:
-        """Synchronize backing task state when user edits Task Completed."""
+        """Synchronize backing task state and persistent drafts when user edits Task Completed."""
         val = text.strip()
         self._edited_rows.add(row)
         if row < len(self._tasks):
             self._tasks[row]["task_completed"] = val
+            t_key = self._task_key(self._tasks[row], row)
+            if t_key not in self._user_drafts:
+                self._user_drafts[t_key] = {}
+            self._user_drafts[t_key]["task_completed"] = val
 
         prev_h = self.horizontalScrollBar().value()
         item = self.item(row, 8)
@@ -1042,11 +1175,15 @@ class AssignedTasksTable(QTableWidget):
             comp_edit.setToolTip("")
 
     def _on_comment_changed(self, row: int, text: str) -> None:
-        """Synchronize backing task state when user edits Comment."""
+        """Synchronize backing task state and persistent drafts when user edits Comment."""
         self._edited_rows.add(row)
         if row < len(self._tasks):
             self._tasks[row]["comment"] = text
             self._tasks[row]["remark"] = text
+            t_key = self._task_key(self._tasks[row], row)
+            if t_key not in self._user_drafts:
+                self._user_drafts[t_key] = {}
+            self._user_drafts[t_key]["comment"] = text
 
         prev_h = self.horizontalScrollBar().value()
         item = self.item(row, 9)
@@ -1178,7 +1315,6 @@ class AssignedTasksTable(QTableWidget):
         # 4. Assemble payload
         rows_to_include = sorted(candidate_rows) if not is_draft else list(range(len(self._tasks)))
         kra_list: List[Dict[str, str]] = []
-        additional_tasks_to_save: List[tuple[str, str, int]] = []
         resolved_date = ""
 
         for r in rows_to_include:
@@ -1192,19 +1328,12 @@ class AssignedTasksTable(QTableWidget):
             comm_val = self._get_comment(r)
             comp_val = self._get_task_completed(r) or "0"
 
-            if bool(task.get("is_additional", False)):
-                additional_tasks_to_save.append((
-                    comm_val,
-                    d or resolved_date,
-                    1 if comp_val in ("1", "100") else 0
-                ))
-            else:
-                kra_list.append({
-                    "TimeSheet_id": str(task.get("timesheet_id") or ""),
-                    "kra_id": str(task.get("kra_id") or task.get("id") or ""),
-                    "remark": comm_val,
-                    "task_completed": comp_val,
-                })
+            kra_list.append({
+                "TimeSheet_id": str(task.get("timesheet_id") or ""),
+                "kra_id": str(task.get("kra_id") or task.get("id") or ""),
+                "remark": comm_val,
+                "task_completed": comp_val,
+            })
 
         submit_status_val = "0" if is_draft else "1"
 
@@ -1212,9 +1341,6 @@ class AssignedTasksTable(QTableWidget):
             from services.task_service import TaskService
             svc = TaskService()
             try:
-                for add_comm, add_date, add_status in additional_tasks_to_save:
-                    svc.save_additional_task(task=add_comm, date=add_date, status=add_status)
-
                 ok = True
                 msg = ""
                 res = None
@@ -1256,6 +1382,7 @@ class AssignedTasksTable(QTableWidget):
 
         if not is_draft:
             # Backend has authoritatively confirmed Timesheet submission succeeded
+            self._user_drafts.clear()
             if fresh_tasks:
                 for ft in fresh_tasks:
                     if not ft.get("submit_status"):
@@ -1270,7 +1397,18 @@ class AssignedTasksTable(QTableWidget):
             self.set_submitted(True)
             self._show_status("Timesheet submitted successfully.", is_error=False)
         else:
-            # Draft saved successfully
+            # Draft saved successfully - update user drafts with saved values
+            for item in data.get("saved_kra_list", []):
+                k_id = item.get("kra_id")
+                ts_id = item.get("TimeSheet_id")
+                for r_idx, t in enumerate(self._tasks):
+                    if (k_id and (t.get("kra_id") == k_id or t.get("id") == k_id)) or (ts_id and t.get("timesheet_id") == ts_id):
+                        t_key = self._task_key(t, r_idx)
+                        if t_key not in self._user_drafts:
+                            self._user_drafts[t_key] = {}
+                        self._user_drafts[t_key]["comment"] = item.get("remark", "")
+                        self._user_drafts[t_key]["task_completed"] = item.get("task_completed", "")
+
             self.set_submitted(False)
             if fresh_tasks:
                 self.set_tasks(fresh_tasks, date=submission_date)
