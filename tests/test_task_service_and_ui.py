@@ -255,13 +255,16 @@ class TestTaskServiceAndUI(unittest.TestCase):
             table = AssignedTasksTable()
             table.set_tasks(tasks)
             self.assertEqual(table.rowCount(), 3)
-            self.assertEqual(table.item(0, 0).text(), "Clients Suppot")
-            self.assertEqual(table.item(0, 2).text(), "KRA Specific Goal")
-            self.assertEqual(table.item(0, 3).text(), "10")
-            self.assertEqual(table.item(0, 4).text(), "No pending issues")
-            self.assertEqual(table.item(0, 5).text(), "10%")
-            self.assertEqual(table.item(0, 6).text(), "2.00")
-            self.assertEqual(table._get_line_edit(0, 8).text(), "A")
+            self.assertEqual(table.item(0, 0).text(), "1")
+            self.assertEqual(table.item(1, 0).text(), "2")
+            self.assertEqual(table.item(2, 0).text(), "3")
+            self.assertEqual(table.item(0, 1).text(), "Clients Suppot")
+            self.assertEqual(table.item(0, 3).text(), "KRA Specific Goal")
+            self.assertEqual(table.item(0, 4).text(), "10")
+            self.assertEqual(table.item(0, 5).text(), "No pending issues")
+            self.assertEqual(table.item(0, 6).text(), "10%")
+            self.assertEqual(table.item(0, 7).text(), "2.00")
+            self.assertEqual(table._get_line_edit(0, 9).text(), "A")
 
     def test_task_service_save_time_sheet(self):
         """Verify TaskService.save_time_sheet sends the exact JSON payload required by API."""
@@ -445,24 +448,25 @@ class TestTaskServiceAndUI(unittest.TestCase):
         ]
         table.set_tasks(tasks)
         self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 0).text(), "Task 1")
-        self.assertEqual(table.item(0, 1).text(), "Details 1")
-        self.assertEqual(table.item(0, 2).text(), "Development")
-        self.assertEqual(table.item(0, 3).text(), "100%")
-        self.assertEqual(table.item(0, 4).text(), "Code review")
-        self.assertEqual(table.item(0, 5).text(), "50%")
-        self.assertEqual(table.item(0, 6).text(), "10%")
+        self.assertEqual(table.item(0, 0).text(), "1")
+        self.assertEqual(table.item(0, 1).text(), "Task 1")
+        self.assertEqual(table.item(0, 2).text(), "Details 1")
+        self.assertEqual(table.item(0, 3).text(), "Development")
+        self.assertEqual(table.item(0, 4).text(), "100%")
+        self.assertEqual(table.item(0, 5).text(), "Code review")
+        self.assertEqual(table.item(0, 6).text(), "50%")
+        self.assertEqual(table.item(0, 7).text(), "10%")
 
         # Verify editable widgets exist
-        completed_widget = table._get_line_edit(0, 7)
+        completed_widget = table._get_line_edit(0, 8)
         self.assertIsNotNone(completed_widget)
         self.assertEqual(completed_widget.text(), "25")
 
-        comment_widget = table._get_line_edit(0, 8)
+        comment_widget = table._get_line_edit(0, 9)
         self.assertIsNotNone(comment_widget)
         self.assertEqual(comment_widget.text(), "Existing work notes")
 
-        action_widget = table.cellWidget(0, 9)
+        action_widget = table.cellWidget(0, 10)
         save_btn = action_widget.findChild(QPushButton)
         self.assertIsNotNone(save_btn)
         self.assertEqual(save_btn.text(), "Save")
@@ -486,9 +490,9 @@ class TestTaskServiceAndUI(unittest.TestCase):
         ]
         table.set_tasks(tasks)
 
-        completed_edit = table._get_line_edit(0, 7)
-        comment_edit = table._get_line_edit(0, 8)
-        save_btn = table.cellWidget(0, 9).findChild(QPushButton)
+        completed_edit = table._get_line_edit(0, 8)
+        comment_edit = table._get_line_edit(0, 9)
+        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
 
         # 1. Validation test: empty comment should highlight error and not trigger save
         save_btn.click()
@@ -542,7 +546,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
             }
         ]
         table.set_tasks(tasks)
-        save_btn = table.cellWidget(0, 9).findChild(QPushButton)
+        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
 
         call_count = 0
         def mock_save(*args, **kwargs):
@@ -622,10 +626,14 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks)
 
         # Verify initial values
-        row0_comp = table._get_line_edit(0, 7)
-        row0_comm = table._get_line_edit(0, 8)
-        row1_comp = table._get_line_edit(1, 7)
-        row1_comm = table._get_line_edit(1, 8)
+        row0_comp = table._get_line_edit(0, 8)
+        row0_comm = table._get_line_edit(0, 9)
+        row1_comp = table._get_line_edit(1, 8)
+        row1_comm = table._get_line_edit(1, 9)
+
+        # Verify S.No. column values
+        self.assertEqual(table.item(0, 0).text(), "1")
+        self.assertEqual(table.item(1, 0).text(), "2")
 
         self.assertEqual(row0_comp.text(), "10")
         self.assertEqual(row0_comm.text(), "Initial note 1")
@@ -667,9 +675,9 @@ class TestTaskServiceAndUI(unittest.TestCase):
         ]
         table.set_tasks(tasks)
 
-        completed_edit = table._get_line_edit(0, 7)
-        comment_edit = table._get_line_edit(0, 8)
-        save_btn = table.cellWidget(0, 9).findChild(QPushButton)
+        completed_edit = table._get_line_edit(0, 8)
+        comment_edit = table._get_line_edit(0, 9)
+        save_btn = table.cellWidget(0, 10).findChild(QPushButton)
 
         # Edit values
         completed_edit.setText("75")
@@ -687,6 +695,149 @@ class TestTaskServiceAndUI(unittest.TestCase):
             # Verify user-entered inputs are preserved exactly
             self.assertEqual(completed_edit.text(), "75")
             self.assertEqual(comment_edit.text(), "Updated comment before failure")
+
+    def test_assigned_tasks_table_action_column_and_save_button_dimensions(self):
+        """Verify Action column is wide enough (>= 125px), Save button fits without clipping, and responsive resizing works."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "195",
+                "kra_id": "195",
+                "timesheet_id": "595",
+                "name": "Frontend Sizing",
+                "description": "Button layout test",
+                "category": "Development",
+                "target": "100%",
+                "measurement_criteria": "Visual inspection",
+                "weightage": "50%",
+                "task_done": "20%",
+                "task_completed": "30",
+                "comment": "Testing Action column dimensions",
+                "date": "2026-10-13",
+            }
+        ]
+        table.set_tasks(tasks)
+        table.resize(1000, 300)
+        QCoreApplication.processEvents()
+
+        # 1. Action column width must be at least 125px (set to 130px)
+        action_col_idx = 10
+        action_col_width = table.columnWidth(action_col_idx)
+        self.assertGreaterEqual(action_col_width, 125)
+
+        # 2. Save button must fit fully within the action container without clipping
+        action_container = table.cellWidget(0, action_col_idx)
+        self.assertIsNotNone(action_container)
+        save_btn = action_container.findChild(QPushButton)
+        self.assertIsNotNone(save_btn)
+
+        # Check button size relative to column width
+        btn_width = save_btn.sizeHint().width()
+        self.assertLess(btn_width, action_col_width)
+        # Verify generous padding exists (at least 15px total horizontal padding)
+        self.assertGreaterEqual(action_col_width - btn_width, 15)
+
+        # 3. Test button states (Save, Saving..., Saved) all fit within the Action column
+        for state_text in ["Save", "Saving...", "Saved ✓", "Retry ⚠️"]:
+            save_btn.setText(state_text)
+            self.assertLess(save_btn.sizeHint().width(), action_col_width)
+
+        # 4. Responsive expansion on wide viewport
+        table.resize(1600, 300)
+        table._adjust_column_widths()
+        QCoreApplication.processEvents()
+        # Sum of columns should fill the viewport without empty dead space
+        total_cols_width = sum(table.columnWidth(i) for i in range(table.columnCount()))
+        self.assertGreaterEqual(total_cols_width, 1250)
+
+    def test_assigned_tasks_table_sno_column_and_dynamic_numbering(self):
+        """Verify S.No. appears as the first column, numbers rows dynamically, and updates correctly."""
+        table = AssignedTasksTable()
+        tasks = [
+            {"id": f"KRA-{i}", "name": f"Task {i}", "description": f"Desc {i}", "date": "2026-10-14"}
+            for i in range(1, 6)
+        ]
+        table.set_tasks(tasks)
+        self.assertEqual(table.rowCount(), 5)
+
+        # 1. Header label of column 0 must be S.No.
+        header_item = table.horizontalHeaderItem(0)
+        self.assertIsNotNone(header_item)
+        self.assertEqual(header_item.text(), "S.No.")
+
+        # 2. Sequential numbers 1..5 generated dynamically
+        for r in range(5):
+            self.assertEqual(table.item(r, 0).text(), str(r + 1))
+
+        # 3. Dynamic update when update_row_numbers is invoked
+        table.update_row_numbers()
+        for r in range(5):
+            self.assertEqual(table.item(r, 0).text(), str(r + 1))
+
+        # 4. Changing tasks dynamically updates row numbering
+        table.set_tasks(tasks[:3])
+        self.assertEqual(table.rowCount(), 3)
+        for r in range(3):
+            self.assertEqual(table.item(r, 0).text(), str(r + 1))
+
+    def test_assigned_tasks_table_horizontal_scroll_stability_during_comment_typing(self):
+        """Verify typing, editing, deleting, or pasting in the Comment field does not cause unwanted horizontal scrolling."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "1",
+                "name": "Frontend Task",
+                "description": "Scroll stability verification",
+                "category": "Development",
+                "target": "100%",
+                "measurement_criteria": "Code review",
+                "weightage": "20%",
+                "task_done": "10%",
+                "task_completed": "15",
+                "comment": "Initial brief note",
+                "date": "2026-10-14",
+            }
+        ]
+        table.resize(600, 300)
+        table.show()
+        table.set_tasks(tasks)
+        QCoreApplication.processEvents()
+
+        # 1. User intentionally scrolls horizontally to inspect comment/action
+        target_scroll = 250
+        table.horizontalScrollBar().setValue(target_scroll)
+        QCoreApplication.processEvents()
+        self.assertEqual(table.horizontalScrollBar().value(), target_scroll)
+
+        # 2. Focus Comment field — scroll position must remain stable
+        comment_edit = table._get_line_edit(0, 9)
+        self.assertIsNotNone(comment_edit)
+        comment_edit.setFocus()
+        QCoreApplication.processEvents()
+        self.assertEqual(table.horizontalScrollBar().value(), target_scroll)
+
+        # 3. Type long comment text — horizontal scroll position must NOT change
+        long_comment = "This is a very detailed comment describing task progress, bug fixes, unit tests, and timesheet logging."
+        for ch in long_comment:
+            comment_edit.setText(comment_edit.text() + ch)
+            QCoreApplication.processEvents()
+            self.assertEqual(table.horizontalScrollBar().value(), target_scroll)
+
+        # 4. Deleting text — horizontal scroll position must remain stable
+        while len(comment_edit.text()) > 10:
+            comment_edit.setText(comment_edit.text()[:-1])
+            QCoreApplication.processEvents()
+            self.assertEqual(table.horizontalScrollBar().value(), target_scroll)
+
+        # 5. Programmatic scrollTo should not cause unwanted horizontal jumping
+        table.scrollTo(table.model().index(0, 9))
+        self.assertEqual(table.horizontalScrollBar().value(), target_scroll)
+
+        # 6. Intentional manual horizontal scrollbar adjustments continue to work normally
+        table.horizontalScrollBar().setValue(100)
+        self.assertEqual(table.horizontalScrollBar().value(), 100)
+        table.horizontalScrollBar().setValue(300)
+        self.assertEqual(table.horizontalScrollBar().value(), 300)
 
 
 if __name__ == "__main__":
