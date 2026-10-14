@@ -206,14 +206,18 @@ class TaskService:
         else:
             status = "Pending"
 
-        date_val = str(
+        raw_date = (
             item.get("date")
             or item.get("assigned_date")
             or item.get("due_date")
             or item.get("target_date")
             or item.get("created_at")
             or default_date
-        ).strip()
+            or ""
+        )
+        date_val = str(raw_date).strip() if raw_date is not None else ""
+        if date_val.lower() in ("none", "null", ""):
+            date_val = ""
 
         raw_weight = (
             item.get("weightage")
@@ -267,6 +271,31 @@ class TaskService:
             or "-"
         ).strip()
 
+        emp_name = str(
+            item.get("employee_name")
+            or item.get("emp_name")
+            or item.get("user_name")
+            or item.get("full_name")
+            or item.get("employeeName")
+            or ""
+        ).strip()
+        emp_code = str(
+            item.get("indo_code")
+            or item.get("employee_code")
+            or item.get("emp_code")
+            or item.get("employee_id")
+            or item.get("empCode")
+            or ""
+        ).strip()
+
+        submit_status = str(
+            item.get("submit_status")
+            or item.get("submitStatus")
+            or item.get("is_submitted")
+            or item.get("isSubmitted")
+            or ""
+        ).strip()
+
         return {
             "id": kra_id or timesheet_id or "task",
             "kra_id": kra_id,
@@ -282,9 +311,12 @@ class TaskService:
             "task_done_till_now": task_done,
             "task_completed": task_completed_str,
             "status": status,
+            "submit_status": submit_status,
             "remark": remark,
             "comment": remark,
             "date": date_val,
+            "employee_name": emp_name,
+            "indo_code": emp_code,
             "is_additional": False,
             "raw": item,
         }
@@ -391,10 +423,49 @@ class TaskService:
             elif any(k in res_json for k in ("kra_id", "task_id", "task_name", "kra_name", "title")):
                 raw_items = [res_json]
 
+        root_emp_name = ""
+        root_emp_code = ""
+        if isinstance(res_json, dict):
+            for f in ("employee_name", "emp_name", "user_name", "full_name", "name", "employeeName"):
+                v = res_json.get(f)
+                if v and str(v).strip():
+                    root_emp_name = str(v).strip()
+                    break
+            for f in ("indo_code", "employee_code", "emp_code", "employee_id", "emp_id", "empCode"):
+                v = res_json.get(f)
+                if v and str(v).strip():
+                    root_emp_code = str(v).strip()
+                    break
+        if not root_emp_code and resolved_indo:
+            root_emp_code = resolved_indo
+
+        root_date = ""
+        if isinstance(res_json, dict):
+            for df in ("date", "task_date", "kra_date", "assigned_date"):
+                if res_json.get(df) and str(res_json.get(df)).strip():
+                    root_date = str(res_json.get(df)).strip()
+                    break
+
+        default_task_date = str(date).strip() if date else root_date
+
+        root_submit_status = ""
+        if isinstance(res_json, dict):
+            for sf in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
+                v = res_json.get(sf)
+                if v is not None and str(v).strip() not in ("None", "null", ""):
+                    root_submit_status = str(v).strip()
+                    break
+
         normalized: List[Dict[str, Any]] = []
         for raw in raw_items:
-            norm = self._normalize_task_item(raw, default_date=date_key)
+            norm = self._normalize_task_item(raw, default_date=default_task_date)
             if norm:
+                if not norm.get("employee_name") and root_emp_name:
+                    norm["employee_name"] = root_emp_name
+                if not norm.get("indo_code") and root_emp_code:
+                    norm["indo_code"] = root_emp_code
+                if not norm.get("submit_status") and root_submit_status:
+                    norm["submit_status"] = root_submit_status
                 normalized.append(norm)
 
         logger.info(
@@ -420,6 +491,7 @@ class TaskService:
                     "remark": str(add_task).strip(),
                     "task_completed": "1" if add_status_val in ("1", "true", "True") else "0",
                     "status": add_status,
+                    "submit_status": root_submit_status,
                     "date": date_key,
                     "weightage": "-",
                     "is_additional": True,

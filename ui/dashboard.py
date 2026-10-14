@@ -28,6 +28,7 @@ from ui.activity_table import (
     ActivityTimelineTable,
     ApplicationUsageTable,
 )
+from ui.additional_task_widget import AdditionalTaskWidget
 from ui.task_table import AssignedTasksTable
 from utils.logger import get_logger
 
@@ -603,9 +604,9 @@ class DashboardPage(QWidget):
         root.addLayout(top_row)
 
         # ==============================================================
-        # 2. Below Top Row: Assigned Tasks (Full Width)
+        # 2. Below Top Row: Timesheet (Full Width)
         # ==============================================================
-        tasks_group = QGroupBox("Assigned Tasks", content)
+        tasks_group = QGroupBox("Timesheet", content)
         tasks_layout = QVBoxLayout(tasks_group)
         tasks_layout.setContentsMargins(12, 14, 12, 12)
         tasks_layout.setSpacing(6)
@@ -617,6 +618,13 @@ class DashboardPage(QWidget):
         self.task_title_label = self.task_table.title_label
         self.save_draft_button = self.task_table.save_draft_btn
         self.submit_button = self.task_table.submit_btn
+
+        # ── Add Additional Task Section (directly below Assigned Tasks) ───
+        tasks_layout.addSpacing(10)
+        self.additional_task_widget = AdditionalTaskWidget(parent=self)
+        self.add_additional_task_widget = self.additional_task_widget
+        self.task_table.additional_task_widget = self.additional_task_widget
+        tasks_layout.addWidget(self.additional_task_widget)
 
         root.addWidget(tasks_group)
         root.addStretch(1)
@@ -887,6 +895,13 @@ class DashboardPage(QWidget):
             try:
                 tasks = TaskService().fetch_assigned_tasks(force=True)
                 self.task_table.set_tasks(tasks)
+                today_str = self._cached_calendar_date.strftime("%Y-%m-%d")
+                if hasattr(self, "additional_task_widget"):
+                    self.additional_task_widget.set_date(today_str)
+                    for t in (tasks or []):
+                        if t.get("is_additional") and t.get("description"):
+                            self.additional_task_widget.set_task_content(t.get("description"))
+                            break
             except Exception as err:
                 logger.debug("Sync refresh tasks error: %s", err)
 
@@ -1014,6 +1029,15 @@ class DashboardPage(QWidget):
                 self.task_table.set_tasks(tasks, date=task_date or None)
             elif data.get("task_error"):
                 self.task_table.show_error(data.get("task_error"), date=task_date or None)
+
+            if hasattr(self, "additional_task_widget"):
+                if task_date:
+                    self.additional_task_widget.set_date(task_date)
+                if tasks:
+                    for t in tasks:
+                        if t.get("is_additional") and t.get("description"):
+                            self.additional_task_widget.set_task_content(t.get("description"))
+                            break
 
             attendance = data.get("attendance")
             if attendance:

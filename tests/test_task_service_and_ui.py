@@ -12,6 +12,7 @@ from config.api_config import ApiConfig
 from services.activity_service import ActivityService
 from services.session_service import SessionService
 from services.task_service import TaskService
+from ui.additional_task_widget import AdditionalTaskWidget, LinedTaskTextEdit
 from ui.dashboard import DashboardPage
 from ui.task_table import AssignedTasksTable
 
@@ -531,9 +532,10 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 submit_btn.click()
                 time.sleep(0.1)
                 QCoreApplication.processEvents()
-                self.assertEqual(submit_btn.text(), "Submitted ✓")
-                self.assertEqual(completed_edit.text(), "30")
-                self.assertEqual(comment_edit.text(), "Finished feature implementation")
+                self.assertTrue(submit_btn.isHidden())
+                self.assertTrue(table.is_submitted)
+                self.assertEqual(table._get_line_edit(0, 8).text(), "30")
+                self.assertEqual(table._get_line_edit(0, 9).text(), "Finished feature implementation")
                 mock_save.assert_called_once()
                 self.assertEqual(mock_save.call_args[1]["submit_status"], "1")
 
@@ -875,6 +877,8 @@ class TestTaskServiceAndUI(unittest.TestCase):
             QCoreApplication.processEvents()
 
             for col_idx, (col_name, _base_w, _align) in enumerate(table.COLUMN_CONFIG):
+                if table.isColumnHidden(col_idx):
+                    continue
                 actual_w = table.columnWidth(col_idx)
                 item = table.horizontalHeaderItem(col_idx)
                 self.assertIsNotNone(item)
@@ -889,6 +893,10 @@ class TestTaskServiceAndUI(unittest.TestCase):
                     f"Header for column '{col_name}' (col {col_idx}) is clipped at width {w}: "
                     f"text_w={text_w} > avail_w={avail_w} (actual_w={actual_w})",
                 )
+
+        # Confirm Category and Measurement Criteria columns are hidden
+        self.assertTrue(table.isColumnHidden(3))
+        self.assertTrue(table.isColumnHidden(5))
 
     def test_format_task_date(self):
         """Verify format_task_date correctly formats dates to 'DD Month YYYY' matching reference UI."""
@@ -905,14 +913,14 @@ class TestTaskServiceAndUI(unittest.TestCase):
         # DD-MM-YYYY
         self.assertEqual(format_task_date("01-10-2026"), "01 October 2026")
 
-        # Empty / None falls back to today formatted as DD Month YYYY
-        from datetime import datetime
-        today_expected = datetime.now().strftime("%d %B %Y")
-        self.assertEqual(format_task_date(None), today_expected)
-        self.assertEqual(format_task_date(""), today_expected)
+        # Empty / None / invalid returns empty string without substituting system date
+        self.assertEqual(format_task_date(None), "")
+        self.assertEqual(format_task_date(""), "")
+        self.assertEqual(format_task_date("   "), "")
+        self.assertEqual(format_task_date("None"), "")
 
     def test_task_title_heading_dynamic_rendering_and_centering(self):
-        """Verify the heading above the table matches 'Task for {name} ({code}) on {DD Month YYYY}' and updates dynamically."""
+        """Verify the heading above the table matches 'Timesheet for {name} ({code}) on {DD Month YYYY}' and updates dynamically."""
         from services.session_service import SessionService
         from PySide6.QtCore import Qt
 
@@ -927,9 +935,11 @@ class TestTaskServiceAndUI(unittest.TestCase):
 
         table = AssignedTasksTable()
 
-        # 1. Title label exists, is centered, and matches logged-in user
+        # 1. Title label exists, is centered, and matches logged-in user (without date if date is absent)
         self.assertIsNotNone(table.title_label)
         self.assertEqual(table.title_label.alignment(), Qt.AlignmentFlag.AlignCenter)
+        self.assertEqual(table.title_label.text(), "Timesheet for Dinesh Dev (EC-098)")
+        self.assertIn("font-size: 15px", table.title_label.styleSheet())
 
         # 2. Populate tasks with date 2026-10-01
         tasks_oct1 = [
@@ -945,7 +955,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks_oct1)
         self.assertEqual(
             table.title_label.text(),
-            "Task for Dinesh Dev (EC-098) on 01 October 2026",
+            "Timesheet for Dinesh Dev (EC-098) on 01 October 2026",
         )
 
         # 3. Dynamic update when task date changes to 2025-07-24
@@ -962,14 +972,14 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks_july24)
         self.assertEqual(
             table.title_label.text(),
-            "Task for Dinesh Dev (EC-098) on 24 July 2025",
+            "Timesheet for Dinesh Dev (EC-098) on 24 July 2025",
         )
 
         # 4. Direct update_title call with explicit date
         table.update_title(date="2026-10-01")
         self.assertEqual(
             table.title_label.text(),
-            "Task for Dinesh Dev (EC-098) on 01 October 2026",
+            "Timesheet for Dinesh Dev (EC-098) on 01 October 2026",
         )
 
         # 5. Dynamic employee resolution from task item if different user
@@ -985,7 +995,77 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks_other)
         self.assertEqual(
             table.title_label.text(),
-            "Task for Priya Sharma (EC-105) on 01 October 2026",
+            "Timesheet for Priya Sharma (EC-105) on 01 October 2026",
+        )
+
+        # 6. Multi-task switching: clicking or selecting different rows dynamically updates employee and date
+        multi_tasks = [
+            {
+                "id": "201",
+                "name": "Design Sprint",
+                "employee_name": "Dinesh Dev",
+                "indo_code": "EC-098",
+                "date": "2026-10-14",
+            },
+            {
+                "id": "202",
+                "name": "QA Testing",
+                "employee_name": "Anita Roy",
+                "indo_code": "EC-045",
+                "date": "2026-10-20",
+            },
+            {
+                "id": "203",
+                "name": "Documentation",
+                "employee_name": "Sunil Verma",
+                "indo_code": "EC-210",
+                "date": "2026-11-05",
+            },
+        ]
+        table.set_tasks(multi_tasks)
+        # Row 0 initially selected
+        self.assertEqual(
+            table.title_label.text(),
+            "Timesheet for Dinesh Dev (EC-098) on 14 October 2026",
+        )
+
+        # Select row 1 (Anita Roy on 20 October 2026)
+        table.select_task_by_index(1)
+        self.assertEqual(
+            table.title_label.text(),
+            "Timesheet for Anita Roy (EC-045) on 20 October 2026",
+        )
+
+        # Cell click on row 2 (Sunil Verma on 05 November 2026)
+        table._on_cell_clicked(2, 0)
+        self.assertEqual(
+            table.title_label.text(),
+            "Timesheet for Sunil Verma (EC-210) on 05 November 2026",
+        )
+
+        # Focus line edit in row 0 restores Dinesh Dev
+        line_edit_r0 = table._get_line_edit(0, 8)
+        self.assertIsNotNone(line_edit_r0)
+        table._handle_line_edit_focused(line_edit_r0)
+        self.assertEqual(
+            table.title_label.text(),
+            "Timesheet for Dinesh Dev (EC-098) on 14 October 2026",
+        )
+
+        # 7. When task date is absent, title does not invent or substitute system date
+        no_date_tasks = [
+            {
+                "id": "204",
+                "name": "General Task",
+                "employee_name": "Vikram Seth",
+                "indo_code": "EC-303",
+                "date": "",
+            }
+        ]
+        table.set_tasks(no_date_tasks)
+        self.assertEqual(
+            table.title_label.text(),
+            "Timesheet for Vikram Seth (EC-303)",
         )
 
     def test_dashboard_page_has_task_title_label(self):
@@ -1012,8 +1092,567 @@ class TestTaskServiceAndUI(unittest.TestCase):
         dashboard = DashboardPage(activity_service=mock_activity_svc)
         self.assertTrue(hasattr(dashboard, "task_title_label"))
         self.assertIs(dashboard.task_title_label, dashboard.task_table.title_label)
-        self.assertIn("Task for Dinesh Dev (EC-098)", dashboard.task_title_label.text())
+        self.assertIn("Timesheet for Dinesh Dev (EC-098)", dashboard.task_title_label.text())
+
+    def test_additional_task_widget_structure_and_styling(self):
+        """Verify AdditionalTaskWidget has centered heading, lined editor, and action buttons."""
+        widget = AdditionalTaskWidget()
+        self.assertEqual(widget.heading_label.text(), "Add Additional Task")
+        self.assertIsInstance(widget.text_edit, LinedTaskTextEdit)
+        self.assertEqual(widget.save_draft_btn.text(), "Save As Draft")
+        self.assertEqual(widget.submit_btn.text(), "Submit Task")
+        self.assertTrue(widget.save_draft_btn.isEnabled())
+        self.assertTrue(widget.submit_btn.isEnabled())
+
+        # Verify margin area and text alignment to the right of red margin line
+        self.assertTrue(hasattr(widget.text_edit, "margin_area"))
+        self.assertEqual(widget.text_edit.margin_area_width(), 38)
+        widget.text_edit.resize(400, 150)
+        widget.text_edit.show()
+        QCoreApplication.processEvents()
+
+        # Text and caret must start clearly to the right of red margin line (x=28)
+        cursor_widget_x = widget.text_edit.viewport().mapTo(widget.text_edit, widget.text_edit.cursorRect().topLeft()).x()
+        self.assertGreater(cursor_widget_x, 28)
+
+        # Test date and content setters/getters
+        widget.set_date("2026-09-11")
+        self.assertEqual(widget.date(), "2026-09-11")
+        widget.set_task_content("today i did this")
+        self.assertEqual(widget.task_content(), "today i did this")
+
+        # Caret with multiline text still starts clearly to the right of red margin line
+        cursor_widget_x_with_text = widget.text_edit.viewport().mapTo(widget.text_edit, widget.text_edit.cursorRect().topLeft()).x()
+        self.assertGreater(cursor_widget_x_with_text, 28)
+
+        widget.clear()
+        self.assertEqual(widget.task_content(), "")
+
+    def test_additional_task_widget_validation_empty_text(self):
+        """Verify submitting or drafting empty text triggers validation and halts submission."""
+        widget = AdditionalTaskWidget()
+        with patch.object(TaskService, "save_additional_task") as mock_save:
+            widget.save_task(is_draft=False)
+            mock_save.assert_not_called()
+            self.assertIn("Please enter", widget.status_msg_label.text())
+
+            widget.save_task(is_draft=True)
+            mock_save.assert_not_called()
+
+    def test_additional_task_widget_save_as_draft_and_submit(self):
+        """Verify Save As Draft (status=0) and Submit Task (status=1) invoke TaskService properly."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-09-11")
+        widget.text_edit.setPlainText("today i did this")
+
+        # 1. Test Save As Draft (status="0")
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Draft saved.", {"status": 1})) as mock_save:
+            widget.save_task(is_draft=True)
+            # Give background thread a moment to run
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+            mock_save.assert_called_once_with(
+                task="today i did this",
+                date="2026-09-11",
+                status="0",
+            )
+
+        # 2. Test Submit Task (status="1")
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Task submitted.", {"status": 1})) as mock_save:
+            widget.save_task(is_draft=False)
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+            mock_save.assert_called_once_with(
+                task="today i did this",
+                date="2026-09-11",
+                status="1",
+            )
+
+    def test_additional_task_widget_error_preserves_text(self):
+        """Verify errors during save preserve the user entered text without clearing."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-09-11")
+        widget.text_edit.setPlainText("important detailed activity report")
+
+        with patch.object(TaskService, "save_additional_task", return_value=(False, "Network connection failure", None)):
+            widget.save_task(is_draft=False)
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+            # User text must remain untouched
+            self.assertEqual(widget.task_content(), "important detailed activity report")
+            self.assertIn("Network connection failure", widget.status_msg_label.text())
+            self.assertIn("Retry", widget.submit_btn.text())
+
+    def test_dashboard_page_has_additional_task_widget(self):
+        """Verify DashboardPage exposes additional_task_widget directly below AssignedTasksTable."""
+        mock_activity_svc = MagicMock(spec=ActivityService)
+        mock_activity_svc.get_today_total_seconds.return_value = 1800
+        mock_activity_svc.get_uploaded_records_count.return_value = 15
+        mock_activity_svc.get_today_total_idle_seconds.return_value = 120
+        mock_activity_svc.get_today_timeline.return_value = []
+
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="dinesh",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+            full_name="Dinesh Dev",
+        )
+
+        dashboard = DashboardPage(activity_service=mock_activity_svc)
+        self.assertTrue(hasattr(dashboard, "additional_task_widget"))
+        self.assertIsInstance(dashboard.additional_task_widget, AdditionalTaskWidget)
+        self.assertIs(dashboard.add_additional_task_widget, dashboard.additional_task_widget)
+
+        # Verify dynamic update via _apply_dashboard_data
+        data = {
+            "fetch_date": "2026-09-11",
+            "tasks": [
+                {
+                    "id": "add_task_1",
+                    "title": "Daily Activity / Additional Task",
+                    "description": "today i did this",
+                    "is_additional": True,
+                }
+            ],
+            "total_seconds": 1800,
+            "uploaded_count": 15,
+            "today_idle": 120,
+            "timeline": [],
+        }
+        dashboard._apply_dashboard_data(data)
+        self.assertEqual(dashboard.additional_task_widget.date(), "2026-09-11")
+        self.assertEqual(dashboard.additional_task_widget.task_content(), "today i did this")
+
+    def test_assigned_and_additional_task_buttons_horizontal_centering_and_16px_gap(self):
+        """
+        Verify both Assigned Task and Additional Task sections display Save as Draft and Submit
+        buttons horizontally centered within their section with an exact 16px gap across desktop,
+        tablet, and mobile widths, wrapping onto new lines without clipping when constrained.
+        """
+        from PySide6.QtCore import QPoint
+        table = AssignedTasksTable()
+        widget = AdditionalTaskWidget()
+
+        # ── Test 1: AssignedTasksTable actions_widget buttons ───────────────────
+        table.actions_widget.show()
+        for test_width in (1200, 768, 480, 320):
+            table.actions_widget.resize(test_width, 80)
+            QCoreApplication.processEvents()
+            b1 = table.save_draft_btn
+            b2 = table.submit_btn
+
+            # Side by side with exact 16px gap
+            gap = b2.mapTo(table.actions_widget, QPoint(0, 0)).x() - b1.mapTo(table.actions_widget, QPoint(b1.width(), 0)).x()
+            self.assertEqual(gap, 16, f"Assigned task button gap must be exactly 16px at width {test_width}")
+
+            # Horizontally centered relative to actions_widget section
+            b1_left = b1.mapTo(table.actions_widget, QPoint(0, 0)).x()
+            b2_right = b2.mapTo(table.actions_widget, QPoint(b2.width(), 0)).x()
+            group_center = (b1_left + b2_right) / 2
+            section_center = table.actions_widget.width() / 2
+            self.assertAlmostEqual(
+                group_center,
+                section_center,
+                delta=2.0,
+                msg=f"Assigned task button group must be centered within section at width {test_width}",
+            )
+
+        # Narrow screen wrapping test for AssignedTasksTable
+        table.actions_widget.resize(180, 150)
+        QCoreApplication.processEvents()
+        b1_geom = table.save_draft_btn.geometry()
+        b2_geom = table.submit_btn.geometry()
+        self.assertGreater(
+            b2_geom.top(),
+            b1_geom.bottom(),
+            "Assigned task buttons should wrap vertically on narrow screen without clipping",
+        )
+
+        # ── Test 2: AdditionalTaskWidget action buttons ─────────────────────────
+        widget.show()
+        for test_width in (1200, 768, 480, 320):
+            widget.resize(test_width, 350)
+            QCoreApplication.processEvents()
+            b1 = widget.save_draft_btn
+            b2 = widget.submit_btn
+
+            # Side by side with exact 16px gap
+            gap = b2.mapTo(widget, QPoint(0, 0)).x() - b1.mapTo(widget, QPoint(b1.width(), 0)).x()
+            self.assertEqual(gap, 16, f"Additional task button gap must be exactly 16px at width {test_width}")
+
+            # Horizontally centered relative to AdditionalTaskWidget section
+            b1_left = b1.mapTo(widget, QPoint(0, 0)).x()
+            b2_right = b2.mapTo(widget, QPoint(b2.width(), 0)).x()
+            group_center = (b1_left + b2_right) / 2
+            section_center = widget.width() / 2
+            self.assertAlmostEqual(
+                group_center,
+                section_center,
+                delta=2.0,
+                msg=f"Additional task button group must be centered within section at width {test_width}",
+            )
+
+        # Narrow screen wrapping test for AdditionalTaskWidget
+        widget.resize(180, 400)
+        QCoreApplication.processEvents()
+        b1_geom = widget.save_draft_btn.geometry()
+        b2_geom = widget.submit_btn.geometry()
+        self.assertGreater(
+            b2_geom.top(),
+            b1_geom.bottom(),
+            "Additional task buttons should wrap vertically on narrow screen without clipping",
+        )
+
+    # ── Post-Submission Behavior Verification Scenarios (1 through 6) ──────────
+
+    def test_post_submission_scenario_1_unsubmitted_shows_both_buttons(self):
+        """Scenario 1: An unsubmitted Timesheet shows both Save as Draft and Submit buttons."""
+        table = AssignedTasksTable()
+        tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "0",
+            "name": "Design Mockups",
+            "description": "Create UI wireframes",
+            "category": "Design",
+            "target": "2 Wireframes",
+            "measurement_criteria": "Figma review",
+            "weightage": "30%",
+            "task_done": "0",
+            "task_completed": "",
+            "comment": "",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        table.actions_widget.show()
+        # Both buttons must be visible and enabled
+        self.assertFalse(table.is_submitted)
+        self.assertFalse(table.save_draft_btn.isHidden())
+        self.assertTrue(table.save_draft_btn.isEnabled())
+        self.assertFalse(table.submit_btn.isHidden())
+        self.assertTrue(table.submit_btn.isEnabled())
+        self.assertEqual(table.save_draft_btn.text(), "Save as Draft")
+        self.assertEqual(table.submit_btn.text(), "Submit")
+
+    def test_post_submission_scenario_2_successful_submission_hides_submit(self):
+        """Scenario 2: A successful submission hides Submit and keeps it hidden."""
+        table = AssignedTasksTable()
+        tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "0",
+            "name": "Design Mockups",
+            "description": "Create UI wireframes",
+            "category": "Design",
+            "target": "2 Wireframes",
+            "measurement_criteria": "Figma review",
+            "weightage": "30%",
+            "task_done": "0",
+            "task_completed": "100",
+            "comment": "Completed wireframes in Figma",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        submitted_api_tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "789",
+            "name": "Design Mockups",
+            "description": "Create UI wireframes",
+            "category": "Design",
+            "target": "2 Wireframes",
+            "measurement_criteria": "Figma review",
+            "weightage": "30%",
+            "task_done": "0",
+            "task_completed": "100",
+            "comment": "Completed wireframes in Figma",
+            "submit_status": "1",
+            "status": "Completed",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Timesheet submitted successfully.", {"status": "1"})) as mock_save:
+            with patch.object(TaskService, "fetch_assigned_tasks", return_value=submitted_api_tasks):
+                # Click Submit
+                table.submit_btn.click()
+                time.sleep(0.1)
+                QCoreApplication.processEvents()
+
+                # Backend confirmed submission
+                mock_save.assert_called_once()
+                self.assertEqual(mock_save.call_args[1]["submit_status"], "1")
+
+                # Submit button must be hidden
+                self.assertTrue(table.is_submitted)
+                self.assertTrue(table.submit_btn.isHidden())
+                # Save as Draft remains available
+                self.assertFalse(table.save_draft_btn.isHidden())
+                self.assertTrue(table.save_draft_btn.isEnabled())
+
+                # Even after timer resets action buttons, Submit must NOT reappear
+                table._reset_action_buttons()
+                self.assertTrue(table.submit_btn.isHidden())
+
+    def test_post_submission_scenario_3_failed_submission_keeps_submit_available(self):
+        """Scenario 3: A failed submission keeps Submit available for retry and preserves entered values."""
+        table = AssignedTasksTable()
+        tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "0",
+            "name": "API Integration",
+            "description": "Connect endpoints",
+            "category": "Dev",
+            "target": "API",
+            "measurement_criteria": "Postman tests",
+            "weightage": "50%",
+            "task_done": "0",
+            "task_completed": "80",
+            "comment": "Connected auth and timeline endpoints",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(False, "500 Server Internal Error", None)) as mock_save:
+            table.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            mock_save.assert_called_once()
+            # Submit button must remain available for retry
+            self.assertFalse(table.is_submitted)
+            self.assertFalse(table.submit_btn.isHidden())
+            self.assertTrue(table.submit_btn.isEnabled())
+            self.assertEqual(table.submit_btn.text(), "Retry Submit ⚠️")
+            # Entered values must be preserved
+            self.assertEqual(table._get_line_edit(0, 8).text(), "80")
+            self.assertEqual(table._get_line_edit(0, 9).text(), "Connected auth and timeline endpoints")
+
+    def test_post_submission_scenario_4_reopening_or_refreshing_already_submitted_keeps_submit_hidden(self):
+        """Scenario 4: Reopening or refreshing an already-submitted Timesheet keeps Submit hidden based on API status."""
+        table = AssignedTasksTable()
+        # Simulated response from API when retrieving already-submitted Timesheet
+        submitted_tasks_from_api = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "789",
+            "name": "Security Audit",
+            "description": "Review permissions",
+            "category": "Security",
+            "target": "Audit",
+            "measurement_criteria": "Checklist",
+            "weightage": "20%",
+            "task_done": "0",
+            "task_completed": "100",
+            "comment": "Completed full permission audit",
+            "submit_status": "1",
+            "status": "Completed",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+
+        # Initial load / reopening of already-submitted timesheet
+        table.set_tasks(submitted_tasks_from_api, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(table.is_submitted)
+        self.assertTrue(table.submit_btn.isHidden())
+        self.assertFalse(table.save_draft_btn.isHidden())
+
+        # Page refresh with fresh fetch from API
+        table.set_tasks(submitted_tasks_from_api, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(table.is_submitted)
+        self.assertTrue(table.submit_btn.isHidden())
+
+        # Switching to unsubmitted date restores Submit button
+        unsubmitted_tasks = [{
+            "id": "102",
+            "kra_id": "102",
+            "timesheet_id": "0",
+            "name": "Documentation",
+            "description": "Write guide",
+            "category": "Docs",
+            "target": "Guide",
+            "measurement_criteria": "Markdown",
+            "weightage": "10%",
+            "task_done": "0",
+            "task_completed": "",
+            "comment": "",
+            "submit_status": "0",
+            "status": "Pending",
+            "date": "2026-10-15",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(unsubmitted_tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        self.assertFalse(table.is_submitted)
+        self.assertFalse(table.submit_btn.isHidden())
+        self.assertTrue(table.submit_btn.isEnabled())
+
+        # Switching back to submitted date hides Submit button again
+        table.set_tasks(submitted_tasks_from_api, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(table.is_submitted)
+        self.assertTrue(table.submit_btn.isHidden())
+
+    def test_post_submission_scenario_5_submitted_values_and_comments_match_api_response(self):
+        """Scenario 5: Display latest submitted Timesheet data dynamically from actual API response."""
+        table = AssignedTasksTable()
+        initial_tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "0",
+            "name": "API Development",
+            "description": "Build user auth modules",
+            "category": "Backend",
+            "target": "Auth",
+            "measurement_criteria": "JWT verification",
+            "weightage": "40%",
+            "task_done": "0",
+            "task_completed": "50",
+            "comment": "Working on token expiry",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(initial_tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # Simulated fresh API response returned by get_kra after submit
+        fresh_api_response = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "999",
+            "name": "API Development",
+            "description": "Build user auth modules",
+            "category": "Backend",
+            "target": "Auth",
+            "measurement_criteria": "JWT verification",
+            "weightage": "40%",
+            "task_done": "0",
+            "task_completed": "100",
+            "comment": "Token expiry and refresh flow verified against server",
+            "submit_status": "1",
+            "status": "Completed",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Timesheet submitted successfully.", {"status": "1"})):
+            with patch.object(TaskService, "fetch_assigned_tasks", return_value=fresh_api_response):
+                table.submit_btn.click()
+                time.sleep(0.1)
+                QCoreApplication.processEvents()
+
+                # Values in table rows must match actual API response
+                self.assertEqual(table._get_line_edit(0, 8).text(), "100")
+                self.assertEqual(table._get_line_edit(0, 9).text(), "Token expiry and refresh flow verified against server")
+                # Title heading dynamically populates employee name, code, date
+                self.assertEqual(table.title_label.text(), "Timesheet for Dinesh Dev (EC-098) on 14 October 2026")
+                # Submit button is hidden
+                self.assertTrue(table.submit_btn.isHidden())
+
+    def test_post_submission_scenario_6_draft_functionality_and_unrelated_behavior_unchanged(self):
+        """Scenario 6: Draft functionality and unrelated Timesheet behavior remain unchanged."""
+        table = AssignedTasksTable()
+        tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "0",
+            "name": "Frontend Refactoring",
+            "description": "Clean up style classes",
+            "category": "UI",
+            "target": "Styles",
+            "measurement_criteria": "Linter",
+            "weightage": "20%",
+            "task_done": "0",
+            "task_completed": "40",
+            "comment": "Refactored color palette",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        draft_api_tasks = [{
+            "id": "101",
+            "kra_id": "101",
+            "timesheet_id": "888",
+            "name": "Frontend Refactoring",
+            "description": "Clean up style classes",
+            "category": "UI",
+            "target": "Styles",
+            "measurement_criteria": "Linter",
+            "weightage": "20%",
+            "task_done": "0",
+            "task_completed": "40",
+            "comment": "Refactored color palette",
+            "submit_status": "0",
+            "status": "In Progress",
+            "date": "2026-10-14",
+            "employee_name": "Dinesh Dev",
+            "indo_code": "EC-098",
+        }]
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Draft saved successfully.", {"TimeSheet_id": "888"})) as mock_draft:
+            with patch.object(TaskService, "fetch_assigned_tasks", return_value=draft_api_tasks):
+                # Click Save as Draft
+                table.save_draft_btn.click()
+                time.sleep(0.1)
+                QCoreApplication.processEvents()
+
+                mock_draft.assert_called_once()
+                self.assertEqual(mock_draft.call_args[1]["submit_status"], "0")
+
+                # Both buttons must remain visible
+                self.assertFalse(table.is_submitted)
+                self.assertFalse(table.save_draft_btn.isHidden())
+                self.assertFalse(table.submit_btn.isHidden())
+                self.assertTrue(table.submit_btn.isEnabled())
+                self.assertEqual(table.save_draft_btn.text(), "Draft Saved ✓")
+
+                # Table structure preserved: columns 3 and 5 remain hidden
+                self.assertTrue(table.isColumnHidden(3))
+                self.assertTrue(table.isColumnHidden(5))
 
 
 if __name__ == "__main__":
     unittest.main()
+

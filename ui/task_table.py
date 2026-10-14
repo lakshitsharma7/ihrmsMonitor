@@ -20,10 +20,16 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
 from utils.logger import get_logger
+from ui.additional_task_widget import (
+    AdditionalTaskWidget,
+    CenteredFlowLayout,
+    LinedTaskTextEdit,
+)
 
 logger = get_logger(__name__)
 
@@ -40,7 +46,7 @@ QTableWidget#AssignedTasksTable {
 }
 
 QTableWidget#AssignedTasksTable::item {
-    padding: 8px 10px;
+    padding: 6px 8px;
     color: #1e293b;
     border-right: 1px solid #e2e8f0;
     border-bottom: 1px solid #e2e8f0;
@@ -75,7 +81,7 @@ QHeaderView::section {
     color: #334155;
     font-weight: 700;
     font-size: 12px;
-    padding: 8px 6px;
+    padding: 7px 5px;
     border-top: none;
     border-left: none;
     border-right: 1px solid #e2e8f0;
@@ -137,12 +143,14 @@ QScrollBar::sub-line:vertical {
 }
 """
 
+
+
 _LE_NORMAL = (
     "QLineEdit {"
     "  background-color: #ffffff;"
     "  border: 1px solid #cbd5e1;"
     "  border-radius: 6px;"
-    "  padding: 5px 8px;"
+    "  padding: 4px 6px;"
     "  font-size: 12px;"
     "  font-weight: 500;"
     "  color: #1e293b;"
@@ -161,7 +169,7 @@ _LE_ERROR = (
     "  background-color: #fef2f2;"
     "  border: 1.5px solid #ef4444;"
     "  border-radius: 6px;"
-    "  padding: 5px 8px;"
+    "  padding: 4px 6px;"
     "  font-size: 12px;"
     "  color: #991b1b;"
     "}"
@@ -187,6 +195,8 @@ class StableLineEdit(QLineEdit):
             else None
         )
         super().focusInEvent(event)
+        if self._table and hasattr(self._table, "_handle_line_edit_focused"):
+            self._table._handle_line_edit_focused(self)
         if prev_h is not None and self._table.horizontalScrollBar().value() != prev_h:
             self._table.horizontalScrollBar().setValue(prev_h)
 
@@ -203,8 +213,11 @@ class StableLineEdit(QLineEdit):
 
 def format_task_date(raw_date: Any) -> str:
     """Format raw date into 'DD Month YYYY' format (e.g. '01 October 2026')."""
-    if raw_date is None or not str(raw_date).strip():
-        return datetime.now().strftime("%d %B %Y")
+    if raw_date is None:
+        return ""
+    cleaned = str(raw_date).strip()
+    if not cleaned or cleaned.lower() in ("none", "null", "n/a", "undefined", "-"):
+        return ""
 
     if isinstance(raw_date, datetime):
         return raw_date.strftime("%d %B %Y")
@@ -271,16 +284,16 @@ class AssignedTasksTable(QTableWidget):
 
     # Column config: (header_label, initial_width_px, header_alignment)
     COLUMN_CONFIG = [
-        ("S.No.",                  55, Qt.AlignmentFlag.AlignCenter),
-        ("Name",                 140, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Description",          180, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Category",             100, Qt.AlignmentFlag.AlignCenter),
-        ("Target",                80, Qt.AlignmentFlag.AlignCenter),
-        ("Measurement Criteria", 165, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
-        ("Weightage",             95, Qt.AlignmentFlag.AlignCenter),
-        ("Task Done Till Now",   145, Qt.AlignmentFlag.AlignCenter),
-        ("Task Completed",       130, Qt.AlignmentFlag.AlignCenter),
-        ("Comment",              220, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("S.No.",                  48, Qt.AlignmentFlag.AlignCenter),
+        ("Name",                 125, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Description",          155, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Category",              90, Qt.AlignmentFlag.AlignCenter),
+        ("Target",                70, Qt.AlignmentFlag.AlignCenter),
+        ("Measurement Criteria", 140, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
+        ("Weightage",             80, Qt.AlignmentFlag.AlignCenter),
+        ("Task Done Till Now",   125, Qt.AlignmentFlag.AlignCenter),
+        ("Task Completed",       115, Qt.AlignmentFlag.AlignCenter),
+        ("Comment",              185, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter),
     ]
 
     task_saved = Signal(dict)  # Emitted when a timesheet is saved successfully
@@ -290,6 +303,7 @@ class AssignedTasksTable(QTableWidget):
 
         self._tasks: List[Dict[str, Any]] = []
         self._is_submitting: bool = False
+        self._is_submitted: bool = False
         self._edited_rows: set[int] = set()
 
         self._signals = TaskTableSignals()
@@ -312,47 +326,60 @@ class AssignedTasksTable(QTableWidget):
         self.title_label.setStyleSheet(
             "QLabel#TaskTableTitleLabel {"
             "    color: #1e293b;"
-            "    font-size: 13px;"
-            "    font-weight: 600;"
+            "    font-size: 15px;"
+            "    font-weight: 700;"
             "    padding: 2px 0px 6px 0px;"
             "}"
         )
         self._current_date: str = ""
+        self._page_date: str = ""
+        self._selected_task_index: Optional[int] = None
         self.update_title()
 
         # ── Bottom Action Controls ──────────────────────────────────────────
         self.actions_widget = QWidget()
         self.actions_widget.setObjectName("TaskTableActionsWidget")
-        actions_layout = QHBoxLayout(self.actions_widget)
-        actions_layout.setContentsMargins(4, 8, 4, 4)
-        actions_layout.setSpacing(10)
+        actions_layout = QVBoxLayout(self.actions_widget)
+        actions_layout.setContentsMargins(4, 6, 4, 4)
+        actions_layout.setSpacing(6)
+        actions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.status_msg_label = QLabel("", self.actions_widget)
         self.status_msg_label.setStyleSheet("font-size: 12px; font-weight: 500;")
+        self.status_msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_msg_label.setVisible(False)
-        actions_layout.addWidget(self.status_msg_label)
+        actions_layout.addWidget(self.status_msg_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        actions_layout.addStretch(1)
+        buttons_container = QWidget(self.actions_widget)
+        buttons_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        buttons_layout = CenteredFlowLayout(buttons_container, margin=0, h_spacing=16, v_spacing=8)
 
-        self.save_draft_btn = QPushButton("Save as Draft", self.actions_widget)
+        self.save_draft_btn = QPushButton("Save as Draft", buttons_container)
         self.save_draft_btn.setObjectName("SaveDraftButton")
         self.save_draft_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
         self.save_draft_btn.clicked.connect(lambda: self.submit_all_tasks(is_draft=True))
-        actions_layout.addWidget(self.save_draft_btn)
+        buttons_layout.addWidget(self.save_draft_btn)
 
-        self.submit_btn = QPushButton("Submit", self.actions_widget)
+        self.submit_btn = QPushButton("Submit", buttons_container)
         self.submit_btn.setObjectName("SubmitTasksButton")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.submit_btn.setStyleSheet(self._submit_btn_style_default())
         self.submit_btn.clicked.connect(lambda: self.submit_all_tasks(is_draft=False))
-        actions_layout.addWidget(self.submit_btn)
+        buttons_layout.addWidget(self.submit_btn)
+
+        actions_layout.addWidget(buttons_container)
+
+        self.additional_task_widget: Optional[Any] = None
+
+        self.cellClicked.connect(self._on_cell_clicked)
+        self.currentCellChanged.connect(self._on_current_cell_changed)
 
         # ── Header ────────────────────────────────────────────────────────────
         header = self.horizontalHeader()
         header.setFixedHeight(40)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-        header.setMinimumSectionSize(50)
+        header.setMinimumSectionSize(40)
         header.setStretchLastSection(False)
 
         for col_idx, (col_name, col_width, _col_align) in enumerate(self.COLUMN_CONFIG):
@@ -383,8 +410,12 @@ class AssignedTasksTable(QTableWidget):
         self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self.setAutoScroll(False)
 
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(500)
         self.setMinimumHeight(120)
+
+        # Hide Category (col 3) and Measurement Criteria (col 5) on Timesheet page
+        self.setColumnHidden(3, True)
+        self.setColumnHidden(5, True)
 
     def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible) -> None:
         """
@@ -407,29 +438,71 @@ class AssignedTasksTable(QTableWidget):
             return
 
         prev_h = self.horizontalScrollBar().value()
-        viewport_width = self.viewport().width()
+        target_width = max(self.viewport().width(), self.width() - 2)
+
+        visible_cols = [c for c in range(len(self.COLUMN_CONFIG)) if not self.isColumnHidden(c)]
         base_widths = [cfg[1] for cfg in self.COLUMN_CONFIG]
-        total_base = sum(base_widths)
+        total_visible_base = sum(base_widths[c] for c in visible_cols)
 
-        # Stretchable text columns: Name (1), Description (2), Measurement Criteria (5), Comment (9)
-        stretchable = [1, 2, 5, 9]
-        weights = {1: 1, 2: 2, 5: 2, 9: 2}
-        total_weight = sum(weights.values())
+        # Stretchable text columns among visible columns: Name (1), Description (2), Comment (9)
+        stretchable = [c for c in [1, 2, 9] if c in visible_cols]
+        weights = {1: 1, 2: 2, 9: 2}
+        total_weight = sum(weights[c] for c in stretchable) if stretchable else 1
 
-        if viewport_width > total_base:
-            extra = viewport_width - total_base
+        if target_width > total_visible_base:
+            extra = target_width - total_visible_base
             for col_idx in range(len(self.COLUMN_CONFIG)):
-                if col_idx in stretchable:
+                if self.isColumnHidden(col_idx):
+                    self.setColumnWidth(col_idx, 0)
+                elif col_idx in stretchable:
                     added = int(extra * weights[col_idx] / total_weight)
                     self.setColumnWidth(col_idx, base_widths[col_idx] + added)
                 else:
                     self.setColumnWidth(col_idx, base_widths[col_idx])
         else:
             for col_idx in range(len(self.COLUMN_CONFIG)):
-                self.setColumnWidth(col_idx, base_widths[col_idx])
+                if self.isColumnHidden(col_idx):
+                    self.setColumnWidth(col_idx, 0)
+                else:
+                    self.setColumnWidth(col_idx, base_widths[col_idx])
 
         if self.horizontalScrollBar().value() != prev_h:
             self.horizontalScrollBar().setValue(prev_h)
+
+    @property
+    def is_submitted(self) -> bool:
+        """Return whether the currently displayed Timesheet is in a submitted state."""
+        return self._is_submitted
+
+    def _is_submitted_data(self, tasks: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """
+        Determine whether tasks authoritatively indicate that the Timesheet is submitted.
+        Checks:
+          - task["submit_status"] in ("1", "true", "True")
+          - raw["submit_status"] in ("1", "true", "True")
+          - task["status"].lower() == "submitted" or raw["status"].lower() == "submitted"
+        """
+        task_list = tasks if tasks is not None else self._tasks
+        if not task_list:
+            return False
+        for t in task_list:
+            if not isinstance(t, dict):
+                continue
+            for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
+                v = str(t.get(k) or "").strip()
+                if v in ("1", "true", "True"):
+                    return True
+            raw = t.get("raw")
+            if isinstance(raw, dict):
+                for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
+                    v = str(raw.get(k) or "").strip()
+                    if v in ("1", "true", "True"):
+                        return True
+                if str(raw.get("status") or "").strip().lower() == "submitted":
+                    return True
+            if str(t.get("status") or "").strip().lower() == "submitted":
+                return True
+        return False
 
     @property
     def tasks(self) -> List[Dict[str, Any]]:
@@ -452,32 +525,82 @@ class AssignedTasksTable(QTableWidget):
             if item is not None:
                 item.setText(str(r + 1))
 
-    def _resolve_employee_info(self, tasks: Optional[List[Dict[str, Any]]] = None) -> tuple[str, str]:
+    def _on_cell_clicked(self, row: int, column: int) -> None:
+        """Handle cell click to dynamically update heading for selected task."""
+        if 0 <= row < len(self._tasks):
+            self.select_task_by_index(row)
+
+    def _on_current_cell_changed(self, current_row: int, current_col: int, prev_row: int, prev_col: int) -> None:
+        """Handle keyboard or focus navigation across cells to keep heading synchronized."""
+        if 0 <= current_row < len(self._tasks):
+            self.select_task_by_index(current_row)
+
+    def _handle_line_edit_focused(self, edit_widget: QWidget) -> None:
+        """Handle focus on editable cell controls to synchronize selected task heading."""
+        for r in range(self.rowCount()):
+            for c in (8, 9):
+                if self._get_line_edit(r, c) == edit_widget:
+                    self.select_task_by_index(r)
+                    return
+
+    def select_task_by_index(self, row_idx: int, force: bool = False) -> None:
+        """Select a task by row index and dynamically update heading and controls."""
+        if not (0 <= row_idx < len(self._tasks)):
+            return
+        if not force and self._selected_task_index == row_idx:
+            return
+        self._selected_task_index = row_idx
+        selected_task = self._tasks[row_idx]
+        self.update_title(task=selected_task)
+        if getattr(self, "additional_task_widget", None):
+            task_d = str(selected_task.get("date") or "").strip()
+            if task_d:
+                self.additional_task_widget.set_date(task_d)
+
+    def current_task(self) -> Optional[Dict[str, Any]]:
+        """Return the currently selected task dictionary, or None."""
+        if not self._tasks:
+            return None
+        idx = self._selected_task_index if self._selected_task_index is not None else 0
+        if 0 <= idx < len(self._tasks):
+            return self._tasks[idx]
+        return self._tasks[0]
+
+    def _resolve_employee_info(
+        self,
+        task: Optional[Dict[str, Any]] = None,
+        tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> tuple[str, str]:
         """
-        Dynamically resolve (employee_name, employee_code) from tasks, session, or stored credentials.
+        Dynamically resolve (employee_name, employee_code) from:
+          1. Selected task
+          2. Tasks list
+          3. SessionService / current_user
+          4. SessionStore
+          5. QSettings
         """
         emp_name = ""
         emp_code = ""
 
-        # 1. Check tasks data if available
-        task_list = tasks if tasks is not None else self._tasks
-        for t in task_list:
-            if not emp_name:
-                emp_name = str(
-                    t.get("employee_name")
-                    or t.get("emp_name")
-                    or t.get("user_name")
-                    or t.get("full_name")
-                    or ""
-                ).strip()
-            if not emp_code:
-                emp_code = str(
-                    t.get("indo_code")
-                    or t.get("employee_code")
-                    or t.get("emp_code")
-                    or ""
-                ).strip()
-            raw = t.get("raw")
+        # 1. Check selected task first
+        target_task = task if task is not None else self.current_task()
+        if target_task and isinstance(target_task, dict):
+            emp_name = str(
+                target_task.get("employee_name")
+                or target_task.get("emp_name")
+                or target_task.get("user_name")
+                or target_task.get("full_name")
+                or ""
+            ).strip()
+            emp_code = str(
+                target_task.get("indo_code")
+                or target_task.get("employee_code")
+                or target_task.get("emp_code")
+                or target_task.get("employee_id")
+                or ""
+            ).strip()
+
+            raw = target_task.get("raw")
             if isinstance(raw, dict):
                 if not emp_name:
                     emp_name = str(
@@ -492,48 +615,89 @@ class AssignedTasksTable(QTableWidget):
                         raw.get("indo_code")
                         or raw.get("employee_code")
                         or raw.get("emp_code")
+                        or raw.get("employee_id")
                         or ""
                     ).strip()
-            if emp_name and emp_code:
-                break
 
-        # 2. Check SessionService
-        try:
-            from services.session_service import SessionService
-            user = SessionService().current_user
-            if user:
+        # 2. Check tasks list if not fully resolved
+        if not emp_name or not emp_code:
+            task_list = tasks if tasks is not None else self._tasks
+            for t in task_list:
                 if not emp_name:
-                    if user.full_name and str(user.full_name).strip() and str(user.full_name).strip().lower() != "persisted user":
-                        emp_name = str(user.full_name).strip()
-                    elif user.display_name and str(user.display_name).strip() and str(user.display_name).strip().lower() not in ("user", "persisted user"):
-                        emp_name = str(user.display_name).strip()
-                    elif user.username and str(user.username).strip() and str(user.username).strip().lower() != "persisted user":
-                        emp_name = str(user.username).strip()
-
+                    emp_name = str(
+                        t.get("employee_name")
+                        or t.get("emp_name")
+                        or t.get("user_name")
+                        or t.get("full_name")
+                        or ""
+                    ).strip()
                 if not emp_code:
-                    if user.indo_code and str(user.indo_code).strip():
-                        emp_code = str(user.indo_code).strip()
-                    elif user.employee_id and str(user.employee_id).strip():
-                        emp_code = str(user.employee_id).strip()
-
-                if user.raw_login_data and isinstance(user.raw_login_data, dict):
-                    ld = user.raw_login_data.get("data", {}) if isinstance(user.raw_login_data.get("data"), dict) else {}
+                    emp_code = str(
+                        t.get("indo_code")
+                        or t.get("employee_code")
+                        or t.get("emp_code")
+                        or t.get("employee_id")
+                        or ""
+                    ).strip()
+                raw = t.get("raw")
+                if isinstance(raw, dict):
                     if not emp_name:
-                        for f in ("fullName", "full_name", "name", "employee_name", "emp_name", "employeeName"):
-                            v = user.raw_login_data.get(f) or ld.get(f)
-                            if v and str(v).strip() and str(v).strip().lower() != "persisted user":
-                                emp_name = str(v).strip()
-                                break
+                        emp_name = str(
+                            raw.get("employee_name")
+                            or raw.get("emp_name")
+                            or raw.get("user_name")
+                            or raw.get("full_name")
+                            or ""
+                        ).strip()
                     if not emp_code:
-                        for f in ("indo_code", "employee_code", "emp_code", "employee_id", "emp_id", "empCode"):
-                            v = user.raw_login_data.get(f) or ld.get(f)
-                            if v and str(v).strip():
-                                emp_code = str(v).strip()
-                                break
-        except Exception as e:
-            logger.debug("AssignedTasksTable: error checking SessionService: %s", e)
+                        emp_code = str(
+                            raw.get("indo_code")
+                            or raw.get("employee_code")
+                            or raw.get("emp_code")
+                            or raw.get("employee_id")
+                            or ""
+                        ).strip()
+                if emp_name and emp_code:
+                    break
 
-        # 3. Check SessionStore
+        # 3. Check SessionService
+        if not emp_name or not emp_code:
+            try:
+                from services.session_service import SessionService
+                user = SessionService().current_user
+                if user:
+                    if not emp_name:
+                        if user.full_name and str(user.full_name).strip() and str(user.full_name).strip().lower() != "persisted user":
+                            emp_name = str(user.full_name).strip()
+                        elif user.display_name and str(user.display_name).strip() and str(user.display_name).strip().lower() not in ("user", "persisted user"):
+                            emp_name = str(user.display_name).strip()
+                        elif user.username and str(user.username).strip() and str(user.username).strip().lower() != "persisted user":
+                            emp_name = str(user.username).strip()
+
+                    if not emp_code:
+                        if user.indo_code and str(user.indo_code).strip():
+                            emp_code = str(user.indo_code).strip()
+                        elif user.employee_id and str(user.employee_id).strip():
+                            emp_code = str(user.employee_id).strip()
+
+                    if user.raw_login_data and isinstance(user.raw_login_data, dict):
+                        ld = user.raw_login_data.get("data", {}) if isinstance(user.raw_login_data.get("data"), dict) else {}
+                        if not emp_name:
+                            for f in ("fullName", "full_name", "name", "employee_name", "emp_name", "employeeName"):
+                                v = user.raw_login_data.get(f) or ld.get(f)
+                                if v and str(v).strip() and str(v).strip().lower() != "persisted user":
+                                    emp_name = str(v).strip()
+                                    break
+                        if not emp_code:
+                            for f in ("indo_code", "employee_code", "emp_code", "employee_id", "emp_id", "empCode"):
+                                v = user.raw_login_data.get(f) or ld.get(f)
+                                if v and str(v).strip():
+                                    emp_code = str(v).strip()
+                                    break
+            except Exception as e:
+                logger.debug("AssignedTasksTable: error checking SessionService: %s", e)
+
+        # 4. Check SessionStore
         if not emp_name or not emp_code:
             try:
                 from services.secure_session import SessionStore
@@ -546,7 +710,7 @@ class AssignedTasksTable(QTableWidget):
             except Exception as e:
                 logger.debug("AssignedTasksTable: error checking SessionStore: %s", e)
 
-        # 4. Check QSettings
+        # 5. Check QSettings
         if not emp_code:
             try:
                 from PySide6.QtCore import QSettings
@@ -562,37 +726,75 @@ class AssignedTasksTable(QTableWidget):
         name: Optional[str] = None,
         code: Optional[str] = None,
         date: Optional[str] = None,
+        task: Optional[Dict[str, Any]] = None,
         tasks: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        """Dynamically update the centered heading above the table."""
-        resolved_name, resolved_code = self._resolve_employee_info(tasks=tasks)
+        """Dynamically update the centered heading above the table for the selected task."""
+        target_task = task if task is not None else self.current_task()
+        resolved_name, resolved_code = self._resolve_employee_info(task=target_task, tasks=tasks)
         if name:
             resolved_name = name
         if code:
             resolved_code = code
 
-        date_val = date
+        # Resolve date: explicit argument -> target task date -> page_date -> task_list date
+        date_val = ""
+        if date:
+            date_val = str(date).strip()
+            self._page_date = date_val
+
+        if not date_val and target_task and isinstance(target_task, dict):
+            raw_d = (
+                target_task.get("date")
+                or target_task.get("assigned_date")
+                or target_task.get("due_date")
+                or target_task.get("target_date")
+                or (target_task.get("raw") or {}).get("date")
+                or (target_task.get("raw") or {}).get("assigned_date")
+                or ""
+            )
+            if raw_d and str(raw_d).strip().lower() not in ("none", "null", ""):
+                date_val = str(raw_d).strip()
+
+        if not date_val and getattr(self, "_page_date", ""):
+            date_val = getattr(self, "_page_date", "")
+
         if not date_val:
             task_list = tasks if tasks is not None else self._tasks
-            for t in task_list:
-                d = str(t.get("date") or t.get("assigned_date") or "").strip()
-                if d:
-                    date_val = d
+            for t in (task_list or []):
+                raw_d = (
+                    t.get("date")
+                    or t.get("assigned_date")
+                    or t.get("due_date")
+                    or t.get("target_date")
+                    or (t.get("raw") or {}).get("date")
+                    or ""
+                )
+                if raw_d and str(raw_d).strip().lower() not in ("none", "null", ""):
+                    date_val = str(raw_d).strip()
                     break
-        if not date_val:
-            date_val = getattr(self, "_current_date", "") or datetime.now().strftime("%Y-%m-%d")
 
-        self._current_date = str(date_val)
-        formatted_date = format_task_date(date_val)
+        if date_val:
+            self._current_date = str(date_val)
 
-        if resolved_name and resolved_code:
-            heading = f"Task for {resolved_name} ({resolved_code}) on {formatted_date}"
+        formatted_date = format_task_date(date_val) if date_val else ""
+
+        if resolved_name and resolved_code and formatted_date:
+            heading = f"Timesheet for {resolved_name} ({resolved_code}) on {formatted_date}"
+        elif resolved_name and resolved_code:
+            heading = f"Timesheet for {resolved_name} ({resolved_code})"
+        elif resolved_name and formatted_date:
+            heading = f"Timesheet for {resolved_name} on {formatted_date}"
+        elif resolved_code and formatted_date:
+            heading = f"Timesheet for {resolved_code} on {formatted_date}"
+        elif formatted_date:
+            heading = f"Timesheet on {formatted_date}"
         elif resolved_name:
-            heading = f"Task for {resolved_name} on {formatted_date}"
+            heading = f"Timesheet for {resolved_name}"
         elif resolved_code:
-            heading = f"Task for {resolved_code} on {formatted_date}"
+            heading = f"Timesheet for {resolved_code}"
         else:
-            heading = f"Task on {formatted_date}"
+            heading = "Timesheet"
 
         self.title_label.setText(heading)
 
@@ -601,8 +803,24 @@ class AssignedTasksTable(QTableWidget):
         prev_h_scroll = self.horizontalScrollBar().value()
         prev_v_scroll = self.verticalScrollBar().value()
 
-        # Update dynamic heading above table
-        self.update_title(date=date, tasks=tasks)
+        self._tasks = list(tasks or [])
+        self._selected_task_index = 0 if self._tasks else None
+        selected_task = self._tasks[0] if self._tasks else None
+        self._page_date = str(date).strip() if date else ""
+
+        # Update dynamic heading above table for the currently selected task
+        self.update_title(date=date, task=selected_task, tasks=self._tasks)
+
+        if getattr(self, "additional_task_widget", None):
+            task_date = date
+            if not task_date and selected_task:
+                task_date = selected_task.get("date")
+            if task_date:
+                self.additional_task_widget.set_date(task_date)
+            for t in (self._tasks or []):
+                if t.get("is_additional") and t.get("description"):
+                    self.additional_task_widget.set_task_content(t.get("description"))
+                    break
 
         # Capture focus state if an edit field is active
         focused_widget = QApplication.focusWidget()
@@ -618,6 +836,8 @@ class AssignedTasksTable(QTableWidget):
         self.setRowCount(0)
         self._tasks = list(tasks or [])
         self._edited_rows.clear()
+
+        self._is_submitted = self._is_submitted_data(self._tasks)
 
         if not self._tasks:
             self.setRowCount(1)
@@ -635,14 +855,25 @@ class AssignedTasksTable(QTableWidget):
             self.setMinimumHeight(115)
             self.save_draft_btn.setEnabled(False)
             self.submit_btn.setEnabled(False)
+            self.submit_btn.setVisible(True)
             self.setUpdatesEnabled(True)
             return
 
         self.save_draft_btn.setEnabled(True)
-        self.submit_btn.setEnabled(True)
+        self.save_draft_btn.show()
+
+        if self._is_submitted:
+            self.submit_btn.hide()
+        else:
+            self.submit_btn.show()
+            self.submit_btn.setEnabled(True)
 
         # Clear any spans
         self.clearSpans()
+
+        # Ensure Category and Measurement Criteria remain hidden
+        self.setColumnHidden(3, True)
+        self.setColumnHidden(5, True)
 
         # Non-negative numeric regex validator for Task Completed (e.g. 25, 10.5, 100)
         num_regex = QRegularExpression(r"^\d{0,6}(\.\d{0,2})?$")
@@ -681,7 +912,7 @@ class AssignedTasksTable(QTableWidget):
             desc_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 2, desc_item)
 
-            # 3. Category (Read-only, Centered)
+            # 3. Category (Read-only, Centered, Hidden)
             cat_item = QTableWidgetItem(category)
             cat_item.setToolTip(category)
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -695,7 +926,7 @@ class AssignedTasksTable(QTableWidget):
             target_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self.setItem(row, 4, target_item)
 
-            # 5. Measurement Criteria (Read-only, Left-aligned, Wrapped)
+            # 5. Measurement Criteria (Read-only, Left-aligned, Wrapped, Hidden)
             crit_item = QTableWidgetItem(criteria)
             crit_item.setToolTip(criteria)
             crit_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -717,7 +948,7 @@ class AssignedTasksTable(QTableWidget):
             # ── Col 8: Task Completed — editable numeric QLineEdit ────────────
             comp_container = QWidget(self)
             comp_layout = QHBoxLayout(comp_container)
-            comp_layout.setContentsMargins(6, 4, 6, 4)
+            comp_layout.setContentsMargins(4, 3, 4, 3)
             comp_layout.setSpacing(0)
             comp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -738,7 +969,7 @@ class AssignedTasksTable(QTableWidget):
             # ── Col 9: Comment — editable text QLineEdit ──────────────────────
             comment_container = QWidget(self)
             comment_layout = QHBoxLayout(comment_container)
-            comment_layout.setContentsMargins(6, 4, 6, 4)
+            comment_layout.setContentsMargins(4, 3, 4, 3)
             comment_layout.setSpacing(0)
 
             comment_edit = StableLineEdit(comment, comment_container, table=self)
@@ -919,6 +1150,7 @@ class AssignedTasksTable(QTableWidget):
         else:
             self.submit_btn.setText("Submitting...")
             self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.submit_btn.show()
             self._show_status("Submitting timesheet...", is_error=False)
 
         # 4. Assemble payload
@@ -998,31 +1230,41 @@ class AssignedTasksTable(QTableWidget):
         self._edited_rows.clear()
 
         fresh_tasks = data.get("fresh_tasks", [])
-        if fresh_tasks:
-            for ft in fresh_tasks:
-                ft_kra_id = str(ft.get("kra_id") or ft.get("id") or "")
+        submission_date = data.get("date") or self._page_date or self._current_date
+
+        if not is_draft:
+            # Backend has authoritatively confirmed Timesheet submission succeeded
+            self._is_submitted = True
+            if fresh_tasks:
+                for ft in fresh_tasks:
+                    if not ft.get("submit_status"):
+                        ft["submit_status"] = "1"
+                self.set_tasks(fresh_tasks, date=submission_date)
+            else:
                 for local_t in self._tasks:
-                    local_k_id = str(local_t.get("kra_id") or local_t.get("id") or "")
-                    if ft_kra_id and ft_kra_id == local_k_id:
-                        if ft.get("timesheet_id"):
-                            local_t["timesheet_id"] = str(ft["timesheet_id"])
-                        break
+                    local_t["submit_status"] = "1"
+                    if isinstance(local_t.get("raw"), dict):
+                        local_t["raw"]["submit_status"] = "1"
 
-        if self._tasks:
-            self.task_saved.emit(self._tasks[0])
+            self.submit_btn.hide()
+            self.save_draft_btn.setEnabled(True)
+            self.save_draft_btn.show()
+            self._show_status("Timesheet submitted successfully.", is_error=False)
+        else:
+            # Draft saved successfully
+            self._is_submitted = False
+            if fresh_tasks:
+                self.set_tasks(fresh_tasks, date=submission_date)
 
-        if is_draft:
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
+            self.submit_btn.show()
             self.save_draft_btn.setText("Draft Saved ✓")
             self.save_draft_btn.setStyleSheet(self._btn_style_success())
             self._show_status("Draft saved successfully.", is_error=False)
-        else:
-            self.submit_btn.setEnabled(True)
-            self.save_draft_btn.setEnabled(True)
-            self.submit_btn.setText("Submitted ✓")
-            self.submit_btn.setStyleSheet(self._btn_style_success())
-            self._show_status("Timesheet submitted successfully.", is_error=False)
+
+        if self._tasks:
+            self.task_saved.emit(self._tasks[0])
 
         QTimer.singleShot(3500, self._reset_action_buttons)
 
@@ -1039,6 +1281,7 @@ class AssignedTasksTable(QTableWidget):
         else:
             self.submit_btn.setText("Retry Submit ⚠️")
             self.submit_btn.setStyleSheet(self._btn_style_error())
+            self.submit_btn.show()
 
         self._show_status(f"Error: {err_msg}", is_error=True)
 
@@ -1057,11 +1300,16 @@ class AssignedTasksTable(QTableWidget):
         """Reset action buttons back to default styling."""
         self._is_submitting = False
         self.save_draft_btn.setEnabled(True)
-        self.submit_btn.setEnabled(True)
         self.save_draft_btn.setText("Save as Draft")
-        self.submit_btn.setText("Submit")
         self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
-        self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+
+        if self._is_submitted:
+            self.submit_btn.hide()
+        else:
+            self.submit_btn.setEnabled(True)
+            self.submit_btn.setText("Submit")
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.submit_btn.show()
 
     def _on_save_clicked(self, row: int = 0) -> None:
         """Backward-compatibility hook: delegate to submit_all_tasks."""
