@@ -14,14 +14,17 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QCloseEvent, QFont, QGuiApplication, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -492,6 +495,243 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
     """
 
 
+class VersionSearchLineEdit(QLineEdit):
+    """Search input inside version dropdown with keyboard navigation support."""
+
+    def __init__(self, list_widget: QListWidget, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._list_widget = list_widget
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Down:
+            cur = self._list_widget.currentRow()
+            if cur < self._list_widget.count() - 1:
+                self._list_widget.setCurrentRow(cur + 1)
+            elif cur == -1 and self._list_widget.count() > 0:
+                self._list_widget.setCurrentRow(0)
+            return
+        elif event.key() == Qt.Key.Key_Up:
+            cur = self._list_widget.currentRow()
+            if cur > 0:
+                self._list_widget.setCurrentRow(cur - 1)
+            return
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            item = self._list_widget.currentItem()
+            if not item and self._list_widget.count() > 0:
+                item = self._list_widget.item(0)
+            if item:
+                self._list_widget.itemClicked.emit(item)
+            return
+        elif event.key() == Qt.Key.Key_Escape:
+            win = self.window()
+            if win:
+                win.hide()
+            return
+        super().keyPressEvent(event)
+
+
+class SearchableVersionComboBox(QComboBox):
+    """
+    Modern version combobox with an integrated search filter and scrollable dropdown.
+    Supports substring filtering on version tags, keyboard navigation,
+    and fallback for 'No versions found'.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("VersionSelectorCombo")
+        self._entries: List[Dict[str, Any]] = []
+        self._popup_frame: Optional[QFrame] = None
+        self._search_input: Optional[VersionSearchLineEdit] = None
+        self._list_widget: Optional[QListWidget] = None
+
+    def addItem(self, text: str, userData: Any = None) -> None:
+        idx = len(self._entries)
+        self._entries.append({"text": text, "data": userData, "index": idx})
+        super().addItem(text, userData)
+
+    def clear(self) -> None:
+        self._entries.clear()
+        super().clear()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self._popup_frame and self._popup_frame.isVisible():
+            self.hidePopup()
+            return
+        super().mousePressEvent(event)
+
+    def showPopup(self) -> None:
+        if not self._popup_frame:
+            self._create_popup()
+        self._refresh_popup_list()
+
+        w = max(self.width(), 280)
+        self._popup_frame.setFixedWidth(w)
+
+        # Dynamic list height up to 220px (total dropdown ~270-280px within 250-300px range)
+        items_count = min(max(len(self._entries), 1), 7)
+        list_h = min(220, max(50, items_count * 34 + 8))
+        self._list_widget.setFixedHeight(list_h)
+        self._popup_frame.adjustSize()
+
+        popup_h = self._popup_frame.sizeHint().height()
+        global_pos = self.mapToGlobal(QPoint(0, self.height() + 2))
+        screen = QGuiApplication.screenAt(global_pos) or self.screen()
+        if screen:
+            screen_geo = screen.availableGeometry()
+            if (
+                global_pos.y() + popup_h > screen_geo.bottom()
+                and global_pos.y() - popup_h - self.height() >= screen_geo.top()
+            ):
+                global_pos = self.mapToGlobal(QPoint(0, -popup_h - 2))
+
+        self._popup_frame.move(global_pos)
+        self._popup_frame.show()
+        self._search_input.setFocus()
+        self._search_input.selectAll()
+
+    def hidePopup(self) -> None:
+        if self._popup_frame and self._popup_frame.isVisible():
+            self._popup_frame.hide()
+        super().hidePopup()
+
+    def _create_popup(self) -> None:
+        self._popup_frame = QFrame(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self._popup_frame.setObjectName("VersionSearchPopup")
+        self._popup_frame.setStyleSheet(
+            """
+            QFrame#VersionSearchPopup {
+                background-color: #ffffff;
+                border: 1.5px solid #cbd5e1;
+                border-radius: 8px;
+            }
+            """
+        )
+        layout = QVBoxLayout(self._popup_frame)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # Scrollable list
+        self._list_widget = QListWidget(self._popup_frame)
+        self._list_widget.setObjectName("VersionSearchListWidget")
+        self._list_widget.setMaximumHeight(220)
+        self._list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list_widget.setStyleSheet(
+            """
+            QListWidget#VersionSearchListWidget {
+                background-color: #ffffff;
+                border: none;
+                font-size: 12.5px;
+                color: #0f172a;
+                outline: none;
+            }
+            QListWidget#VersionSearchListWidget::item {
+                padding: 7px 10px;
+                border-radius: 5px;
+                margin: 1px 0px;
+            }
+            QListWidget#VersionSearchListWidget::item:hover {
+                background-color: #eff6ff;
+                color: #1d4ed8;
+            }
+            QListWidget#VersionSearchListWidget::item:selected {
+                background-color: #dbeafe;
+                color: #1e40af;
+                font-weight: 600;
+            }
+            QScrollBar:vertical {
+                background: #f1f5f9;
+                width: 8px;
+                margin: 0;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #94a3b8;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            """
+        )
+        self._list_widget.itemClicked.connect(self._on_item_clicked)
+
+        # Fixed Search Input at top of popup
+        self._search_input = VersionSearchLineEdit(self._list_widget, self._popup_frame)
+        self._search_input.setObjectName("VersionSearchInput")
+        self._search_input.setPlaceholderText("Search versions...")
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.setFixedHeight(30)
+        self._search_input.setStyleSheet(
+            """
+            QLineEdit#VersionSearchInput {
+                background-color: #f8fafc;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 12px;
+                color: #0f172a;
+            }
+            QLineEdit#VersionSearchInput:focus {
+                border: 1.5px solid #3b82f6;
+                background-color: #ffffff;
+            }
+            """
+        )
+        self._search_input.textChanged.connect(self._filter_items)
+        layout.addWidget(self._search_input)
+        layout.addWidget(self._list_widget)
+
+    def _refresh_popup_list(self) -> None:
+        if not self._search_input:
+            return
+        self._search_input.blockSignals(True)
+        self._search_input.clear()
+        self._search_input.blockSignals(False)
+        self._filter_items("")
+
+    def _filter_items(self, query: str) -> None:
+        if not self._list_widget:
+            return
+        q = str(query or "").strip().lower()
+        self._list_widget.clear()
+
+        matches = 0
+        cur_idx = self.currentIndex()
+        selected_item_widget = None
+
+        for entry in self._entries:
+            text = entry["text"]
+            if not q or q in text.lower():
+                matches += 1
+                it = QListWidgetItem(text)
+                it.setData(Qt.ItemDataRole.UserRole, entry["index"])
+                self._list_widget.addItem(it)
+                if entry["index"] == cur_idx:
+                    selected_item_widget = it
+                    it.setSelected(True)
+
+        if matches == 0:
+            no_match = QListWidgetItem("No versions found")
+            no_match.setFlags(Qt.ItemFlag.NoItemFlags)
+            no_match.setForeground(Qt.GlobalColor.darkGray)
+            no_match.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._list_widget.addItem(no_match)
+        elif selected_item_widget:
+            self._list_widget.scrollToItem(selected_item_widget)
+
+    def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        orig_idx = item.data(Qt.ItemDataRole.UserRole)
+        if orig_idx is not None and isinstance(orig_idx, int):
+            self.setCurrentIndex(orig_idx)
+            self.hidePopup()
+
+
 class ReleaseSummaryDialog(QDialog):
     """
     Clean, modern popup dialog displaying version history and release summaries.
@@ -575,7 +815,7 @@ class ReleaseSummaryDialog(QDialog):
         sel_label.setStyleSheet("font-size: 12.5px; font-weight: 600; color: #334155; border: none; background: transparent;")
         sel_layout.addWidget(sel_label)
 
-        self.version_combo = QComboBox(selector_frame)
+        self.version_combo = SearchableVersionComboBox(selector_frame)
         self.version_combo.setObjectName("VersionSelectorCombo")
         self.version_combo.setFixedHeight(30)
         self.version_combo.setMinimumWidth(260)

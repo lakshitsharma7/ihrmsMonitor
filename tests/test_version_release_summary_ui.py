@@ -424,3 +424,102 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
         finally:
             parent.close()
             parent.deleteLater()
+
+    def test_version_selector_search_filtering_and_restoration(self):
+        """Verify version search input filters versions dynamically and restores list on clear."""
+        from ui.release_summary_dialog import SearchableVersionComboBox
+        dlg = ReleaseSummaryDialog(installed_version="1.1")
+        dlg.show()
+        try:
+            self.assertIsInstance(dlg.version_combo, SearchableVersionComboBox)
+            dlg.version_combo.showPopup()
+
+            popup = dlg.version_combo._popup_frame
+            self.assertIsNotNone(popup)
+            self.assertTrue(popup.isVisible())
+
+            search_input = dlg.version_combo._search_input
+            list_widget = dlg.version_combo._list_widget
+            self.assertEqual(search_input.placeholderText(), "Search versions...")
+
+            # 1. Total initial count in list matches entries
+            initial_count = dlg.version_combo.count()
+            self.assertEqual(list_widget.count(), initial_count)
+
+            # 2. Search for 2.0 (should match 2.0.2, 2.0.1, 2.0.0)
+            search_input.setText("2.0")
+            self.assertEqual(list_widget.count(), 3)
+            for i in range(list_widget.count()):
+                self.assertIn("2.0", list_widget.item(i).text())
+
+            # 3. Case-insensitive search for version 1.1
+            search_input.setText("VERSION 1.1")
+            self.assertEqual(list_widget.count(), 1)
+            self.assertIn("1.1", list_widget.item(0).text())
+            self.assertIn("(Installed)", list_widget.item(0).text())
+
+            # 4. Search for non-existent version shows "No versions found"
+            search_input.setText("99.99")
+            self.assertEqual(list_widget.count(), 1)
+            self.assertEqual(list_widget.item(0).text(), "No versions found")
+            self.assertEqual(list_widget.item(0).flags(), Qt.ItemFlag.NoItemFlags)
+
+            # 5. Clear search input restores all items
+            search_input.setText("")
+            self.assertEqual(list_widget.count(), initial_count)
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+
+    def test_version_selector_dropdown_selection_updates_release_summary(self):
+        """Verify selecting a filtered item in dropdown updates the release summary content and details."""
+        dlg = ReleaseSummaryDialog(installed_version="1.1")
+        dlg.show()
+        try:
+            dlg.version_combo.showPopup()
+            search_input = dlg.version_combo._search_input
+            list_widget = dlg.version_combo._list_widget
+
+            # Search for 2.0.2 and select it
+            search_input.setText("2.0.2")
+            self.assertEqual(list_widget.count(), 1)
+            item_202 = list_widget.item(0)
+            self.assertIn("2.0.2", item_202.text())
+
+            # Click the item
+            dlg.version_combo._on_item_clicked(item_202)
+
+            # Popup should be hidden
+            self.assertFalse(dlg.version_combo._popup_frame.isVisible())
+
+            # Selected version updated
+            self.assertEqual(dlg.version_combo.currentData()["version"], "2.0.2")
+            self.assertIn("2.0.2", dlg.detail_version_label.text())
+
+            # Release summary content updated with 2.0.2 notes
+            self.assertIn("reachability", dlg.summary_text.toPlainText().lower())
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+
+    def test_version_selector_scrolling_and_max_height(self):
+        """Verify dropdown list height is capped within 250-300px and vertical scrollbar is accessible."""
+        from ui.release_summary_dialog import SearchableVersionComboBox
+        combo = SearchableVersionComboBox()
+        # Add 15 versions to exceed default height
+        for i in range(15):
+            combo.addItem(f"Version 3.{i}", {"version": f"3.{i}"})
+
+        combo.show()
+        combo.showPopup()
+        try:
+            list_widget = combo._list_widget
+            self.assertLessEqual(list_widget.height(), 260)
+            self.assertLessEqual(combo._popup_frame.sizeHint().height(), 300)
+            self.assertEqual(list_widget.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            # Search input is above the list widget and stays visible
+            self.assertTrue(combo._search_input.isVisible())
+        finally:
+            combo.hidePopup()
+            combo.close()
+            combo.deleteLater()
