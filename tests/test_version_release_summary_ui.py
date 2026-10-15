@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QGroupBox, QPushButton, QLabel, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QLabel, QPushButton, QWidget
 
 _app = QApplication.instance() or QApplication([])
 
@@ -159,11 +159,21 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
             # Detail version label matches installed
             self.assertIn(installed, dlg.detail_version_label.text())
 
-            # Summary text is displayed for installed version if available
+            # Summary text is displayed for installed version in professional category-wise format
             if sel_rel.get("summary"):
                 self.assertFalse(dlg.summary_text.isHidden())
                 self.assertTrue(dlg.empty_notes_label.isHidden())
-                self.assertIn(sel_rel["summary"][:20], dlg.summary_text.toPlainText())
+                pt = dlg.summary_text.toPlainText()
+                html_txt = dlg.summary_text.toHtml()
+                # Categories present
+                self.assertIn("NEW", pt)
+                self.assertIn("IMPROVEMENT", pt)
+                # Green styling for NEW and IMPROVEMENT
+                self.assertIn("#15803d", html_txt)
+                self.assertIn("#0f766e", html_txt)
+                # Empty FIX category must be hidden
+                self.assertNotIn("FIX", pt)
+                self.assertNotIn("#b91c1c", html_txt)
         finally:
             dlg.close()
             dlg.deleteLater()
@@ -243,11 +253,12 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
                 self.assertFalse(dlg.detail_date_label.isHidden())
                 self.assertIn(sel_rel["date"], dlg.detail_date_label.text())
 
-            # If summary exists, displayed in summary_text
+            # If summary exists, displayed in summary_text as categorized HTML
             if sel_rel.get("summary"):
                 self.assertFalse(dlg.summary_text.isHidden())
                 self.assertTrue(dlg.empty_notes_label.isHidden())
-                self.assertEqual(dlg.summary_text.toPlainText(), sel_rel["summary"])
+                self.assertGreater(len(dlg.summary_text.toPlainText()), 10)
+                self.assertIn("<table", dlg.summary_text.toHtml().lower())
         finally:
             dlg.close()
             dlg.deleteLater()
@@ -282,3 +293,134 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
         # Second item is installed version
         self.assertEqual(releases[1]["version"], "1.1")
         self.assertTrue(releases[1]["is_installed"])
+
+    def test_release_notes_categorization_and_colors_across_versions(self):
+        """Verify categorization, styling colors, and empty category suppression across versions."""
+        dlg = ReleaseSummaryDialog(installed_version="1.1")
+        dlg.show()
+        try:
+            # 1. Test Version 1.1 (selected by default)
+            pt_11 = dlg.summary_text.toPlainText()
+            html_11 = dlg.summary_text.toHtml()
+            self.assertIn("NEW", pt_11)
+            self.assertIn("IMPROVEMENT", pt_11)
+            self.assertNotIn("FIX", pt_11)  # Empty FIX category hidden
+            self.assertIn("#15803d", html_11)  # Green for NEW
+            self.assertIn("#0f766e", html_11)  # Teal/green for IMPROVEMENT
+            self.assertNotIn("#b91c1c", html_11)  # Red absent when no fixes
+
+            # 2. Test Version 2.0.1 (has bug fixes)
+            idx_201 = None
+            for i in range(dlg.version_combo.count()):
+                if dlg.version_combo.itemData(i).get("version") == "2.0.1":
+                    idx_201 = i
+                    break
+            if idx_201 is not None:
+                dlg.version_combo.setCurrentIndex(idx_201)
+                pt_201 = dlg.summary_text.toPlainText()
+                html_201 = dlg.summary_text.toHtml()
+                self.assertIn("NEW", pt_201)
+                self.assertIn("IMPROVEMENT", pt_201)
+                self.assertIn("FIX", pt_201)  # Has bug fixes
+                self.assertIn("#15803d", html_201)
+                self.assertIn("#0f766e", html_201)
+                self.assertIn("#b91c1c", html_201)  # Red for FIX
+                self.assertIn("#fee2e2", html_201)  # Light red badge background
+                self.assertIn("#fff5f5", html_201)  # Subtle light-red card background
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+
+    def test_switching_versions_updates_notes_dynamically(self):
+        """Verify selecting another version dynamically displays that version's actual notes under proper categories."""
+        dlg = ReleaseSummaryDialog(installed_version="1.1")
+        dlg.show()
+        try:
+            # Start at 1.1
+            self.assertIn("Native macOS & Windows", dlg.summary_text.toPlainText())
+
+            # Switch to 1.0
+            idx_10 = None
+            for i in range(dlg.version_combo.count()):
+                if dlg.version_combo.itemData(i).get("version") == "1.0":
+                    idx_10 = i
+                    break
+            self.assertIsNotNone(idx_10)
+            dlg.version_combo.setCurrentIndex(idx_10)
+            pt_10 = dlg.summary_text.toPlainText()
+            self.assertIn("Current application version unified to 1.0", pt_10)
+            self.assertNotIn("Native macOS & Windows production distribution", pt_10)
+
+            # Switch back to 1.1
+            dlg.version_combo.setCurrentIndex(0)
+            self.assertIn("Native macOS & Windows", dlg.summary_text.toPlainText())
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+
+    def test_structured_category_support(self):
+        """Verify pre-structured category dictionaries are rendered correctly without duplicate parsing."""
+        from ui.release_summary_dialog import render_categorized_summary_html
+        custom_cats = {
+            "NEW": ["Custom shiny feature"],
+            "IMPROVEMENT": ["Speed optimization 2x"],
+            "FIX": ["Crash on shutdown resolved"],
+        }
+        rendered = render_categorized_summary_html(custom_cats)
+        self.assertIn("Custom shiny feature", rendered)
+        self.assertIn("Speed optimization 2x", rendered)
+        self.assertIn("Crash on shutdown resolved", rendered)
+        self.assertIn("#15803d", rendered)
+        self.assertIn("#0f766e", rendered)
+        self.assertIn("#b91c1c", rendered)
+
+    def test_top_right_close_button_flags_and_close_event(self):
+        """Verify window flags include WindowCloseButtonHint and QCloseEvent closes only the dialog."""
+        parent = QWidget()
+        parent.show()
+        try:
+            dlg = ReleaseSummaryDialog(installed_version="1.1", parent=parent)
+            dlg.show()
+            # 1. WindowCloseButtonHint must be enabled
+            flags = dlg.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowCloseButtonHint), "WindowCloseButtonHint must be set")
+
+            # 2. ContextHelp button must be disabled
+            self.assertFalse(bool(flags & Qt.WindowContextHelpButtonHint), "WindowContextHelpButtonHint must NOT be set")
+
+            # 3. Dispatching QCloseEvent (equivalent to clicking top-right [X])
+            from PySide6.QtGui import QCloseEvent
+            ev = QCloseEvent()
+            _app.sendEvent(dlg, ev)
+
+            # Event is accepted, dialog is closed, parent remains open
+            self.assertTrue(ev.isAccepted())
+            self.assertFalse(dlg.isVisible(), "Dialog must be closed after closeEvent")
+            self.assertTrue(parent.isVisible(), "Parent window must remain open")
+        finally:
+            parent.close()
+            parent.deleteLater()
+
+    def test_bottom_close_button_and_reopen(self):
+        """Verify bottom Close button dismisses dialog, and dialog can be reopened normally."""
+        parent = QWidget()
+        parent.show()
+        try:
+            # 1. Open first instance and close via bottom close_btn
+            dlg1 = ReleaseSummaryDialog(installed_version="1.1", parent=parent)
+            dlg1.show()
+            self.assertTrue(dlg1.isVisible())
+            dlg1.close_btn.click()
+            self.assertFalse(dlg1.isVisible(), "Dialog must be closed after close_btn click")
+            self.assertTrue(parent.isVisible(), "Parent window must remain open")
+
+            # 2. Reopen second instance and close via closeEvent / [X]
+            dlg2 = ReleaseSummaryDialog(installed_version="1.1", parent=parent)
+            dlg2.show()
+            self.assertTrue(dlg2.isVisible())
+            dlg2.close()
+            self.assertFalse(dlg2.isVisible(), "Dialog must be closed after close()")
+            self.assertTrue(parent.isVisible(), "Parent window must remain open")
+        finally:
+            parent.close()
+            parent.deleteLater()

@@ -7,6 +7,7 @@ Uses existing version metadata and local changelog (version.log / RELEASE_NOTES.
 
 from __future__ import annotations
 
+import html
 import os
 import re
 import sys
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -197,6 +198,300 @@ def get_all_releases(
     return releases
 
 
+def classify_release_item(text: str, default_cat: Optional[str] = None) -> str:
+    """
+    Classify an individual release-note entry into NEW, IMPROVEMENT, FIX, or UNCATEGORIZED.
+    Uses semantic keyword matching while respecting section context.
+    """
+    t = text.lower().strip()
+    if not t:
+        return default_cat or "UNCATEGORIZED"
+
+    # 1. FIX signals (bugs, errors, crashes, fixes)
+    if re.match(r"^\s*(?:fixed|bug|fix|resolved|prevented|correct(?:ed|ion))\b", t):
+        return "FIX"
+    fix_signals = [
+        "issue fixed", "issue resolved", "resolved issue", "bug fix",
+        "error by aligning", "permission issue fixed", "startup issue resolved",
+        "prevent duplicate", "preventing loop", "stale device-id",
+        "stale locks"
+    ]
+    if any(s in t for s in fix_signals):
+        return "FIX"
+
+    # 2. NEW signals (new capabilities, added features, newly introduced functionality)
+    if re.match(r"^\s*(?:added|introduced|new)\b", t):
+        return "NEW"
+    new_signals = [
+        "new feature", "native macos", "multi-platform release", "production distribution",
+        "reachability monitor", "reachability detection", "uninstallation detection",
+        "support reporting", "two-step login", "company code verification",
+        "device enrollment", "system tray with", "appcontroller endpoint",
+        "version check api integration", "idle duration is now sent",
+        "auto-update verification", "auto-updates:", "integration for auto-updates"
+    ]
+    if any(s in t for s in new_signals):
+        return "NEW"
+    if re.search(r"\b(?:newly|added|introduced|introducing)\b", t):
+        return "NEW"
+
+    # 3. IMPROVEMENT signals (enhancements, UI/UX improvements, performance, optimizations)
+    imp_signals = [
+        "optimiz", "enhanc", "improv", "clean", "refin", "updat",
+        "resum", "persist", "normali", "zero-blocking", "recover",
+        "align", "unif", "redesign", "styl", "quota", "handl",
+        "deduplicat", "guard", "support", "fallback", "cleaned up",
+        "removed and permanently hidden", "removed redundant", "dynamic csv",
+        "semantic version comparison"
+    ]
+    if any(s in t for s in imp_signals):
+        return "IMPROVEMENT"
+
+    # Secondary check for word 'fix' if not caught earlier
+    if re.search(r"\b(?:fixes|fixed|bugs?)\b", t):
+        return "FIX"
+
+    if default_cat in ("NEW", "IMPROVEMENT", "FIX"):
+        return default_cat
+
+    return "UNCATEGORIZED"
+
+
+def categorize_release_summary(summary: str) -> Dict[str, List[str]]:
+    """
+    Categorizes release notes into:
+      'NEW', 'IMPROVEMENT', 'FIX', 'UNCATEGORIZED'.
+    Only categories with actual entries will be kept.
+    """
+    result: Dict[str, List[str]] = {
+        "NEW": [],
+        "IMPROVEMENT": [],
+        "FIX": [],
+        "UNCATEGORIZED": [],
+    }
+    if not summary or not summary.strip():
+        return result
+
+    lines = summary.splitlines()
+
+    sec_combined = re.compile(
+        r"^\s*(?:###?\s*)?(?:new\s+features?\s*(?:&|and)\s*improvements?|features?\s*(?:&|and)\s*improvements?)\s*:\s*$",
+        re.I,
+    )
+    sec_new = re.compile(
+        r"^\s*(?:###?\s*)?(?:new\s+features?|features?|what[\'’]s\s+new)\s*:\s*$",
+        re.I,
+    )
+    sec_imp = re.compile(
+        r"^\s*(?:###?\s*)?(?:improvements?|enhancements?|optimizations?|performance)\s*:\s*$",
+        re.I,
+    )
+    sec_fix = re.compile(
+        r"^\s*(?:###?\s*)?(?:bug\s*fixes?|fixes?|resolved\s+issues?|bugs?)\s*:\s*$",
+        re.I,
+    )
+
+    sections = []
+    current_type: Optional[str] = None
+    current_lines: List[str] = []
+
+    for line in lines:
+        if sec_combined.match(line):
+            if current_lines or current_type:
+                sections.append((current_type, current_lines))
+            current_type = "COMBINED"
+            current_lines = []
+        elif sec_new.match(line):
+            if current_lines or current_type:
+                sections.append((current_type, current_lines))
+            current_type = "NEW"
+            current_lines = []
+        elif sec_imp.match(line):
+            if current_lines or current_type:
+                sections.append((current_type, current_lines))
+            current_type = "IMPROVEMENT"
+            current_lines = []
+        elif sec_fix.match(line):
+            if current_lines or current_type:
+                sections.append((current_type, current_lines))
+            current_type = "FIX"
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_lines or current_type:
+        sections.append((current_type, current_lines))
+
+    for sec_type, s_lines in sections:
+        raw_lines = [l.rstrip() for l in s_lines if l.strip()]
+        i = 0
+        items = []
+        while i < len(raw_lines):
+            line = raw_lines[i]
+            bm = re.match(r"^(\s*)([-*•]|\d+\.)\s+(.*)", line)
+            if bm:
+                indent = len(bm.group(1))
+                text = bm.group(3).strip()
+                j = i + 1
+                while j < len(raw_lines):
+                    next_line = raw_lines[j]
+                    if re.match(r"^(\s*)([-*•]|\d+\.)\s+(.*)", next_line):
+                        break
+                    text += " " + next_line.strip()
+                    j += 1
+                i = j
+                items.append((indent, text))
+            else:
+                items.append((0, line.strip()))
+                i += 1
+
+        idx = 0
+        while idx < len(items):
+            indent, text = items[idx]
+            if text.endswith(":"):
+                parent_title = text.rstrip(":").strip()
+                if sec_type in ("NEW", "IMPROVEMENT", "FIX"):
+                    parent_cat = sec_type
+                else:
+                    parent_cat = classify_release_item(parent_title)
+
+                sub = []
+                k = idx + 1
+                while k < len(items) and items[k][0] > indent:
+                    sub.append(items[k][1])
+                    k += 1
+                if sub:
+                    for s in sub:
+                        if sec_type == "FIX":
+                            s_cat = "FIX"
+                        elif sec_type == "NEW":
+                            # Only override to FIX if explicitly starts with fixed/bug
+                            s_cat = "FIX" if re.match(r"^\s*(?:fixed|bug|fix|resolved|correct(?:ed|ion))\b", s, re.I) else "NEW"
+                        elif sec_type == "IMPROVEMENT":
+                            s_cat = "FIX" if re.match(r"^\s*(?:fixed|bug|fix|resolved|correct(?:ed|ion))\b", s, re.I) else "IMPROVEMENT"
+                        elif parent_cat in ("NEW", "IMPROVEMENT", "FIX"):
+                            s_cat = parent_cat
+                        else:
+                            s_cat = classify_release_item(s)
+                        result[s_cat].append(s)
+                    idx = k
+                    continue
+                else:
+                    cat = parent_cat if parent_cat in ("NEW", "IMPROVEMENT", "FIX") else classify_release_item(parent_title)
+                    result[cat].append(parent_title)
+            else:
+                if sec_type == "FIX":
+                    cat = "FIX"
+                elif sec_type == "NEW":
+                    cat = "FIX" if re.match(r"^\s*(?:fixed|bug|fix|resolved|correct(?:ed|ion))\b", text, re.I) else "NEW"
+                elif sec_type == "IMPROVEMENT":
+                    cat = "FIX" if re.match(r"^\s*(?:fixed|bug|fix|resolved|correct(?:ed|ion))\b", text, re.I) else "IMPROVEMENT"
+                else:
+                    cat = classify_release_item(text)
+                result[cat].append(text)
+            idx += 1
+
+    return result
+
+
+def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
+    """
+    Generate professional category-wise HTML for QTextBrowser.
+    Empty categories are omitted.
+    """
+    card_configs = {
+        "NEW": {
+            "title": "✦ NEW",
+            "bg_color": "#f0fdf4",
+            "border_color": "#bbf7d0",
+            "badge_bg": "#dcfce7",
+            "badge_border": "#86efac",
+            "badge_text": "#15803d",
+        },
+        "IMPROVEMENT": {
+            "title": "▲ IMPROVEMENT",
+            "bg_color": "#f0fdf9",
+            "border_color": "#99f6e4",
+            "badge_bg": "#ccfbf1",
+            "badge_border": "#5eead4",
+            "badge_text": "#0f766e",
+        },
+        "FIX": {
+            "title": "● FIX",
+            "bg_color": "#fff5f5",
+            "border_color": "#fecaca",
+            "badge_bg": "#fee2e2",
+            "badge_border": "#fca5a5",
+            "badge_text": "#b91c1c",
+        },
+        "UNCATEGORIZED": {
+            "title": "■ NOTE",
+            "bg_color": "#f8fafc",
+            "border_color": "#e2e8f0",
+            "badge_bg": "#f1f5f9",
+            "badge_border": "#cbd5e1",
+            "badge_text": "#475569",
+        },
+    }
+
+    blocks = []
+    for cat_key in ["NEW", "IMPROVEMENT", "FIX", "UNCATEGORIZED"]:
+        items = categories.get(cat_key, [])
+        if not items:
+            continue
+        cfg = card_configs[cat_key]
+
+        list_items = []
+        for it in items:
+            escaped = html.escape(it.strip())
+            list_items.append(
+                f'<li style="color: #0f172a; font-size: 12.5px; line-height: 1.5; margin-bottom: 5px;">{escaped}</li>'
+            )
+        items_html = "".join(list_items)
+
+        block = f"""
+        <table width="100%" cellpadding="10" cellspacing="0" style="background-color: {cfg['bg_color']}; border: 1px solid {cfg['border_color']}; border-radius: 8px; margin-bottom: 12px;">
+          <tr>
+            <td>
+              <table cellpadding="0" cellspacing="0" style="margin-bottom: 6px;">
+                <tr>
+                  <td style="background-color: {cfg['badge_bg']}; border: 1px solid {cfg['badge_border']}; border-radius: 4px; padding: 2px 8px;">
+                    <span style="color: {cfg['badge_text']}; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;">{cfg['title']}</span>
+                  </td>
+                </tr>
+              </table>
+              <ul style="margin-top: 4px; margin-bottom: 0px; padding-left: 18px;">
+                {items_html}
+              </ul>
+            </td>
+          </tr>
+        </table>
+        """
+        blocks.append(block)
+
+    if not blocks:
+        return ""
+
+    body_content = "".join(blocks)
+    return f"""
+    <html>
+    <head>
+      <style>
+        body {{
+          font-family: 'Segoe UI', -apple-system, sans-serif;
+          margin: 0;
+          padding: 2px;
+          background-color: #ffffff;
+        }}
+      </style>
+    </head>
+    <body>
+      {body_content}
+    </body>
+    </html>
+    """
+
+
 class ReleaseSummaryDialog(QDialog):
     """
     Clean, modern popup dialog displaying version history and release summaries.
@@ -229,7 +524,12 @@ class ReleaseSummaryDialog(QDialog):
         self.setWindowTitle(f"{APP_NAME} - Release Summary")
         self.resize(600, 520)
         self.setMinimumSize(520, 440)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
 
         self._setup_ui()
         self._select_default_version()
@@ -437,7 +737,7 @@ class ReleaseSummaryDialog(QDialog):
             }
             """
         )
-        self.close_btn.clicked.connect(self.accept)
+        self.close_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.close_btn)
 
         layout.addLayout(btn_row)
@@ -500,8 +800,27 @@ class ReleaseSummaryDialog(QDialog):
             self.detail_date_label.setVisible(False)
 
         # Summary / Changelog notes
+        structured_cats = rel.get("categories")
         summary_val = str(rel.get("summary") or "").strip()
-        if summary_val:
+
+        if isinstance(structured_cats, dict) and any(structured_cats.values()):
+            categories = {
+                "NEW": list(structured_cats.get("NEW") or structured_cats.get("new") or []),
+                "IMPROVEMENT": list(structured_cats.get("IMPROVEMENT") or structured_cats.get("improvement") or structured_cats.get("improvements") or []),
+                "FIX": list(structured_cats.get("FIX") or structured_cats.get("fix") or structured_cats.get("fixes") or []),
+                "UNCATEGORIZED": list(structured_cats.get("UNCATEGORIZED") or structured_cats.get("uncategorized") or []),
+            }
+        elif summary_val:
+            categories = categorize_release_summary(summary_val)
+        else:
+            categories = {}
+
+        if any(categories.values()):
+            html_content = render_categorized_summary_html(categories)
+            self.summary_text.setHtml(html_content)
+            self.summary_text.setVisible(True)
+            self.empty_notes_label.setVisible(False)
+        elif summary_val:
             self.summary_text.setPlainText(summary_val)
             self.summary_text.setVisible(True)
             self.empty_notes_label.setVisible(False)
@@ -516,3 +835,8 @@ class ReleaseSummaryDialog(QDialog):
         win = self.window()
         if hasattr(win, "_check_for_updates"):
             win._check_for_updates(manual=True)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Ensure clean close when top-right [X] is clicked or system close event is received."""
+        event.accept()
+        super().closeEvent(event)
