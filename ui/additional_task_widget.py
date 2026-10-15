@@ -371,25 +371,25 @@ class AdditionalTaskWidget(QWidget):
         self.status_msg_label.setVisible(False)
         actions_layout.addWidget(self.status_msg_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        btn_container = QWidget(self)
-        btn_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        btn_layout = CenteredFlowLayout(btn_container, margin=0, h_spacing=16, v_spacing=8)
+        self.btn_container = QWidget(self)
+        self.btn_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        btn_layout = CenteredFlowLayout(self.btn_container, margin=0, h_spacing=16, v_spacing=8)
 
-        self.save_draft_btn = QPushButton("Save As Draft", btn_container)
+        self.save_draft_btn = QPushButton("Save As Draft", self.btn_container)
         self.save_draft_btn.setObjectName("AddlSaveDraftButton")
         self.save_draft_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
         self.save_draft_btn.clicked.connect(lambda: self.save_task(is_draft=True))
         btn_layout.addWidget(self.save_draft_btn)
 
-        self.submit_btn = QPushButton("Submit Task", btn_container)
+        self.submit_btn = QPushButton("Submit Task", self.btn_container)
         self.submit_btn.setObjectName("AddlSubmitButton")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.submit_btn.setStyleSheet(self._submit_btn_style_default())
         self.submit_btn.clicked.connect(lambda: self.save_task(is_draft=False))
         btn_layout.addWidget(self.submit_btn)
 
-        actions_layout.addWidget(btn_container)
+        actions_layout.addWidget(self.btn_container)
         layout.addLayout(actions_layout)
 
     @property
@@ -403,14 +403,31 @@ class AdditionalTaskWidget(QWidget):
         if self._is_submitted:
             self.save_draft_btn.hide()
             self.submit_btn.hide()
+            if hasattr(self, "btn_container"):
+                self.btn_container.hide()
+            self.submit_btn.setText("Submit Task")
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.save_draft_btn.setText("Save As Draft")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
             self.text_edit.setReadOnly(True)
+            self.text_edit.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
             self.text_edit.setStyleSheet(self.text_edit._readonly_stylesheet())
         else:
+            if hasattr(self, "btn_container"):
+                self.btn_container.show()
             self.save_draft_btn.show()
             self.submit_btn.show()
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
+            if not self._is_submitting:
+                if not self.submit_btn.text().startswith("Retry"):
+                    self.submit_btn.setText("Submit Task")
+                    self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+                if not self.save_draft_btn.text().startswith("Draft Saved") and not self.save_draft_btn.text().startswith("Retry"):
+                    self.save_draft_btn.setText("Save As Draft")
+                    self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
             self.text_edit.setReadOnly(False)
+            self.text_edit.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
             self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
 
     def set_date(self, date_str: Optional[str]) -> None:
@@ -419,7 +436,12 @@ class AdditionalTaskWidget(QWidget):
             new_date = str(date_str).strip()
             if new_date != self._date:
                 self._date = new_date
-                self.set_submitted(False)
+                try:
+                    from services.task_service import TaskService
+                    is_sub = TaskService().is_additional_task_submitted(new_date)
+                except Exception:
+                    is_sub = False
+                self.set_submitted(is_sub)
         else:
             self._date = datetime.now().strftime("%Y-%m-%d")
 
@@ -431,12 +453,21 @@ class AdditionalTaskWidget(QWidget):
         """Set task text content programmatically and update submission status if provided."""
         curr = self.text_edit.toPlainText().strip()
         new_val = (text or "").strip()
-        if new_val != curr:
+        if new_val:
+            if new_val != curr:
+                self.text_edit.setPlainText(new_val)
+        elif not curr and new_val != curr:
             self.text_edit.setPlainText(new_val)
+
         if is_submitted is not None:
             self.set_submitted(is_submitted)
         else:
-            self.set_submitted(self._is_submitted)
+            try:
+                from services.task_service import TaskService
+                is_sub = self._is_submitted or TaskService().is_additional_task_submitted(self._date)
+            except Exception:
+                is_sub = self._is_submitted
+            self.set_submitted(is_sub)
 
     def task_content(self) -> str:
         """Get the current additional task text content."""
@@ -447,10 +478,21 @@ class AdditionalTaskWidget(QWidget):
         self.text_edit.clear()
 
     def _on_text_changed(self) -> None:
-        """Clear error border styling when user starts typing."""
-        if not self._is_submitted and "border: 1.5px solid #ef4444" in self.text_edit.styleSheet():
-            self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
-            self.text_edit.setToolTip("")
+        """Clear error border styling and reset retry labels when user starts typing."""
+        if not self._is_submitted:
+            if "border: 1.5px solid #ef4444" in self.text_edit.styleSheet():
+                self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
+                self.text_edit.setToolTip("")
+            if hasattr(self, "status_msg_label") and self.status_msg_label.isVisible():
+                if "color: #dc2626" in self.status_msg_label.styleSheet() or "error" in self.status_msg_label.text().lower():
+                    self.status_msg_label.hide()
+            if not self._is_submitting:
+                if self.submit_btn.text().startswith("Retry"):
+                    self.submit_btn.setText("Submit Task")
+                    self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+                if self.save_draft_btn.text().startswith("Retry"):
+                    self.save_draft_btn.setText("Save As Draft")
+                    self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
 
     def save_task(self, is_draft: bool = False) -> None:
         """
@@ -507,14 +549,72 @@ class AdditionalTaskWidget(QWidget):
                     date=target_date,
                     status=status_val,
                 )
-                if ok:
+                if not ok:
+                    self._signals.save_error.emit(is_draft, msg or "Failed to save additional task.")
+                    return
+
+                res_dict = res if isinstance(res, dict) else {}
+                is_already_sub = (
+                    res_dict.get("is_already_submitted", False)
+                    or str(res_dict.get("status")) == "2"
+                    or "already submitted" in str(msg).lower()
+                )
+
+                if is_already_sub:
+                    # Retrieve existing saved task data through application's supported data flow
+                    try:
+                        tasks = svc.fetch_assigned_tasks(date=target_date, force=True)
+                        add_task = next((t for t in tasks if t.get("is_additional")), None)
+                    except Exception as fetch_err:
+                        logger.warning("AdditionalTaskWidget: error fetching existing tasks: %s", fetch_err)
+                        add_task = None
+
+                    if add_task:
+                        confirmed_text = str(add_task.get("description") or add_task.get("remark") or "").strip()
+                        add_sub_status = str(add_task.get("submit_status") or "").strip()
+                        add_task_status = str(add_task.get("additional_task_status") or "").strip()
+                        raw_dict = add_task.get("raw") if isinstance(add_task.get("raw"), dict) else {}
+                        raw_status = str(raw_dict.get("status") or "").strip()
+                        raw_msg = str(raw_dict.get("message") or raw_dict.get("response") or "").lower()
+                        is_confirmed = (
+                            add_sub_status in ("1", "2", "true", "True")
+                            or add_task_status in ("1", "2", "true", "True")
+                            or str(add_task.get("status") or "").strip().lower() in ("completed", "submitted")
+                            or raw_status in ("2",)
+                            or "already submitted" in raw_msg
+                            or bool(raw_dict.get("is_already_submitted"))
+                        )
+                        if is_confirmed:
+                            svc.mark_additional_task_submitted(target_date)
+                            self._signals.save_success.emit(
+                                is_draft,
+                                msg or "Task already submitted",
+                                {
+                                    **res_dict,
+                                    "is_already_submitted": True,
+                                    "is_confirmed": True,
+                                    "confirmed_text": confirmed_text or task_text,
+                                },
+                            )
+                            return
+
+                    # If the existing API cannot confirm the saved content or submitted state,
+                    # show a clear message and do not fabricate success.
+                    self._signals.save_error.emit(
+                        is_draft,
+                        "Task already submitted on server, but existing content could not be confirmed.",
+                    )
+                else:
                     self._signals.save_success.emit(
                         is_draft,
                         msg or ("Draft saved successfully." if is_draft else "Task submitted successfully."),
-                        res or {},
+                        {
+                            **res_dict,
+                            "is_newly_saved": True,
+                            "is_already_submitted": False,
+                            "is_confirmed": True,
+                        },
                     )
-                else:
-                    self._signals.save_error.emit(is_draft, msg or "Failed to save additional task.")
             except Exception as e:
                 logger.exception("AdditionalTaskWidget worker error: %s", e)
                 self._signals.save_error.emit(is_draft, str(e))
@@ -526,8 +626,14 @@ class AdditionalTaskWidget(QWidget):
         logger.info("AdditionalTaskWidget: save success is_draft=%s: %s", is_draft, msg)
         self._is_submitting = False
 
+        is_already_sub = data.get("is_already_submitted", False)
+        is_confirmed = data.get("is_confirmed", False)
+        confirmed_text = data.get("confirmed_text")
+
         if is_draft:
             self.set_submitted(False)
+            if hasattr(self, "btn_container"):
+                self.btn_container.show()
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
             self.save_draft_btn.show()
@@ -536,8 +642,31 @@ class AdditionalTaskWidget(QWidget):
             self.save_draft_btn.setStyleSheet(self._btn_style_success())
             self._show_status("Draft saved successfully.", is_error=False)
             QTimer.singleShot(3500, self._reset_action_buttons)
+        elif is_already_sub and is_confirmed:
+            # Confirmed already-submitted response:
+            # Hide BOTH buttons, keep task text visible & read-only with selection and copying enabled
+            if confirmed_text:
+                curr = self.text_edit.toPlainText().strip()
+                if confirmed_text != curr:
+                    self.text_edit.setPlainText(confirmed_text)
+            try:
+                from services.task_service import TaskService
+                TaskService().mark_additional_task_submitted(self._date)
+            except Exception:
+                pass
+            self.set_submitted(True)
+            self._show_status("Task already submitted.", is_error=False)
         else:
             # Successfully submitted: make read-only and hide BOTH Save As Draft and Submit Task buttons
+            self.submit_btn.setText("Submit Task")
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.save_draft_btn.setText("Save As Draft")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
+            try:
+                from services.task_service import TaskService
+                TaskService().mark_additional_task_submitted(self._date)
+            except Exception:
+                pass
             self.set_submitted(True)
             self._show_status("Additional task submitted successfully.", is_error=False)
 
@@ -553,6 +682,8 @@ class AdditionalTaskWidget(QWidget):
         logger.warning("AdditionalTaskWidget: save error is_draft=%s: %s", is_draft, err_msg)
         self._is_submitting = False
         self.set_submitted(False)
+        if hasattr(self, "btn_container"):
+            self.btn_container.show()
         self.save_draft_btn.setEnabled(True)
         self.submit_btn.setEnabled(True)
         self.save_draft_btn.show()
@@ -582,9 +713,14 @@ class AdditionalTaskWidget(QWidget):
         if self._is_submitted:
             self.save_draft_btn.hide()
             self.submit_btn.hide()
+            if hasattr(self, "btn_container"):
+                self.btn_container.hide()
             self.text_edit.setReadOnly(True)
+            self.text_edit.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
             self.text_edit.setStyleSheet(self.text_edit._readonly_stylesheet())
         else:
+            if hasattr(self, "btn_container"):
+                self.btn_container.show()
             self.save_draft_btn.setEnabled(True)
             self.submit_btn.setEnabled(True)
             self.save_draft_btn.setText("Save As Draft")
@@ -594,6 +730,7 @@ class AdditionalTaskWidget(QWidget):
             self.save_draft_btn.show()
             self.submit_btn.show()
             self.text_edit.setReadOnly(False)
+            self.text_edit.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
             self.text_edit.setStyleSheet(self.text_edit._default_stylesheet())
 
     @staticmethod

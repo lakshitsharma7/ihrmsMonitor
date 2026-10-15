@@ -36,6 +36,8 @@ class TaskService:
         self._state_lock = threading.Lock()
         self._last_fetch_ts: Dict[str, float] = {}
         self._cached_tasks: Dict[str, List[Dict[str, Any]]] = {}
+        self._submitted_dates: set[str] = set()
+        self._submitted_additional_dates: set[str] = set()
         self._last_error: Optional[str] = None
 
     @property
@@ -49,7 +51,47 @@ class TaskService:
         with self._state_lock:
             self._cached_tasks.clear()
             self._last_fetch_ts.clear()
+            self._submitted_dates.clear()
+            self._submitted_additional_dates.clear()
             self._last_error = None
+
+    def mark_timesheet_submitted(self, date: Optional[str]) -> None:
+        """Record that a timesheet for date has been confirmed submitted."""
+        if date and str(date).strip():
+            with self._state_lock:
+                self._submitted_dates.add(str(date).strip())
+
+    def unmark_timesheet_submitted(self, date: Optional[str]) -> None:
+        """Remove submitted timesheet status for date (e.g. after draft save)."""
+        if date and str(date).strip():
+            with self._state_lock:
+                self._submitted_dates.discard(str(date).strip())
+
+    def is_timesheet_submitted(self, date: Optional[str]) -> bool:
+        """Return True if timesheet for date was confirmed submitted."""
+        if not date or not str(date).strip():
+            return False
+        with self._state_lock:
+            return str(date).strip() in self._submitted_dates
+
+    def mark_additional_task_submitted(self, date: Optional[str]) -> None:
+        """Record that an additional task for date has been confirmed submitted."""
+        if date and str(date).strip():
+            with self._state_lock:
+                self._submitted_additional_dates.add(str(date).strip())
+
+    def unmark_additional_task_submitted(self, date: Optional[str]) -> None:
+        """Remove submitted additional task status for date (e.g. after draft save)."""
+        if date and str(date).strip():
+            with self._state_lock:
+                self._submitted_additional_dates.discard(str(date).strip())
+
+    def is_additional_task_submitted(self, date: Optional[str]) -> bool:
+        """Return True if additional task for date was confirmed submitted."""
+        if not date or not str(date).strip():
+            return False
+        with self._state_lock:
+            return str(date).strip() in self._submitted_additional_dates
 
     def _resolve_auth_credentials(
         self,
@@ -171,10 +213,31 @@ class TaskService:
             or ""
         ).strip()
 
+        submit_status = str(
+            item.get("submit_status")
+            or item.get("submitStatus")
+            or item.get("is_submitted")
+            or item.get("isSubmitted")
+            or item.get("timesheet_status")
+            or item.get("time_sheet_status")
+            or ""
+        ).strip()
+
         # Resolve task completion numeric value and status
         raw_completed = item.get("task_completed")
         if raw_completed is not None and str(raw_completed).strip() not in ("None", "null", ""):
             task_completed_str = str(raw_completed).strip()
+        elif (submit_status in ("1", "2", "true", "True") or str(item.get("status")).strip().lower() in ("completed", "submitted")) and item.get("task_done"):
+            # When get_kra returns a submitted timesheet, the progress recorded for the timesheet is returned in task_done
+            raw_d = str(item.get("task_done")).strip()
+            if raw_d and raw_d != "-":
+                try:
+                    f_d = float(raw_d)
+                    task_completed_str = f"{int(f_d)}" if f_d.is_integer() else f"{f_d:g}"
+                except ValueError:
+                    task_completed_str = raw_d
+            else:
+                task_completed_str = ""
         else:
             task_completed_str = ""
 
@@ -185,8 +248,13 @@ class TaskService:
             or item.get("kra_status")
             or item.get("state")
         )
-        if raw_status:
-            status = str(raw_status).strip()
+        raw_status_str = str(raw_status or "").strip()
+
+        if submit_status in ("1", "2", "true", "True") or raw_status_str.lower() in ("completed", "submitted"):
+            submit_status = "1"
+            status = "Completed"
+        elif raw_status_str:
+            status = raw_status_str
         elif task_completed_str in ("100", "1", "Completed") or str(raw_completed).strip().lower() in ("completed", "done"):
             status = "Completed"
         elif item.get("target") and str(item.get("target")).strip().lower() in (
@@ -449,12 +517,26 @@ class TaskService:
         default_task_date = str(date).strip() if date else root_date
 
         root_submit_status = ""
+        data_dict = res_json.get("data") if isinstance(res_json.get("data"), dict) else {}
+        is_server_submitted = False
         if isinstance(res_json, dict):
-            for sf in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
-                v = res_json.get(sf)
+            for sf in ("submit_status", "submitStatus", "is_submitted", "isSubmitted", "timesheet_status", "time_sheet_status", "timesheet_submit_status"):
+                v = res_json.get(sf) if res_json.get(sf) is not None else data_dict.get(sf)
                 if v is not None and str(v).strip() not in ("None", "null", ""):
                     root_submit_status = str(v).strip()
                     break
+
+            resp_st = str(res_json.get("status") or "").strip()
+            resp_msg = str(res_json.get("message") or res_json.get("response") or "").lower()
+            if resp_st == "2" or "already submitted" in resp_msg or bool(res_json.get("is_already_submitted")):
+                root_submit_status = "1"
+                is_server_submitted = True
+
+        if date_key in self._submitted_dates:
+            root_submit_status = "1"
+            is_server_submitted = True
+        elif root_submit_status in ("1", "2", "true", "True") or is_server_submitted:
+            self._submitted_dates.add(date_key)
 
         normalized: List[Dict[str, Any]] = []
         for raw in raw_items:
@@ -464,9 +546,15 @@ class TaskService:
                     norm["employee_name"] = root_emp_name
                 if not norm.get("indo_code") and root_emp_code:
                     norm["indo_code"] = root_emp_code
-                if not norm.get("submit_status") and root_submit_status:
+                if root_submit_status in ("1", "2", "true", "True") or is_server_submitted:
+                    norm["submit_status"] = "1"
+                    norm["status"] = "Completed"
+                elif not norm.get("submit_status") and root_submit_status:
                     norm["submit_status"] = root_submit_status
                 normalized.append(norm)
+
+        if any(t.get("submit_status") in ("1", "2", "true", "True") or str(t.get("status")).lower() in ("completed", "submitted") for t in normalized if not t.get("is_additional")):
+            self._submitted_dates.add(date_key)
 
         logger.info(
             "Task API parse: raw_items=%d  normalized=%d  date=%s  response_status=%s",
@@ -478,10 +566,35 @@ class TaskService:
 
         # Also check additional_task if provided
         if isinstance(res_json, dict):
-            add_task = res_json.get("additional_task")
+            add_task = (
+                res_json.get("additional_task")
+                or data_dict.get("additional_task")
+                or res_json.get("additionalTask")
+                or data_dict.get("additionalTask")
+                or res_json.get("daily_task")
+                or data_dict.get("daily_task")
+                or res_json.get("daily_activity")
+                or data_dict.get("daily_activity")
+            )
             if add_task and str(add_task).strip() and str(add_task).strip().lower() not in ("none", "null"):
-                add_status_val = str(res_json.get("additional_task_status") or "").strip()
-                add_status = "Completed" if add_status_val in ("1", "true", "True") else "In Progress"
+                add_status_val = str(
+                    res_json.get("additional_task_status")
+                    or data_dict.get("additional_task_status")
+                    or res_json.get("additionalTaskStatus")
+                    or data_dict.get("additionalTaskStatus")
+                    or res_json.get("submit_status")
+                    or data_dict.get("submit_status")
+                    or ""
+                ).strip()
+                is_add_sub = (
+                    add_status_val in ("1", "2", "true", "True")
+                    or str(add_status_val).lower() in ("completed", "submitted")
+                    or date_key in self._submitted_additional_dates
+                    or is_server_submitted
+                )
+                if is_add_sub:
+                    self._submitted_additional_dates.add(date_key)
+                add_status = "Completed" if is_add_sub else "In Progress"
                 normalized.append({
                     "id": "add_task_1",
                     "kra_id": "",
@@ -489,10 +602,10 @@ class TaskService:
                     "title": "Daily Activity / Additional Task",
                     "description": str(add_task).strip(),
                     "remark": str(add_task).strip(),
-                    "task_completed": "1" if add_status_val in ("1", "true", "True") else "0",
+                    "task_completed": "1" if is_add_sub else "0",
                     "status": add_status,
-                    "submit_status": add_status_val if add_status_val in ("0", "1") else (root_submit_status or "0"),
-                    "additional_task_status": add_status_val,
+                    "submit_status": "1" if is_add_sub else "0",
+                    "additional_task_status": "1" if is_add_sub else add_status_val,
                     "date": date_key,
                     "weightage": "-",
                     "is_additional": True,
@@ -680,12 +793,30 @@ class TaskService:
         if isinstance(res_json, dict):
             resp_status = res_json.get("status")
             resp_msg = res_json.get("message") or res_json.get("response") or msg
+            is_already_sub = (
+                str(resp_status) == "2"
+                or "already submitted" in str(resp_msg).lower()
+                or bool(res_json.get("is_already_submitted"))
+            )
+            if is_already_sub:
+                res_json["is_already_submitted"] = True
+                return False, str(resp_msg or "Timesheet already submitted"), res_json
+
             if str(resp_status) in ("1", "200", "True", "true") or str(res_json.get("response")).lower() in ("success", "200"):
+                if str(submit_status) == "1":
+                    self.mark_timesheet_submitted(date_val)
+                elif str(submit_status) == "0":
+                    self.unmark_timesheet_submitted(date_val)
                 return True, str(resp_msg), res_json
             elif resp_status is not None and str(resp_status) not in ("1", "200"):
                 return False, str(resp_msg or f"Server returned status {resp_status}"), res_json
+
+            if str(submit_status) == "1":
+                self.mark_timesheet_submitted(date_val)
             return True, str(resp_msg), res_json
 
+        if str(submit_status) == "1":
+            self.mark_timesheet_submitted(date_val)
         return True, msg, res_json if isinstance(res_json, dict) else {}
 
     def save_additional_task(
@@ -734,24 +865,24 @@ class TaskService:
         if not save_url:
             return False, "Save additional task API endpoint not configured.", None
 
-        req_data = {
-            "key": str(resolved_key),
-            "indo_code": str(resolved_indo),
-            "date": str(date_val),
-            "status": str(status),
-            "task": str(task).strip(),
+        multipart_data = {
+            "key": (None, str(resolved_key)),
+            "indo_code": (None, str(resolved_indo)),
+            "date": (None, str(date_val)),
+            "status": (None, str(status)),
+            "task": (None, str(task).strip()),
         }
 
         logger.info(
-            "Calling Save Additional Task API: url=%s data=%s",
+            "Calling Save Additional Task API: url=%s fields=%s",
             save_url,
-            {**req_data, "key": "***"},
+            {k: ("***" if k == "key" else v[1]) for k, v in multipart_data.items()},
         )
 
         try:
             resp = requests.post(
                 save_url,
-                data=req_data,
+                files=multipart_data,
                 timeout=15,
             )
             logger.info(
@@ -759,7 +890,18 @@ class TaskService:
                 resp.status_code,
                 resp.text[:500],
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                err_detail = f"HTTP {resp.status_code}"
+                try:
+                    err_json = resp.json()
+                    if isinstance(err_json, dict):
+                        m = err_json.get("message") or err_json.get("title")
+                        if m:
+                            err_detail += f": {m}"
+                except Exception:
+                    pass
+                return False, f"Server error ({err_detail})", None
+
             res_json = resp.json()
         except Exception as api_err:
             logger.warning("Save Additional Task API call failed: %s", api_err)
@@ -772,14 +914,44 @@ class TaskService:
 
         msg = "Additional task saved successfully."
         if isinstance(res_json, dict):
-            resp_status = res_json.get("status")
-            resp_msg = res_json.get("message") or res_json.get("response") or msg
-            if str(resp_status) in ("1", "200", "True", "true") or str(res_json.get("response")).lower() in ("success", "200"):
-                return True, str(resp_msg), res_json
-            elif resp_status is not None and str(resp_status) not in ("1", "200"):
-                return False, str(resp_msg or f"Server returned status {resp_status}"), res_json
-            return True, str(resp_msg), res_json
+            resp_status = str(res_json.get("status") or "").strip()
+            resp_msg = str(res_json.get("message") or res_json.get("response") or msg).strip()
+            resp_code = str(res_json.get("response") or "").strip()
 
+            is_already_sub = (
+                resp_status == "2"
+                or "already submitted" in resp_msg.lower()
+            )
+            is_new_saved = (
+                resp_status == "1"
+                or "successfully saved" in resp_msg.lower()
+                or (resp_code in ("200", "success") and not is_already_sub)
+            )
+
+            result_data = {
+                **res_json,
+                "is_newly_saved": is_new_saved and not is_already_sub,
+                "is_already_submitted": is_already_sub,
+            }
+
+            if is_already_sub:
+                self.mark_additional_task_submitted(date_val)
+                return True, resp_msg or "Task already submitted", result_data
+            elif is_new_saved:
+                if str(status) in ("1", 1):
+                    self.mark_additional_task_submitted(date_val)
+                elif str(status) in ("0", 0):
+                    self.unmark_additional_task_submitted(date_val)
+                return True, resp_msg or "Task successfully saved", result_data
+            elif resp_status and resp_status not in ("1", "2", "200"):
+                return False, resp_msg or f"Server returned status {resp_status}", result_data
+
+            if str(status) in ("1", 1):
+                self.mark_additional_task_submitted(date_val)
+            return True, resp_msg, result_data
+
+        if str(status) in ("1", 1):
+            self.mark_additional_task_submitted(date_val)
         return True, msg, res_json if isinstance(res_json, dict) else {}
 
     # ------------------------------------------------------------------

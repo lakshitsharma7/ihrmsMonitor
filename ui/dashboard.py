@@ -935,18 +935,30 @@ class DashboardPage(QWidget):
                     self.additional_task_widget.set_date(today_str)
                     found_add = False
                     for t in (tasks or []):
-                        if t.get("is_additional") and t.get("description"):
+                        if t.get("is_additional"):
                             found_add = True
+                            raw_dict = t.get("raw") if isinstance(t.get("raw"), dict) else {}
                             is_sub = (
-                                str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                                str(t.get("submit_status") or "").strip() in ("1", "2", "true", "True")
                                 or str(t.get("task_completed") or "").strip() in ("1", "100")
                                 or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
-                                or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                                or str(raw_dict.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(t.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(raw_dict.get("submit_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(raw_dict.get("status") or "").strip() in ("2",)
+                                or "already submitted" in str(raw_dict.get("message") or "").lower()
+                                or bool(raw_dict.get("is_already_submitted"))
                             )
-                            self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
+                            desc = str(t.get("description") or t.get("remark") or t.get("task") or "").strip()
+                            self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
                             break
                     if not found_add:
-                        self.additional_task_widget.set_submitted(False)
+                        try:
+                            from services.task_service import TaskService
+                            if TaskService().is_additional_task_submitted(today_str):
+                                self.additional_task_widget.set_submitted(True)
+                        except Exception:
+                            pass
             except Exception as err:
                 logger.debug("Sync refresh tasks error: %s", err)
 
@@ -1081,18 +1093,30 @@ class DashboardPage(QWidget):
                 found_add = False
                 if tasks:
                     for t in tasks:
-                        if t.get("is_additional") and t.get("description"):
+                        if t.get("is_additional"):
                             found_add = True
+                            raw_dict = t.get("raw") if isinstance(t.get("raw"), dict) else {}
                             is_sub = (
-                                str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                                str(t.get("submit_status") or "").strip() in ("1", "2", "true", "True")
                                 or str(t.get("task_completed") or "").strip() in ("1", "100")
                                 or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
-                                or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                                or str(raw_dict.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(t.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(raw_dict.get("submit_status") or "").strip() in ("1", "2", "true", "True")
+                                or str(raw_dict.get("status") or "").strip() in ("2",)
+                                or "already submitted" in str(raw_dict.get("message") or "").lower()
+                                or bool(raw_dict.get("is_already_submitted"))
                             )
-                            self.additional_task_widget.set_task_content(t.get("description"), is_submitted=is_sub)
+                            desc = str(t.get("description") or t.get("remark") or t.get("task") or "").strip()
+                            self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
                             break
-                if not found_add:
-                    self.additional_task_widget.set_submitted(False)
+                if not found_add and task_date:
+                    try:
+                        from services.task_service import TaskService
+                        if TaskService().is_additional_task_submitted(task_date):
+                            self.additional_task_widget.set_submitted(True)
+                    except Exception:
+                        pass
 
             attendance = data.get("attendance")
             if attendance:

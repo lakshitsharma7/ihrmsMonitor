@@ -380,13 +380,13 @@ class TestTaskServiceAndUI(unittest.TestCase):
                 called_args[0], "https://hrms.example.com/ci4/api/TaskPMS/save_additional_task"
             )
             self.assertEqual(
-                called_kwargs["data"],
+                called_kwargs["files"],
                 {
-                    "key": "testapikey111",
-                    "indo_code": "EC-098",
-                    "date": "2026-09-11",
-                    "status": "1",
-                    "task": "today i did this",
+                    "key": (None, "testapikey111"),
+                    "indo_code": (None, "EC-098"),
+                    "date": (None, "2026-09-11"),
+                    "status": (None, "1"),
+                    "task": (None, "today i did this"),
                 },
             )
 
@@ -2199,7 +2199,1133 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertTrue(addl_widget.save_draft_btn.isHidden())
         self.assertTrue(addl_widget.submit_btn.isHidden())
 
+    def test_task_completed_synchronizes_task_done_till_now_immediately(self):
+        """Verify changing Task Completed immediately updates Task Done Till Now without server overwrite."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_801",
+                "kra_id": "801",
+                "timesheet_id": "ts_801",
+                "name": "Feature Implementation",
+                "task_done": "5",
+                "task_completed": "0",
+                "submit_status": "0",
+                "is_additional": False,
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # Initial baseline: Done Till Now is 5
+        self.assertEqual(table.item(0, 7).text(), "5")
+
+        comp_edit = table._get_line_edit(0, 8)
+        self.assertIsNotNone(comp_edit)
+
+        # Type '3' -> 5 + (3 - 0) = 8
+        comp_edit.setText("3")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "8")
+        self.assertEqual(table._get_task_done_till_now(0), "8")
+
+        # Type '1' -> 5 + (1 - 0) = 6
+        comp_edit.setText("1")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "6")
+
+        # Clear text -> returns to baseline 5
+        comp_edit.setText("")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "5")
+
+    def test_task_completed_synchronizes_percentage_decimals_and_dashes(self):
+        """Verify sync handles percentages, decimals, dashes, and invalid inputs gracefully."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_pct",
+                "name": "Percentage Task",
+                "task_done": "10%",
+                "task_completed": "0",
+                "submit_status": "0",
+            },
+            {
+                "id": "kra_dec",
+                "name": "Decimal Task",
+                "task_done": "2.50",
+                "task_completed": "0.50",
+                "submit_status": "0",
+            },
+            {
+                "id": "kra_dash",
+                "name": "Dash Task",
+                "task_done": "-",
+                "task_completed": "",
+                "submit_status": "0",
+            },
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        # Row 0: Percentage
+        self.assertEqual(table.item(0, 7).text(), "10%")
+        comp0 = table._get_line_edit(0, 8)
+        comp0.setText("15")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "25%")
+
+        comp0.setText("")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "10%")
+
+        # Row 1: Decimal (2.50 with initial completed 0.50)
+        self.assertEqual(table.item(1, 7).text(), "2.50")
+        comp1 = table._get_line_edit(1, 8)
+        # Type '1.50' -> delta = 1.50 - 0.50 = +1.00 -> 3.50
+        comp1.setText("1.50")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(1, 7).text(), "3.50")
+
+        # Row 2: Dash
+        self.assertEqual(table.item(2, 7).text(), "-")
+        comp2 = table._get_line_edit(2, 8)
+        comp2.setText("4")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(2, 7).text(), "4")
+
+        comp2.setText("")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(2, 7).text(), "-")
+
+    def test_date_switching_isolates_drafts_and_restores_correctly(self):
+        """Verify drafts entered on one date do not leak to another date and are restored when switching back."""
+        table = AssignedTasksTable()
+        tasks_day1 = [
+            {
+                "id": "kra_901",
+                "kra_id": "901",
+                "name": "Day 1 Task",
+                "task_done": "2",
+                "task_completed": "0",
+                "comment": "",
+                "submit_status": "0",
+            }
+        ]
+        tasks_day2 = [
+            {
+                "id": "kra_901",
+                "kra_id": "901",
+                "name": "Day 1 Task",
+                "task_done": "2",
+                "task_completed": "0",
+                "comment": "",
+                "submit_status": "0",
+            }
+        ]
+
+        # 1. Load Day 1 and enter values
+        table.set_tasks(tasks_day1, date="2026-10-14")
+        QCoreApplication.processEvents()
+        table._get_line_edit(0, 8).setText("4")
+        table._get_line_edit(0, 9).setText("Oct 14 draft notes")
+        QCoreApplication.processEvents()
+
+        self.assertEqual(table.item(0, 7).text(), "6")
+        self.assertEqual(table._get_comment(0), "Oct 14 draft notes")
+
+        # 2. Switch to Day 2
+        table.set_tasks(tasks_day2, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        # Day 2 must NOT inherit Day 1's draft
+        self.assertEqual(table._get_task_completed(0), "0")
+        self.assertEqual(table._get_comment(0), "")
+        self.assertEqual(table.item(0, 7).text(), "2")
+
+        # Enter draft on Day 2
+        table._get_line_edit(0, 8).setText("7")
+        table._get_line_edit(0, 9).setText("Oct 15 draft notes")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "9")
+
+        # 3. Switch back to Day 1: Day 1 draft is preserved and restored
+        table.set_tasks(tasks_day1, date="2026-10-14")
+        QCoreApplication.processEvents()
+        self.assertEqual(table._get_task_completed(0), "4")
+        self.assertEqual(table._get_comment(0), "Oct 14 draft notes")
+        self.assertEqual(table.item(0, 7).text(), "6")
+
+        # 4. Switch back to Day 2: Day 2 draft is preserved and restored
+        table.set_tasks(tasks_day2, date="2026-10-15")
+        QCoreApplication.processEvents()
+        self.assertEqual(table._get_task_completed(0), "7")
+        self.assertEqual(table._get_comment(0), "Oct 15 draft notes")
+        self.assertEqual(table.item(0, 7).text(), "9")
+
+    def test_failed_submission_retry_button_resets_when_user_edits(self):
+        """Verify Retry button styling/text resets back to Submit when user edits inputs after failure."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "id": "kra_retry",
+                "name": "Retry Test Task",
+                "comment": "Initial remark",
+                "task_completed": "1",
+                "submit_status": "0",
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-14")
+        QCoreApplication.processEvents()
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(False, "Server unavailable", {})):
+            table.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertEqual(table.submit_btn.text(), "Retry Submit ⚠️")
+            self.assertTrue(table.submit_btn.isEnabled())
+
+            # User edits task completed -> button resets to "Submit"
+            table._get_line_edit(0, 8).setText("2")
+            QCoreApplication.processEvents()
+            self.assertEqual(table.submit_btn.text(), "Submit")
+
+    def test_fetch_assigned_tasks_adopts_root_submit_status(self):
+        """Verify fetch_assigned_tasks propagates root submit_status = '1' to all task items."""
+        svc = TaskService()
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="testuser",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+        )
+
+        mock_payload = {
+            "status": 1,
+            "submit_status": "1",
+            "date": "2026-10-14",
+            "data": [
+                {
+                    "id": "1001",
+                    "kra_id": "1001",
+                    "kra_name": "Task 1",
+                    "submit_status": "0",
+                },
+                {
+                    "id": "1002",
+                    "kra_id": "1002",
+                    "kra_name": "Task 2",
+                    "submit_status": "",
+                },
+            ],
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_payload
+        mock_resp.text = '{"status": 1}'
+
+        with patch("services.task_service.requests.post", return_value=mock_resp):
+            tasks = svc.fetch_assigned_tasks(date="2026-10-14", force=True)
+            self.assertEqual(len(tasks), 2)
+            self.assertEqual(tasks[0]["submit_status"], "1")
+            self.assertEqual(tasks[1]["submit_status"], "1")
+
+    def test_additional_task_api_status_2_already_submitted_handled_as_success(self):
+        """Verify TaskService.save_additional_task handles status: 2 ('Task already submitted') as success."""
+        from services.task_service import TaskService
+        svc = TaskService()
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="testuser",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": 200,
+            "status": 2,
+            "message": "Task already submitted",
+        }
+
+        with patch("services.task_service.requests.post", return_value=mock_resp):
+            success, msg, data = svc.save_additional_task("Fixed bug", date="2026-10-15", status="1")
+            self.assertTrue(success)
+            self.assertIn("already submitted", msg.lower())
+
+    def test_additional_task_fetch_assigned_tasks_with_status_2(self):
+        """Verify fetch_assigned_tasks parses additional_task_status '2' as submitted."""
+        from services.task_service import TaskService
+        svc = TaskService()
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="testuser",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": 1,
+            "additional_task": "Already submitted task description",
+            "additional_task_status": "2",
+            "data": [],
+        }
+
+        with patch("services.task_service.requests.post", return_value=mock_resp):
+            tasks = svc.fetch_assigned_tasks(date="2026-10-15", force=True)
+            self.assertEqual(len(tasks), 1)
+            self.assertTrue(tasks[0]["is_additional"])
+            self.assertEqual(tasks[0]["submit_status"], "1")
+            self.assertEqual(tasks[0]["status"], "Completed")
+
+    def test_additional_task_widget_text_interaction_flags_and_typing_resets_retry(self):
+        """Verify read-only text allows selection and copying, and user typing resets retry labels."""
+        from PySide6.QtCore import Qt
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Some text")
+
+        # Set submitted: read-only, selection enabled, buttons and container hidden
+        widget.set_submitted(True)
+        self.assertTrue(widget.text_edit.isReadOnly())
+        flags = widget.text_edit.textInteractionFlags()
+        self.assertTrue(bool(flags & Qt.TextInteractionFlag.TextSelectableByMouse))
+        self.assertTrue(bool(flags & Qt.TextInteractionFlag.TextSelectableByKeyboard))
+        self.assertTrue(widget.btn_container.isHidden())
+        self.assertTrue(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isHidden())
+
+        # Reset submitted: editable, buttons and container visible
+        widget.set_submitted(False)
+        self.assertFalse(widget.text_edit.isReadOnly())
+        self.assertFalse(widget.btn_container.isHidden())
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertFalse(widget.submit_btn.isHidden())
+
+        # Simulate failed submission with retry label
+        widget.submit_btn.setText("Retry Submit ⚠️")
+        widget.save_draft_btn.setText("Retry Draft ⚠️")
+
+        # Typing into text edit should reset retry labels back to normal
+        widget.text_edit.insertPlainText(" new typing")
+        self.assertEqual(widget.submit_btn.text(), "Submit Task")
+        self.assertEqual(widget.save_draft_btn.text(), "Save As Draft")
+
+
+    def test_timesheet_multiple_rows_submit_preserves_values_comments_and_read_only(self):
+        """
+        Verify the 9 prompt regression requirements:
+        1. Enter different Task Completed values and comments in multiple rows.
+        2. Submit successfully and verify every value and comment remains visible.
+        3. Verify both action buttons disappear only after confirmed successful submission.
+        4. Verify all submitted fields are read-only and comments remain selectable/copyable.
+        5. Refresh or reopen the same Timesheet and confirm values and submitted status persist.
+        6. Simulate an API failure and verify all unsaved input remains intact and editable.
+        7. Confirm values are associated with the correct task rows.
+        8. Confirm Task Done Till Now follows the existing business rules.
+        9. Confirm draft saving and Additional Task behavior remain unchanged.
+        """
+        table = AssignedTasksTable()
+        addl_widget = AdditionalTaskWidget()
+        table.additional_task_widget = addl_widget
+
+        tasks = [
+            {
+                "id": "211",
+                "kra_id": "211",
+                "timesheet_id": "852",
+                "name": "Ivory Farmer",
+                "description": "Deleniti hic cum min",
+                "target": "1",
+                "weightage": "25.00%",
+                "task_done": "122.00",
+                "task_completed": "",
+                "comment": "",
+                "status": "In Progress",
+                "submit_status": "0",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "212",
+                "kra_id": "212",
+                "timesheet_id": "853",
+                "name": "Donna Mcgee",
+                "description": "Sit occaecat molesti",
+                "target": "2",
+                "weightage": "25.00%",
+                "task_done": "0.00",
+                "task_completed": "",
+                "comment": "",
+                "status": "In Progress",
+                "submit_status": "0",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "213",
+                "kra_id": "213",
+                "timesheet_id": "854",
+                "name": "Phillip Bright",
+                "description": "Amet sed deleniti n",
+                "target": "3",
+                "weightage": "25.00%",
+                "task_done": "-",
+                "task_completed": "",
+                "comment": "",
+                "status": "In Progress",
+                "submit_status": "0",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "214",
+                "kra_id": "214",
+                "timesheet_id": "855",
+                "name": "Boris Guy",
+                "description": "Ut illum quidem ape",
+                "target": "4",
+                "weightage": "25.00%",
+                "task_done": "10.00",
+                "task_completed": "",
+                "comment": "",
+                "status": "In Progress",
+                "submit_status": "0",
+                "date": "2026-10-15",
+            },
+        ]
+        table.set_tasks(tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        # Requirement 1: Enter different values & comments across multiple rows
+        # Row 0: 32, sdadada
+        table._get_line_edit(0, 8).setText("32")
+        table._get_line_edit(0, 9).setText("sdadada")
+        # Row 1: 23, ergeojrn
+        table._get_line_edit(1, 8).setText("23")
+        table._get_line_edit(1, 9).setText("ergeojrn")
+        # Row 2: 34, bfgbffb
+        table._get_line_edit(2, 8).setText("34")
+        table._get_line_edit(2, 9).setText("bfgbffb")
+        # Row 3: 35, ebebe
+        table._get_line_edit(3, 8).setText("35")
+        table._get_line_edit(3, 9).setText("ebebe")
+        QCoreApplication.processEvents()
+
+        # Requirement 8: Task Done Till Now incremental calculation
+        # Row 0: 122.00 + 32 = 154.00
+        self.assertEqual(table.item(0, 7).text(), "154.00")
+        # Row 1: 0.00 + 23 = 23.00
+        self.assertEqual(table.item(1, 7).text(), "23.00")
+        # Row 2: '-' was empty -> 34
+        self.assertEqual(table.item(2, 7).text(), "34")
+        # Row 3: 10.00 + 35 = 45.00
+        self.assertEqual(table.item(3, 7).text(), "45.00")
+
+        # Requirement 6: Simulate API failure
+        with patch.object(TaskService, "save_time_sheet", return_value=(False, "500 Internal Server Error", None)):
+            table.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            # Remains unsubmitted and editable
+            self.assertFalse(table.is_submitted)
+            self.assertFalse(table.submit_btn.isHidden())
+            self.assertFalse(table.save_draft_btn.isHidden())
+            self.assertEqual(table.submit_btn.text(), "Retry Submit ⚠️")
+            # All entered values remain completely intact
+            self.assertEqual(table._get_line_edit(0, 8).text(), "32")
+            self.assertEqual(table._get_line_edit(0, 9).text(), "sdadada")
+            self.assertEqual(table._get_line_edit(1, 8).text(), "23")
+            self.assertEqual(table._get_line_edit(1, 9).text(), "ergeojrn")
+            self.assertEqual(table._get_line_edit(2, 8).text(), "34")
+            self.assertEqual(table._get_line_edit(2, 9).text(), "bfgbffb")
+            self.assertEqual(table._get_line_edit(3, 8).text(), "35")
+            self.assertEqual(table._get_line_edit(3, 9).text(), "ebebe")
+
+        # Requirement 2 & 3: Submit successfully
+        # In typical real backend response, get_kra returns items where task_completed is missing
+        # and task_done has the saved progress
+        api_refresh_items = [
+            {
+                "id": "211",
+                "kra_id": "211",
+                "timesheet_id": "852",
+                "name": "Ivory Farmer",
+                "description": "Deleniti hic cum min",
+                "target": "1",
+                "weightage": "25.00%",
+                "task_done": "154.00",
+                "task_completed": "",  # get_kra does not return task_completed
+                "comment": "sdadada",
+                "status": "Completed",
+                "submit_status": "1",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "212",
+                "kra_id": "212",
+                "timesheet_id": "853",
+                "name": "Donna Mcgee",
+                "description": "Sit occaecat molesti",
+                "target": "2",
+                "weightage": "25.00%",
+                "task_done": "23.00",
+                "task_completed": "",
+                "comment": "ergeojrn",
+                "status": "Completed",
+                "submit_status": "1",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "213",
+                "kra_id": "213",
+                "timesheet_id": "854",
+                "name": "Phillip Bright",
+                "description": "Amet sed deleniti n",
+                "target": "3",
+                "weightage": "25.00%",
+                "task_done": "34.00",
+                "task_completed": "",
+                "comment": "bfgbffb",
+                "status": "Completed",
+                "submit_status": "1",
+                "date": "2026-10-15",
+            },
+            {
+                "id": "214",
+                "kra_id": "214",
+                "timesheet_id": "855",
+                "name": "Boris Guy",
+                "description": "Ut illum quidem ape",
+                "target": "4",
+                "weightage": "25.00%",
+                "task_done": "45.00",
+                "task_completed": "",
+                "comment": "ebebe",
+                "status": "Completed",
+                "submit_status": "1",
+                "date": "2026-10-15",
+            },
+        ]
+
+        with patch.object(TaskService, "save_time_sheet", return_value=(True, "Timesheet data successfully saved", {"status": 200})):
+            with patch.object(TaskService, "fetch_assigned_tasks", return_value=api_refresh_items):
+                table.submit_btn.click()
+                time.sleep(0.1)
+                QCoreApplication.processEvents()
+
+                # Requirement 3: Both action buttons hidden
+                self.assertTrue(table.is_submitted)
+                self.assertTrue(table.submit_btn.isHidden())
+                self.assertTrue(table.save_draft_btn.isHidden())
+                self.assertTrue(table.buttons_container.isHidden())
+
+                # Requirement 2 & 7: Every value and comment remains visible on correct task rows
+                self.assertEqual(table._get_line_edit(0, 8).text(), "32")
+                self.assertEqual(table._get_line_edit(0, 9).text(), "sdadada")
+                self.assertEqual(table._get_line_edit(1, 8).text(), "23")
+                self.assertEqual(table._get_line_edit(1, 9).text(), "ergeojrn")
+                self.assertEqual(table._get_line_edit(2, 8).text(), "34")
+                self.assertEqual(table._get_line_edit(2, 9).text(), "bfgbffb")
+                self.assertEqual(table._get_line_edit(3, 8).text(), "35")
+                self.assertEqual(table._get_line_edit(3, 9).text(), "ebebe")
+
+                # Requirement 4: Fields are read-only and comments selectable/copyable
+                for r in range(4):
+                    comp_le = table._get_line_edit(r, 8)
+                    comm_le = table._get_line_edit(r, 9)
+                    self.assertTrue(comp_le.isReadOnly())
+                    self.assertTrue(comm_le.isReadOnly())
+                    self.assertIn("border: none", comp_le.styleSheet())
+                    self.assertIn("border: none", comm_le.styleSheet())
+
+                # Requirement 5: Subsequent refresh / reopen preserves values and submitted status
+                table.set_tasks(api_refresh_items, date="2026-10-15")
+                QCoreApplication.processEvents()
+
+                self.assertTrue(table.is_submitted)
+                self.assertTrue(table.submit_btn.isHidden())
+                self.assertTrue(table.save_draft_btn.isHidden())
+                self.assertEqual(table._get_line_edit(0, 8).text(), "32")
+                self.assertEqual(table._get_line_edit(0, 9).text(), "sdadada")
+                self.assertEqual(table._get_line_edit(1, 8).text(), "23")
+                self.assertEqual(table._get_line_edit(1, 9).text(), "ergeojrn")
+                self.assertEqual(table._get_line_edit(2, 8).text(), "34")
+                self.assertEqual(table._get_line_edit(2, 9).text(), "bfgbffb")
+                self.assertEqual(table._get_line_edit(3, 8).text(), "35")
+                self.assertEqual(table._get_line_edit(3, 9).text(), "ebebe")
+
+        # Requirement 9: Additional Task remains independent
+        self.assertFalse(addl_widget.is_submitted)
+        self.assertFalse(addl_widget.save_draft_btn.isHidden())
+        self.assertFalse(addl_widget.submit_btn.isHidden())
+
+    # =========================================================================
+    # Additional Task Submission Integration Tests (Validation Requirements 1-6)
+    # =========================================================================
+
+    def test_additional_task_val_1_newly_submitted_task(self):
+        """Validation 1: A task not previously submitted succeeds, hides buttons, and sets read-only."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("New innovative feature development")
+
+        mock_save_res = {
+            "response": 200,
+            "status": 1,
+            "message": "Task successfully saved",
+        }
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Task successfully saved", mock_save_res)):
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertTrue(widget.is_submitted)
+            self.assertTrue(widget.text_edit.isReadOnly())
+            self.assertTrue(widget.save_draft_btn.isHidden())
+            self.assertTrue(widget.submit_btn.isHidden())
+            self.assertEqual(widget.task_content(), "New innovative feature development")
+            self.assertIn("submitted successfully", widget.status_msg_label.text().lower())
+
+    def test_additional_task_val_2_already_submitted_confirmed(self):
+        """Validation 2: Already submitted response confirmed by existing API data hides buttons and sets read-only."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Existing task text")
+
+        mock_save_res = {
+            "response": 200,
+            "status": 2,
+            "message": "Task already submitted",
+            "is_already_submitted": True,
+        }
+        confirmed_api_tasks = [
+            {
+                "is_additional": True,
+                "description": "Existing task text",
+                "submit_status": "1",
+                "additional_task_status": "1",
+            }
+        ]
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Task already submitted", mock_save_res)), \
+             patch.object(TaskService, "fetch_assigned_tasks", return_value=confirmed_api_tasks):
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertTrue(widget.is_submitted)
+            self.assertTrue(widget.text_edit.isReadOnly())
+            self.assertTrue(widget.save_draft_btn.isHidden())
+            self.assertTrue(widget.submit_btn.isHidden())
+            self.assertEqual(widget.task_content(), "Existing task text")
+            self.assertIn("already submitted", widget.status_msg_label.text().lower())
+
+    def test_additional_task_val_2b_already_submitted_unconfirmed(self):
+        """Validation 2b: Already submitted response unconfirmed by API preserves text, keeps retry, does not fabricate success."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Unconfirmed task text")
+
+        mock_save_res = {
+            "response": 200,
+            "status": 2,
+            "message": "Task already submitted",
+            "is_already_submitted": True,
+        }
+        # API returns empty / cannot confirm
+        with patch.object(TaskService, "save_additional_task", return_value=(True, "Task already submitted", mock_save_res)), \
+             patch.object(TaskService, "fetch_assigned_tasks", return_value=[]):
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertFalse(widget.is_submitted)
+            self.assertFalse(widget.text_edit.isReadOnly())
+            self.assertFalse(widget.save_draft_btn.isHidden())
+            self.assertFalse(widget.submit_btn.isHidden())
+            self.assertEqual(widget.submit_btn.text(), "Retry Submit ⚠️")
+            self.assertEqual(widget.task_content(), "Unconfirmed task text")
+            self.assertIn("could not be confirmed", widget.status_msg_label.text().lower())
+
+    def test_additional_task_val_3_failed_request(self):
+        """Validation 3: Failed request resets loading state, preserves text, keeps Retry Submit available."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Work in progress task")
+
+        with patch.object(TaskService, "save_additional_task", return_value=(False, "Server error (HTTP 500)", None)):
+            widget.submit_btn.click()
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertFalse(widget.is_submitted)
+            self.assertFalse(widget.text_edit.isReadOnly())
+            self.assertFalse(widget.save_draft_btn.isHidden())
+            self.assertFalse(widget.submit_btn.isHidden())
+            self.assertTrue(widget.save_draft_btn.isEnabled())
+            self.assertTrue(widget.submit_btn.isEnabled())
+            self.assertEqual(widget.submit_btn.text(), "Retry Submit ⚠️")
+            self.assertEqual(widget.task_content(), "Work in progress task")
+            self.assertIn("HTTP 500", widget.status_msg_label.text())
+
+    def test_additional_task_val_4_reopening_page_after_confirmed_submission(self):
+        """Validation 4: Reopening page with API-confirmed task persists read-only state and hides buttons."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Authoritative saved task from API", is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.text_edit.isReadOnly())
+        self.assertTrue(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isHidden())
+        self.assertEqual(widget.task_content(), "Authoritative saved task from API")
+
+    def test_additional_task_val_5_text_selection_and_copying_enabled(self):
+        """Validation 5: Read-only submitted task text enables selection and copying flags."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Selectable and copyable content", is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.text_edit.isReadOnly())
+        flags = widget.text_edit.textInteractionFlags()
+        self.assertTrue(bool(flags & Qt.TextInteractionFlag.TextSelectableByMouse))
+        self.assertTrue(bool(flags & Qt.TextInteractionFlag.TextSelectableByKeyboard))
+
+    def test_additional_task_val_6_no_duplicate_request_from_single_submit(self):
+        """Validation 6: Concurrent or duplicate clicks during submission are ignored."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Single submission task")
+
+        call_count = 0
+        def fake_save(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            time.sleep(0.05)
+            return True, "Task successfully saved", {"status": 1}
+
+        with patch.object(TaskService, "save_additional_task", side_effect=fake_save):
+            # First click starts submission
+            widget.save_task(is_draft=False)
+            self.assertTrue(widget._is_submitting)
+            # Second click while in progress must be ignored
+            widget.save_task(is_draft=False)
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+            self.assertEqual(call_count, 1)
+
+    def test_additional_task_val_multipart_form_data_payload_structure(self):
+        """Validation: Verifies multipart/form-data request fields and types sent to requests.post."""
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="testuser",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testkeyxyz123",
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": 200,
+            "status": 1,
+            "message": "Task successfully saved",
+        }
+
+        with patch("services.task_service.requests.post", return_value=mock_resp) as mock_post:
+            ok, msg, res = TaskService().save_additional_task(
+                task="Deploy monitoring agent",
+                date="2026-10-15",
+                status="1",
+            )
+            self.assertTrue(ok)
+            mock_post.assert_called_once()
+            called_url = mock_post.call_args[0][0]
+            called_files = mock_post.call_args[1].get("files")
+
+            self.assertEqual(called_url, "https://hrms.example.com/ci4/api/TaskPMS/save_additional_task")
+            self.assertIsNotNone(called_files)
+            self.assertEqual(called_files["key"], (None, "testkeyxyz123"))
+            self.assertEqual(called_files["indo_code"], (None, "EC-098"))
+            self.assertEqual(called_files["date"], (None, "2026-10-15"))
+            self.assertEqual(called_files["status"], (None, "1"))
+            self.assertEqual(called_files["task"], (None, "Deploy monitoring agent"))
+
+    def test_main_timesheet_buttons_hidden_immediately_after_successful_submission(self):
+        """Fix Req 1 & 3: Immediately hide Save as Draft and Submit in main timesheet after confirmed submit."""
+        table = AssignedTasksTable()
+        table.show()
+        table.actions_widget.show()
+        tasks = [
+            {
+                "kra_id": "101",
+                "timesheet_id": "501",
+                "name": "Feature Dev",
+                "task_completed": "5",
+                "comment": "Completed 5 units",
+                "date": "2026-10-15",
+                "submit_status": "0",
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        # Before submission: buttons are visible
+        self.assertTrue(table.save_draft_btn.isVisible())
+        self.assertTrue(table.submit_btn.isVisible())
+        self.assertTrue(table.buttons_container.isVisible())
+        self.assertFalse(table._is_submitted)
+
+        # Trigger batch submit success
+        table._handle_batch_success(
+            is_draft=False,
+            msg="Timesheet submitted successfully.",
+            data={
+                "saved_kra_list": [
+                    {
+                        "kra_id": "101",
+                        "TimeSheet_id": "501",
+                        "task_completed": "5",
+                        "remark": "Completed 5 units",
+                    }
+                ],
+                "date": "2026-10-15",
+            },
+        )
+        QCoreApplication.processEvents()
+
+        # Immediately after submission: buttons must be hidden
+        self.assertFalse(table.save_draft_btn.isVisible())
+        self.assertFalse(table.submit_btn.isVisible())
+        self.assertFalse(table.buttons_container.isVisible())
+        self.assertTrue(table._is_submitted)
+
+        # Read-only mode active; values and comments preserved
+        comp_edit = table._get_line_edit(0, 8)
+        comm_edit = table._get_line_edit(0, 9)
+        self.assertIsNotNone(comp_edit)
+        self.assertIsNotNone(comm_edit)
+        self.assertTrue(comp_edit.isReadOnly())
+        self.assertTrue(comm_edit.isReadOnly())
+        self.assertEqual(comp_edit.text(), "5")
+        self.assertEqual(comm_edit.text(), "Completed 5 units")
+
+    def test_main_timesheet_buttons_stay_hidden_on_refresh_and_empty_tasks(self):
+        """Fix Req 4 & 5: Buttons remain hidden after refresh when API confirms record already submitted."""
+        table = AssignedTasksTable()
+        submitted_tasks = [
+            {
+                "kra_id": "101",
+                "timesheet_id": "501",
+                "name": "Feature Dev",
+                "task_completed": "10",
+                "comment": "Done with testing",
+                "date": "2026-10-15",
+                "submit_status": "1",
+                "status": "Completed",
+            }
+        ]
+        table.set_tasks(submitted_tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(table._is_submitted)
+        self.assertFalse(table.save_draft_btn.isVisible())
+        self.assertFalse(table.submit_btn.isVisible())
+        self.assertFalse(table.buttons_container.isVisible())
+
+        # Empty tasks list must also not show buttons
+        table.set_tasks([], date="2026-10-15")
+        QCoreApplication.processEvents()
+        self.assertFalse(table.save_draft_btn.isVisible())
+        self.assertFalse(table.submit_btn.isVisible())
+        self.assertFalse(table.buttons_container.isVisible())
+
+    def test_additional_task_buttons_hidden_immediately_after_successful_submission(self):
+        """Fix Req 2 & 3: Immediately hide Save As Draft, Submit, Retry after Additional Task submission."""
+        widget = AdditionalTaskWidget()
+        widget.show()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Implemented customer feedback module")
+        QCoreApplication.processEvents()
+
+        # Before submission: buttons are visible
+        self.assertTrue(widget.save_draft_btn.isVisible())
+        self.assertTrue(widget.submit_btn.isVisible())
+        self.assertTrue(widget.btn_container.isVisible())
+        self.assertFalse(widget.is_submitted)
+
+        # Handle successful submission
+        widget._handle_save_success(
+            is_draft=False,
+            msg="Additional task submitted successfully.",
+            data={"status": 1, "is_newly_saved": True, "is_confirmed": True},
+        )
+        QCoreApplication.processEvents()
+
+        # Immediately hidden
+        self.assertFalse(widget.save_draft_btn.isVisible())
+        self.assertFalse(widget.submit_btn.isVisible())
+        self.assertFalse(widget.btn_container.isVisible())
+        self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.text_edit.isReadOnly())
+        self.assertEqual(widget.task_content(), "Implemented customer feedback module")
+
+    def test_additional_task_buttons_stay_hidden_across_refresh_without_reset(self):
+        """Fix Req 4 & 5: Ensure background task table refresh does not demote submitted state."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Production deployment completed", is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.is_submitted)
+        self.assertFalse(widget.save_draft_btn.isVisible())
+        self.assertFalse(widget.submit_btn.isVisible())
+
+        table = AssignedTasksTable()
+        table.additional_task_widget = widget
+
+        # Background refresh with KRA-only tasks (no additional tasks) must NOT demote widget to unsubmitted
+        kra_only_tasks = [
+            {
+                "kra_id": "101",
+                "name": "KRA 1",
+                "date": "2026-10-15",
+                "is_additional": False,
+            }
+        ]
+        table.set_tasks(kra_only_tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.is_submitted)
+        self.assertFalse(widget.save_draft_btn.isVisible())
+        self.assertFalse(widget.submit_btn.isVisible())
+        self.assertFalse(widget.btn_container.isVisible())
+        self.assertEqual(widget.task_content(), "Production deployment completed")
+
+    def test_main_timesheet_already_submitted_verification(self):
+        """Fix Req 6: Verify existing record's submitted status when API reports Task already submitted."""
+        table = AssignedTasksTable()
+        tasks = [
+            {
+                "kra_id": "101",
+                "timesheet_id": "501",
+                "name": "Documentation",
+                "task_completed": "4",
+                "comment": "Wrote tech spec",
+                "date": "2026-10-15",
+                "submit_status": "0",
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-15")
+
+        # Case A: Confirmed existing record is submitted -> buttons hidden
+        mock_svc = MagicMock()
+        mock_svc.save_time_sheet.return_value = (False, "Task already submitted", {"status": "2"})
+        mock_svc.fetch_assigned_tasks.return_value = [
+            {
+                "kra_id": "101",
+                "timesheet_id": "501",
+                "name": "Documentation",
+                "task_completed": "4",
+                "comment": "Wrote tech spec",
+                "date": "2026-10-15",
+                "submit_status": "1",
+                "status": "Completed",
+            }
+        ]
+
+        with patch("services.task_service.TaskService", return_value=mock_svc):
+            table.submit_all_tasks(is_draft=False)
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+        self.assertTrue(table._is_submitted)
+        self.assertFalse(table.save_draft_btn.isVisible())
+        self.assertFalse(table.submit_btn.isVisible())
+
+    def test_submission_failure_preserves_data_and_keeps_retry_action(self):
+        """Fix Req 7: If submission fails, preserve entered data and keep retry action available."""
+        # Main timesheet
+        table = AssignedTasksTable()
+        table.show()
+        table.actions_widget.show()
+        tasks = [
+            {
+                "kra_id": "101",
+                "timesheet_id": "501",
+                "name": "Refactor UI",
+                "task_completed": "8",
+                "comment": "Refactored styles",
+                "date": "2026-10-15",
+                "submit_status": "0",
+            }
+        ]
+        table.set_tasks(tasks, date="2026-10-15")
+
+        table._handle_batch_error(is_draft=False, err_msg="500 Internal Server Error")
+        QCoreApplication.processEvents()
+
+        self.assertFalse(table._is_submitted)
+        self.assertTrue(table.submit_btn.isVisible())
+        self.assertTrue("Retry Submit" in table.submit_btn.text())
+        self.assertEqual(table._get_task_completed(0), "8")
+        self.assertEqual(table._get_comment(0), "Refactored styles")
+
+        # Additional task
+        widget = AdditionalTaskWidget()
+        widget.show()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Daily meeting and client call")
+
+        widget._handle_save_error(is_draft=False, err_msg="Network timeout")
+        QCoreApplication.processEvents()
+
+        self.assertFalse(widget.is_submitted)
+        self.assertTrue(widget.submit_btn.isVisible())
+        self.assertTrue("Retry Submit" in widget.submit_btn.text())
+        self.assertEqual(widget.task_content(), "Daily meeting and client call")
+
+        # Typing clears the retry warning back to Submit Task
+        widget.text_edit.setPlainText("Daily meeting and client call updated")
+        QCoreApplication.processEvents()
+        self.assertEqual(widget.submit_btn.text(), "Submit Task")
+
+    def test_reopen_and_refresh_preserves_submitted_status_and_hides_buttons(self):
+        """Fix Req 4 & 5: When reopening or refreshing record where backend confirms submitted, buttons stay hidden."""
+        from services.task_service import TaskService
+        from config.api_config import ApiConfig
+        from services.session_service import SessionService
+        svc = TaskService()
+        svc.clear_cache()
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="testuser",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+        )
+
+        # Simulate get_kra API response with status=2 (already submitted)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": 2,
+            "message": "Task already submitted",
+            "additional_task": "Documented architecture",
+            "additional_task_status": "2",
+            "data": [
+                {
+                    "kra_id": "301",
+                    "timesheet_id": "701",
+                    "name": "Backend Refactor",
+                    "task_completed": "10",
+                    "comment": "All endpoints updated",
+                    "status": "Completed",
+                }
+            ],
+        }
+        mock_resp.text = '{"status": 2}'
+
+        with patch("services.task_service.requests.post", return_value=mock_resp):
+            tasks = svc.fetch_assigned_tasks(date="2026-10-15", force=True)
+
+        self.assertTrue(len(tasks) >= 1)
+        timesheet_items = [t for t in tasks if not t.get("is_additional")]
+        addl_items = [t for t in tasks if t.get("is_additional")]
+
+        self.assertEqual(timesheet_items[0]["submit_status"], "1")
+        self.assertEqual(timesheet_items[0]["status"], "Completed")
+        self.assertEqual(addl_items[0]["submit_status"], "1")
+        self.assertEqual(addl_items[0]["status"], "Completed")
+
+        # Now test UI components with this API response
+        table = AssignedTasksTable()
+        table.show()
+        table.actions_widget.show()
+        addl_widget = AdditionalTaskWidget()
+        addl_widget.show()
+        table.additional_task_widget = addl_widget
+
+        table.set_tasks(tasks, date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        # Both sections have buttons hidden and inputs read-only
+        self.assertTrue(table.is_submitted)
+        self.assertFalse(table.save_draft_btn.isVisible())
+        self.assertFalse(table.submit_btn.isVisible())
+        self.assertFalse(table.buttons_container.isVisible())
+        self.assertTrue(table._get_line_edit(0, 8).isReadOnly())
+        self.assertTrue(table._get_line_edit(0, 9).isReadOnly())
+
+        self.assertTrue(addl_widget.is_submitted)
+        self.assertFalse(addl_widget.save_draft_btn.isVisible())
+        self.assertFalse(addl_widget.submit_btn.isVisible())
+        self.assertFalse(addl_widget.btn_container.isVisible())
+        self.assertTrue(addl_widget.text_edit.isReadOnly())
+        self.assertEqual(addl_widget.task_content(), "Documented architecture")
+
+    def test_additional_task_submission_from_retry_state_hides_all_buttons(self):
+        """Fix Req 2: Submitting from Retry Draft or Retry Submit state hides all buttons."""
+        widget = AdditionalTaskWidget()
+        widget.show()
+        widget.set_date("2026-10-15")
+        widget.set_task_content("Completed bug fix")
+
+        # Put into Retry Submit error state
+        widget._handle_save_error(is_draft=False, err_msg="504 Gateway Timeout")
+        QCoreApplication.processEvents()
+
+        self.assertTrue(widget.submit_btn.isVisible())
+        self.assertIn("Retry Submit", widget.submit_btn.text())
+
+        # Successful submission now occurs
+        widget._handle_save_success(
+            is_draft=False,
+            msg="Task submitted successfully.",
+            data={"status": 1, "is_newly_saved": True, "is_confirmed": True},
+        )
+        QCoreApplication.processEvents()
+
+        # Buttons and container must be completely hidden
+        self.assertTrue(widget.is_submitted)
+        self.assertFalse(widget.save_draft_btn.isVisible())
+        self.assertFalse(widget.submit_btn.isVisible())
+        self.assertFalse(widget.btn_container.isVisible())
+        self.assertTrue(widget.text_edit.isReadOnly())
+        self.assertEqual(widget.submit_btn.text(), "Submit Task")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 

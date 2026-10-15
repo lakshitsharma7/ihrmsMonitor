@@ -177,17 +177,19 @@ _LE_ERROR = (
 
 _LE_READONLY = (
     "QLineEdit {"
-    "  background-color: #f8fafc;"
-    "  border: 1px solid #e2e8f0;"
-    "  border-radius: 6px;"
-    "  padding: 3px 5px;"
+    "  background-color: transparent;"
+    "  border: none;"
+    "  border-radius: 0px;"
+    "  padding: 4px 6px;"
     "  font-size: 12px;"
     "  font-weight: 500;"
-    "  color: #334155;"
+    "  color: #1e293b;"
+    "  selection-background-color: #cbd5e1;"
+    "  selection-color: #0f172a;"
     "}"
     "QLineEdit:focus {"
-    "  border: 1px solid #cbd5e1;"
-    "  background-color: #f8fafc;"
+    "  border: none;"
+    "  background-color: transparent;"
     "}"
 )
 
@@ -557,18 +559,105 @@ class AssignedTasksTable(QTableWidget):
 
     def _task_key(self, task: Dict[str, Any], fallback_idx: int = -1) -> str:
         """Compute stable unique key for a task dictionary to preserve in-progress user drafts."""
+        d = str(task.get("date") or self._page_date or self._current_date or "").strip()
         timesheet_id = str(task.get("timesheet_id") or "").strip()
         kra_id = str(task.get("kra_id") or task.get("id") or "").strip()
         name = str(task.get("name") or task.get("title") or "").strip()
         if timesheet_id and kra_id:
-            return f"{timesheet_id}_{kra_id}"
-        if kra_id:
-            return f"kra_{kra_id}"
-        if timesheet_id:
-            return f"ts_{timesheet_id}"
-        if name:
-            return f"name_{name}"
-        return f"row_{fallback_idx}"
+            key = f"{timesheet_id}_{kra_id}"
+        elif kra_id:
+            key = f"kra_{kra_id}"
+        elif timesheet_id:
+            key = f"ts_{timesheet_id}"
+        elif name:
+            key = f"name_{name}"
+        else:
+            key = f"row_{fallback_idx}"
+        return f"{d}::{key}" if d else key
+
+    def _init_task_base_progress(self, task: Dict[str, Any]) -> None:
+        """Initialize authoritative base progress baseline from server data."""
+        raw_done = str(task.get("task_done") or task.get("task_done_till_now") or "").strip()
+        is_percent = raw_done.endswith("%")
+        clean_done = raw_done[:-1].strip() if is_percent else raw_done
+        decimals = len(clean_done.split(".")[1]) if "." in clean_done else 0
+        had_dash = (clean_done == "-" or not clean_done)
+
+        try:
+            done_num = float(clean_done) if clean_done and clean_done != "-" else None
+        except ValueError:
+            done_num = None
+
+        raw_comp = str(task.get("task_completed") if task.get("task_completed") is not None else "").strip()
+        try:
+            comp_num = float(raw_comp) if raw_comp else 0.0
+        except ValueError:
+            comp_num = 0.0
+
+        task["_initial_done_str"] = raw_done
+        task["_initial_comp_val"] = comp_num
+        task["_is_percent"] = is_percent
+        task["_decimals"] = decimals
+        task["_had_dash"] = had_dash
+        task["_done_num"] = done_num
+
+    def _compute_done_till_now(self, task: Dict[str, Any], completed_text: str) -> str:
+        """
+        Calculate synchronized Task Done Till Now.
+        If task_done is numeric/percentage:
+          new_done = initial_done + (current_comp - initial_comp)
+        If initial_done is non-numeric/dash:
+          if current_comp is provided: new_done = current_comp
+          if current_comp is empty: new_done = "-"
+        """
+        if "_done_num" not in task:
+            self._init_task_base_progress(task)
+
+        done_num = task.get("_done_num")
+        initial_comp_val = task.get("_initial_comp_val", 0.0)
+        is_percent = bool(task.get("_is_percent", False))
+        decimals = task.get("_decimals", 0)
+        had_dash = bool(task.get("_had_dash", False))
+
+        val_str = str(completed_text or "").strip()
+        if not val_str:
+            comp_num = 0.0
+            is_empty = True
+        else:
+            try:
+                comp_num = float(val_str)
+                if comp_num < 0:
+                    comp_num = 0.0
+                    is_empty = True
+                else:
+                    is_empty = False
+            except ValueError:
+                comp_num = 0.0
+                is_empty = True
+
+        if done_num is not None:
+            delta = (comp_num - initial_comp_val) if not is_empty else (0.0 - initial_comp_val)
+            total = max(0.0, done_num + delta)
+        elif had_dash:
+            if is_empty:
+                return "-"
+            total = comp_num
+        else:
+            if is_empty:
+                return task.get("_initial_done_str", "-")
+            total = comp_num
+
+        if decimals > 0:
+            formatted = f"{total:.{decimals}f}"
+        elif total.is_integer():
+            formatted = str(int(total))
+        else:
+            formatted = f"{total:g}"
+
+        if is_percent:
+            formatted = f"{formatted}%"
+
+        return formatted
 
     def set_submitted(self, submitted: bool) -> None:
         """Update submission state, widget read-only mode, and button visibility."""
@@ -586,43 +675,72 @@ class AssignedTasksTable(QTableWidget):
             self.submit_btn.hide()
             if hasattr(self, "buttons_container"):
                 self.buttons_container.hide()
+            self.submit_btn.setText("Submit")
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.save_draft_btn.setText("Save as Draft")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
         else:
-            if hasattr(self, "buttons_container"):
-                self.buttons_container.show()
-            self.save_draft_btn.show()
-            self.submit_btn.show()
-            self.save_draft_btn.setEnabled(True)
-            self.submit_btn.setEnabled(True)
+            if not self._tasks:
+                self.save_draft_btn.hide()
+                self.submit_btn.hide()
+                if hasattr(self, "buttons_container"):
+                    self.buttons_container.hide()
+            else:
+                if hasattr(self, "buttons_container"):
+                    self.buttons_container.show()
+                self.save_draft_btn.show()
+                self.submit_btn.show()
+                self.save_draft_btn.setEnabled(True)
+                self.submit_btn.setEnabled(True)
+                if not self._is_submitting:
+                    if not self.submit_btn.text().startswith("Retry"):
+                        self.submit_btn.setText("Submit")
+                        self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+                    if not self.save_draft_btn.text().startswith("Draft Saved") and not self.save_draft_btn.text().startswith("Retry"):
+                        self.save_draft_btn.setText("Save as Draft")
+                        self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
 
     def _is_submitted_data(self, tasks: Optional[List[Dict[str, Any]]] = None) -> bool:
         """
         Determine whether tasks authoritatively indicate that the Timesheet is submitted.
         Checks:
-          - task["submit_status"] in ("1", "true", "True")
-          - raw["submit_status"] in ("1", "true", "True")
-          - task["status"].lower() == "submitted" or raw["status"].lower() == "submitted"
+          - TaskService tracked submitted state for current date
+          - task["submit_status"] in ("1", "2", "true", "True")
+          - raw["submit_status"] in ("1", "2", "true", "True")
+          - task["status"].lower() in ("submitted", "completed")
+          - raw["status"] in ("2", 2)
+          - raw["status"].lower() in ("submitted", "completed")
+          - raw["is_already_submitted"] is True
+          - "already submitted" in message
         """
         task_list = tasks if tasks is not None else self._tasks
         if not task_list:
             return False
+
         for t in task_list:
             if not isinstance(t, dict):
                 continue
             if bool(t.get("is_additional")):
                 continue
-            for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
+            for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted", "timesheet_status"):
                 v = str(t.get(k) or "").strip()
-                if v in ("1", "true", "True"):
+                if v in ("1", "2", "true", "True"):
                     return True
             raw = t.get("raw")
             if isinstance(raw, dict):
-                for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted"):
+                for k in ("submit_status", "submitStatus", "is_submitted", "isSubmitted", "timesheet_status"):
                     v = str(raw.get(k) or "").strip()
-                    if v in ("1", "true", "True"):
+                    if v in ("1", "2", "true", "True"):
                         return True
-                if str(raw.get("status") or "").strip().lower() == "submitted":
+                if str(raw.get("status") or "").strip() in ("2",):
                     return True
-            if str(t.get("status") or "").strip().lower() == "submitted":
+                if bool(raw.get("is_already_submitted")):
+                    return True
+                if "already submitted" in str(raw.get("message") or "").lower() or "already submitted" in str(raw.get("response") or "").lower():
+                    return True
+                if str(raw.get("status") or "").strip().lower() in ("submitted", "completed"):
+                    return True
+            if str(t.get("status") or "").strip().lower() in ("submitted", "completed"):
                 return True
         return False
 
@@ -929,7 +1047,7 @@ class AssignedTasksTable(QTableWidget):
 
         # ── 1. Separate Timesheet tasks from Additional Tasks ────────────────
         additional_items = [t for t in raw_tasks if bool(t.get("is_additional"))]
-        timesheet_tasks = [t for t in raw_tasks if not bool(t.get("is_additional"))]
+        timesheet_tasks = [dict(t) for t in raw_tasks if not bool(t.get("is_additional"))]
 
         self._tasks = timesheet_tasks
         self._selected_task_index = 0 if self._tasks else None
@@ -951,16 +1069,28 @@ class AssignedTasksTable(QTableWidget):
 
             if additional_items:
                 t = additional_items[0]
-                desc = str(t.get("description") or t.get("remark") or "").strip()
+                desc = str(t.get("description") or t.get("remark") or t.get("task") or "").strip()
+                raw_dict = t.get("raw") if isinstance(t.get("raw"), dict) else {}
                 is_sub = (
-                    str(t.get("submit_status") or "").strip() in ("1", "true", "True")
+                    str(t.get("submit_status") or "").strip() in ("1", "2", "true", "True")
                     or str(t.get("task_completed") or "").strip() in ("1", "100")
                     or str(t.get("status") or "").strip().lower() in ("completed", "submitted")
-                    or str((t.get("raw") or {}).get("additional_task_status") or "").strip() in ("1", "true", "True")
+                    or str(raw_dict.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                    or str(t.get("additional_task_status") or "").strip() in ("1", "2", "true", "True")
+                    or str(raw_dict.get("submit_status") or "").strip() in ("1", "2", "true", "True")
+                    or str(raw_dict.get("status") or "").strip() in ("2",)
+                    or "already submitted" in str(raw_dict.get("message") or "").lower()
+                    or bool(raw_dict.get("is_already_submitted"))
                 )
                 self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
             else:
-                self.additional_task_widget.set_submitted(False)
+                if task_date:
+                    try:
+                        from services.task_service import TaskService
+                        if TaskService().is_additional_task_submitted(task_date):
+                            self.additional_task_widget.set_submitted(True)
+                    except Exception:
+                        pass
 
         # Capture focus state if an edit field is active
         focused_widget = QApplication.focusWidget()
@@ -979,19 +1109,36 @@ class AssignedTasksTable(QTableWidget):
         # Check authoritative submission status
         self._is_submitted = self._is_submitted_data(self._tasks)
 
-        # ── 3. Merge in-progress user drafts if unsubmitted ──────────────────
-        if not self._is_submitted:
-            for r_idx, task in enumerate(self._tasks):
-                t_key = self._task_key(task, r_idx)
-                if t_key in self._user_drafts:
-                    draft = self._user_drafts[t_key]
+        # Initialize base progress baseline for each task
+        for r_idx, task in enumerate(self._tasks):
+            self._init_task_base_progress(task)
+
+        # ── 3. Merge in-progress user drafts or restore confirmed saved values ─
+        for r_idx, task in enumerate(self._tasks):
+            t_key = self._task_key(task, r_idx)
+            if t_key in self._user_drafts:
+                draft = self._user_drafts[t_key]
+                if not self._is_submitted:
                     if "comment" in draft:
                         task["comment"] = draft["comment"]
                         task["remark"] = draft["comment"]
                     if "task_completed" in draft:
                         task["task_completed"] = draft["task_completed"]
-        else:
-            self._user_drafts.clear()
+                        computed_done = self._compute_done_till_now(task, draft["task_completed"])
+                        task["task_done"] = computed_done
+                        task["task_done_till_now"] = computed_done
+                else:
+                    # In submitted state, if the API response is incomplete (e.g. omitted comment or task_completed),
+                    # restore from the authoritative saved values using stable task key
+                    if not task.get("comment") and "comment" in draft:
+                        task["comment"] = draft["comment"]
+                        task["remark"] = draft["comment"]
+                    if (task.get("task_completed") is None or str(task.get("task_completed")).strip() == "") and "task_completed" in draft:
+                        task["task_completed"] = draft["task_completed"]
+                        computed_done = self._compute_done_till_now(task, draft["task_completed"])
+                        if not task.get("task_done") or str(task.get("task_done")).strip() in ("-", "0", "0.00", ""):
+                            task["task_done"] = computed_done
+                            task["task_done_till_now"] = computed_done
 
         if not self._tasks:
             self.setRowCount(1)
@@ -1009,10 +1156,10 @@ class AssignedTasksTable(QTableWidget):
             self.setMinimumHeight(115)
             self.save_draft_btn.setEnabled(False)
             self.submit_btn.setEnabled(False)
-            self.save_draft_btn.setVisible(True)
-            self.submit_btn.setVisible(True)
+            self.save_draft_btn.hide()
+            self.submit_btn.hide()
             if hasattr(self, "buttons_container"):
-                self.buttons_container.show()
+                self.buttons_container.hide()
             self.setUpdatesEnabled(True)
             return
 
@@ -1102,8 +1249,9 @@ class AssignedTasksTable(QTableWidget):
             comp_layout.setSpacing(0)
             comp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            completed_edit = StableLineEdit(task_completed, comp_container, table=self)
-            completed_edit.setPlaceholderText("0")
+            display_completed = task_completed if task_completed != "" else ("0" if self._is_submitted else "")
+            completed_edit = StableLineEdit(display_completed, comp_container, table=self)
+            completed_edit.setPlaceholderText("0" if not self._is_submitted else "")
             completed_edit.setValidator(QRegularExpressionValidator(num_regex, completed_edit))
             completed_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             completed_edit.setReadOnly(self._is_submitted)
@@ -1124,7 +1272,7 @@ class AssignedTasksTable(QTableWidget):
             comment_layout.setSpacing(0)
 
             comment_edit = StableLineEdit(comment, comment_container, table=self)
-            comment_edit.setPlaceholderText("Enter comments / work details...")
+            comment_edit.setPlaceholderText("Enter comments / work details..." if not self._is_submitted else "")
             comment_edit.setReadOnly(self._is_submitted)
             comment_edit.setStyleSheet(_LE_READONLY if self._is_submitted else _LE_NORMAL)
             comment_edit.setSizePolicy(
@@ -1142,6 +1290,8 @@ class AssignedTasksTable(QTableWidget):
         self.verticalScrollBar().setValue(prev_v_scroll)
         self.setUpdatesEnabled(True)
 
+        self.set_submitted(self._is_submitted)
+
         if focus_info:
             r, c, text, cursor_pos = focus_info
             if r < self.rowCount():
@@ -1151,22 +1301,43 @@ class AssignedTasksTable(QTableWidget):
                     le.setCursorPosition(cursor_pos)
 
     def _on_task_completed_changed(self, row: int, text: str) -> None:
-        """Synchronize backing task state and persistent drafts when user edits Task Completed."""
+        """Synchronize backing task state, progress, and persistent drafts when user edits Task Completed."""
         val = text.strip()
         self._edited_rows.add(row)
         if row < len(self._tasks):
-            self._tasks[row]["task_completed"] = val
-            t_key = self._task_key(self._tasks[row], row)
+            task = self._tasks[row]
+            task["task_completed"] = val
+            t_key = self._task_key(task, row)
             if t_key not in self._user_drafts:
                 self._user_drafts[t_key] = {}
             self._user_drafts[t_key]["task_completed"] = val
 
-        prev_h = self.horizontalScrollBar().value()
-        item = self.item(row, 8)
-        if item and item.text() != val:
-            item.setText(val)
-            if self.horizontalScrollBar().value() != prev_h:
-                self.horizontalScrollBar().setValue(prev_h)
+            new_done = self._compute_done_till_now(task, val)
+            task["task_done"] = new_done
+            task["task_done_till_now"] = new_done
+            self._user_drafts[t_key]["task_done"] = new_done
+
+            prev_h = self.horizontalScrollBar().value()
+            done_item = self.item(row, 7)
+            if done_item and done_item.text() != new_done:
+                done_item.setText(new_done)
+                if self.horizontalScrollBar().value() != prev_h:
+                    self.horizontalScrollBar().setValue(prev_h)
+
+            item = self.item(row, 8)
+            if item and item.text() != val:
+                item.setText(val)
+                if self.horizontalScrollBar().value() != prev_h:
+                    self.horizontalScrollBar().setValue(prev_h)
+
+        # Reset button from retry state if user is editing
+        if not self._is_submitting:
+            if self.submit_btn.text().startswith("Retry"):
+                self.submit_btn.setText("Submit")
+                self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            if self.save_draft_btn.text().startswith("Retry"):
+                self.save_draft_btn.setText("Save as Draft")
+                self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
 
         # Clear error styling if active
         comp_edit = self._get_line_edit(row, 8)
@@ -1192,6 +1363,15 @@ class AssignedTasksTable(QTableWidget):
             if self.horizontalScrollBar().value() != prev_h:
                 self.horizontalScrollBar().setValue(prev_h)
 
+        # Reset button from retry state if user is editing
+        if not self._is_submitting:
+            if self.submit_btn.text().startswith("Retry"):
+                self.submit_btn.setText("Submit")
+                self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            if self.save_draft_btn.text().startswith("Retry"):
+                self.save_draft_btn.setText("Save as Draft")
+                self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
+
         # Clear error styling if active
         comment_edit = self._get_line_edit(row, 9)
         if comment_edit and "border: 1.5px solid #ef4444" in comment_edit.styleSheet():
@@ -1206,6 +1386,15 @@ class AssignedTasksTable(QTableWidget):
         if row < len(self._tasks):
             return str(self._tasks[row].get("task_completed") or "0").strip()
         return "0"
+
+    def _get_task_done_till_now(self, row: int) -> str:
+        """Get the current Task Done Till Now value from table item or internal task dict."""
+        item = self.item(row, 7)
+        if item:
+            return item.text().strip()
+        if row < len(self._tasks):
+            return str(self._tasks[row].get("task_done") or self._tasks[row].get("task_done_till_now") or "").strip()
+        return ""
 
     def _get_comment(self, row: int) -> str:
         """Get the current Comment value from line edit or internal task dict."""
@@ -1327,13 +1516,24 @@ class AssignedTasksTable(QTableWidget):
 
             comm_val = self._get_comment(r)
             comp_val = self._get_task_completed(r) or "0"
+            done_val = self._get_task_done_till_now(r) or comp_val
 
             kra_list.append({
                 "TimeSheet_id": str(task.get("timesheet_id") or ""),
+                "timesheet_id": str(task.get("timesheet_id") or ""),
                 "kra_id": str(task.get("kra_id") or task.get("id") or ""),
                 "remark": comm_val,
+                "comment": comm_val,
                 "task_completed": comp_val,
+                "task_done": done_val,
             })
+
+        if not resolved_date:
+            resolved_date = (
+                str(getattr(self, "_page_date", "") or "").strip()
+                or str(getattr(self, "_current_date", "") or "").strip()
+                or date.today().strftime("%Y-%m-%d")
+            )
 
         submit_status_val = "0" if is_draft else "1"
 
@@ -1351,8 +1551,47 @@ class AssignedTasksTable(QTableWidget):
                         submit_status=submit_status_val,
                     )
 
+                is_already_sub = (
+                    "already submitted" in str(msg).lower()
+                    or str((res or {}).get("status")) == "2"
+                    or (res or {}).get("is_already_submitted", False)
+                )
+
+                if not is_draft and is_already_sub:
+                    fresh_tasks = []
+                    try:
+                        fresh_tasks = svc.fetch_assigned_tasks(date=resolved_date, force=True)
+                    except Exception as fe:
+                        logger.warning("fetch_assigned_tasks failed verifying already submitted: %s", fe)
+
+                    if fresh_tasks and self._is_submitted_data(fresh_tasks):
+                        svc.mark_timesheet_submitted(resolved_date)
+                        self._signals.batch_success.emit(
+                            False,
+                            msg or "Timesheet already submitted.",
+                            {
+                                "response": res or {},
+                                "fresh_tasks": fresh_tasks,
+                                "saved_kra_list": kra_list,
+                                "date": resolved_date,
+                                "is_already_submitted": True,
+                            },
+                        )
+                        return
+                    else:
+                        self._signals.batch_error.emit(
+                            False,
+                            "Timesheet already submitted on server, but existing record could not be confirmed.",
+                        )
+                        return
+
                 if ok:
-                    fresh_tasks = svc.fetch_assigned_tasks(date=resolved_date, force=True)
+                    fresh_tasks = []
+                    try:
+                        fresh_tasks = svc.fetch_assigned_tasks(date=resolved_date, force=True)
+                    except Exception as fe:
+                        logger.warning("fetch_assigned_tasks failed after successful submit: %s", fe)
+
                     self._signals.batch_success.emit(
                         is_draft,
                         msg or ("Draft saved successfully." if is_draft else "Timesheet submitted successfully."),
@@ -1381,36 +1620,120 @@ class AssignedTasksTable(QTableWidget):
         submission_date = data.get("date") or self._page_date or self._current_date
 
         if not is_draft:
-            # Backend has authoritatively confirmed Timesheet submission succeeded
-            self._user_drafts.clear()
+            # Backend has authoritatively confirmed Timesheet submission succeeded.
+            # Do not clear or replace form state with an incomplete response!
+            saved_items = data.get("saved_kra_list", [])
+            saved_map_by_kra: Dict[str, Dict[str, Any]] = {}
+            saved_map_by_ts: Dict[str, Dict[str, Any]] = {}
+            for item in saved_items:
+                k_id = str(item.get("kra_id") or item.get("id") or "").strip()
+                ts_id = str(item.get("TimeSheet_id") or item.get("timesheet_id") or "").strip()
+                if k_id:
+                    saved_map_by_kra[k_id] = item
+                if ts_id:
+                    saved_map_by_ts[ts_id] = item
+
+            # Update our persistent drafts and local tasks with the saved values using stable identifiers
+            for r_idx, t in enumerate(self._tasks):
+                k_id = str(t.get("kra_id") or t.get("id") or "").strip()
+                ts_id = str(t.get("timesheet_id") or "").strip()
+                matched = saved_map_by_kra.get(k_id) or saved_map_by_ts.get(ts_id)
+                t_key = self._task_key(t, r_idx)
+                if t_key not in self._user_drafts:
+                    self._user_drafts[t_key] = {}
+                if matched:
+                    saved_comp = str(matched.get("task_completed") or "").strip()
+                    saved_rem = str(matched.get("remark") or matched.get("comment") or "").strip()
+                    if saved_comp:
+                        self._user_drafts[t_key]["task_completed"] = saved_comp
+                        t["task_completed"] = saved_comp
+                    if saved_rem:
+                        self._user_drafts[t_key]["comment"] = saved_rem
+                        t["comment"] = saved_rem
+                        t["remark"] = saved_rem
+                    if matched.get("task_done"):
+                        self._user_drafts[t_key]["task_done"] = str(matched["task_done"])
+                        t["task_done"] = str(matched["task_done"])
+                        t["task_done_till_now"] = str(matched["task_done"])
+                t["submit_status"] = "1"
+                t["status"] = "Completed"
+                if isinstance(t.get("raw"), dict):
+                    t["raw"]["submit_status"] = "1"
+
             if fresh_tasks:
                 for ft in fresh_tasks:
-                    if not ft.get("submit_status"):
-                        ft["submit_status"] = "1"
+                    ft["submit_status"] = "1"
+                    ft["status"] = "Completed"
+                    if isinstance(ft.get("raw"), dict):
+                        ft["raw"]["submit_status"] = "1"
+
+                    k_id = str(ft.get("kra_id") or ft.get("id") or "").strip()
+                    ts_id = str(ft.get("timesheet_id") or "").strip()
+                    matched = saved_map_by_kra.get(k_id) or saved_map_by_ts.get(ts_id)
+                    if matched:
+                        saved_comp = str(matched.get("task_completed") or "").strip()
+                        saved_rem = str(matched.get("remark") or matched.get("comment") or "").strip()
+                        if (ft.get("task_completed") is None or str(ft.get("task_completed")).strip() == "") and saved_comp:
+                            ft["task_completed"] = saved_comp
+                        if not ft.get("comment") and saved_rem:
+                            ft["comment"] = saved_rem
+                            ft["remark"] = saved_rem
+                        if not ft.get("task_done") or str(ft.get("task_done")).strip() in ("-", "0", "0.00", ""):
+                            if matched.get("task_done"):
+                                ft["task_done"] = str(matched["task_done"])
+                                ft["task_done_till_now"] = str(matched["task_done"])
                 self.set_tasks(fresh_tasks, date=submission_date)
             else:
-                for local_t in self._tasks:
-                    local_t["submit_status"] = "1"
-                    if isinstance(local_t.get("raw"), dict):
-                        local_t["raw"]["submit_status"] = "1"
+                self.set_tasks(self._tasks, date=submission_date)
+
+            # Reset button texts/styles in case unsubmitted state is ever set again
+            self.submit_btn.setText("Submit")
+            self.submit_btn.setStyleSheet(self._submit_btn_style_default())
+            self.save_draft_btn.setText("Save as Draft")
+            self.save_draft_btn.setStyleSheet(self._draft_btn_style_default())
+
+            try:
+                from services.task_service import TaskService
+                TaskService().mark_timesheet_submitted(submission_date)
+            except Exception:
+                pass
 
             self.set_submitted(True)
             self._show_status("Timesheet submitted successfully.", is_error=False)
         else:
             # Draft saved successfully - update user drafts with saved values
             for item in data.get("saved_kra_list", []):
-                k_id = item.get("kra_id")
-                ts_id = item.get("TimeSheet_id")
+                k_id = str(item.get("kra_id") or item.get("id") or "").strip()
+                ts_id = str(item.get("TimeSheet_id") or item.get("timesheet_id") or "").strip()
                 for r_idx, t in enumerate(self._tasks):
-                    if (k_id and (t.get("kra_id") == k_id or t.get("id") == k_id)) or (ts_id and t.get("timesheet_id") == ts_id):
+                    if (k_id and (str(t.get("kra_id") or t.get("id") or "") == k_id)) or (ts_id and str(t.get("timesheet_id") or "") == ts_id):
                         t_key = self._task_key(t, r_idx)
                         if t_key not in self._user_drafts:
                             self._user_drafts[t_key] = {}
-                        self._user_drafts[t_key]["comment"] = item.get("remark", "")
-                        self._user_drafts[t_key]["task_completed"] = item.get("task_completed", "")
+                        rem = str(item.get("remark") or item.get("comment") or "").strip()
+                        comp = str(item.get("task_completed") or "").strip()
+                        if rem:
+                            self._user_drafts[t_key]["comment"] = rem
+                            t["comment"] = rem
+                            t["remark"] = rem
+                        if comp:
+                            self._user_drafts[t_key]["task_completed"] = comp
+                            t["task_completed"] = comp
+                        if item.get("task_done"):
+                            self._user_drafts[t_key]["task_done"] = str(item["task_done"])
 
             self.set_submitted(False)
             if fresh_tasks:
+                for ft in fresh_tasks:
+                    k_id = str(ft.get("kra_id") or ft.get("id") or "").strip()
+                    ts_id = str(ft.get("timesheet_id") or "").strip()
+                    for item in data.get("saved_kra_list", []):
+                        if (k_id and str(item.get("kra_id") or "") == k_id) or (ts_id and str(item.get("TimeSheet_id") or item.get("timesheet_id") or "") == ts_id):
+                            if item.get("task_completed"):
+                                ft["task_completed"] = str(item["task_completed"]).strip()
+                            if item.get("remark") or item.get("comment"):
+                                ft["comment"] = str(item.get("remark") or item.get("comment")).strip()
+                                ft["remark"] = ft["comment"]
                 self.set_tasks(fresh_tasks, date=submission_date)
 
             if hasattr(self, "buttons_container"):
@@ -1422,17 +1745,23 @@ class AssignedTasksTable(QTableWidget):
             self.save_draft_btn.setText("Draft Saved ✓")
             self.save_draft_btn.setStyleSheet(self._btn_style_success())
             self._show_status("Draft saved successfully.", is_error=False)
+            QTimer.singleShot(3500, self._reset_action_buttons)
 
         if self._tasks:
             self.task_saved.emit(self._tasks[0])
-
-        QTimer.singleShot(3500, self._reset_action_buttons)
 
     def _handle_batch_error(self, is_draft: bool, err_msg: str) -> None:
         """Handle failed batch submission while preserving entered values."""
         logger.warning("AssignedTasksTable: batch error is_draft=%s: %s", is_draft, err_msg)
         self._is_submitting = False
         self.set_submitted(False)
+
+        if hasattr(self, "buttons_container"):
+            self.buttons_container.show()
+        self.save_draft_btn.show()
+        self.submit_btn.show()
+        self.save_draft_btn.setEnabled(True)
+        self.submit_btn.setEnabled(True)
 
         if is_draft:
             self.save_draft_btn.setText("Retry Draft ⚠️")
