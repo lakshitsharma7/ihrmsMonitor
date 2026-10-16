@@ -446,8 +446,9 @@ class MainWindow(QMainWindow):
     _request_system_suspend = Signal()
     _request_system_resume = Signal()
 
-    def __init__(self, login_window=None) -> None:
+    def __init__(self, login_window=None, is_background: bool = False) -> None:
         super().__init__()
+        self._is_background = is_background
 
         # Set window icon explicitly
         from PySide6.QtGui import QIcon
@@ -470,6 +471,12 @@ class MainWindow(QMainWindow):
         self._settings_service = SettingsService(get_session)
 
         self._really_quit = False
+        self._worker_recovery_retries = 0
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().set_clean_shutdown(False)
+        except Exception:
+            pass
 
         # ------------------------------------------------------
         # Build UI
@@ -590,6 +597,19 @@ class MainWindow(QMainWindow):
         if sys.platform == "darwin" and not is_running_tests:
             from PySide6.QtCore import QTimer
             QTimer.singleShot(800, self._check_mac_screen_recording_permission)
+
+        # Background mode: ensure window is completely hidden from screen and taskbar
+        if self._is_background:
+            self.hide()
+            if sys.platform.startswith("win"):
+                try:
+                    import win32gui
+                    import win32con
+                    hwnd = int(self.winId())
+                    if hwnd:
+                        win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+                except Exception:
+                    pass
 
     def _sync_permissions_from_backend(self) -> None:
         """Fetch latest backend configuration to dynamically apply permission changes in a background thread."""
@@ -1117,7 +1137,82 @@ class MainWindow(QMainWindow):
             self._worker.handle_system_resume
         )
 
+        self._thread.finished.connect(
+            self._on_tracker_thread_finished
+        )
+
         self._thread.start()
+
+    @Slot()
+    def _on_tracker_thread_finished(self) -> None:
+        """Handle worker thread exiting unexpectedly."""
+        if getattr(self, "_really_quit", False) or getattr(self, "_is_shutting_down", False):
+            return
+
+        logger.error("Activity tracker worker thread finished unexpectedly while application is active.")
+        # 1. Update UI status truthfully
+        if hasattr(self, "dashboard_page") and self.dashboard_page:
+            self.dashboard_page.set_workpulse_active(False)
+            if hasattr(self.dashboard_page, "workpulse_status_label"):
+                self.dashboard_page.workpulse_status_label.setText("Online: Error (Worker Stopped)")
+
+        if hasattr(self, "status_badge") and self.status_badge:
+            self.status_badge.setText("Error")
+            self.status_badge.setStyleSheet(
+                "background-color: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;"
+            )
+
+        # 2. Report error via ErrorReportService
+        try:
+            from services.error_report_service import ErrorReportService
+            ErrorReportService().report_error(
+                error_type="TRACKER_THREAD_TERMINATED",
+                error_message="Activity tracker worker thread terminated unexpectedly during execution.",
+            )
+        except Exception:
+            pass
+
+        # 3. Attempt safe recovery with retry limit (max 3 retries)
+        retry_count = getattr(self, "_worker_recovery_retries", 0)
+        max_retries = 3
+        if retry_count < max_retries:
+            self._worker_recovery_retries = retry_count + 1
+            logger.info("Attempting automatic worker thread recovery (attempt %d/%d)...", self._worker_recovery_retries, max_retries)
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(2000, self._recover_tracker_worker)
+        else:
+            logger.error("Worker thread exceeded max recovery attempts (%d). Tracking remains stopped.", max_retries)
+
+    def _recover_tracker_worker(self) -> None:
+        """Reconstruct and restart the tracker worker thread after unexpected termination."""
+        if getattr(self, "_really_quit", False) or getattr(self, "_is_shutting_down", False):
+            return
+
+        from services.session_service import SessionService
+        session = SessionService().current_user
+        if session and not getattr(session, "workpulse_permitted", True):
+            logger.info("Worker recovery skipped due to RBAC permissions.")
+            return
+
+        try:
+            from tracker.tracker_worker import build_tracker_thread
+            logger.info("Rebuilding tracker worker thread for recovery...")
+            (self._thread, self._worker) = build_tracker_thread(self._tracker)
+            self._worker.state_changed.connect(self._on_tracker_state_changed)
+            self._worker.workpulse_started.connect(self._on_workpulse_started)
+            self._worker.workpulse_stopped.connect(self._on_workpulse_stopped)
+            self._request_start.connect(self._worker.start_workpulse)
+            self._request_stop.connect(self._worker.stop_workpulse)
+            self._request_apply_settings.connect(self._worker.apply_settings)
+            self._request_system_suspend.connect(self._worker.handle_system_suspend)
+            self._request_system_resume.connect(self._worker.handle_system_resume)
+            self._thread.finished.connect(self._on_tracker_thread_finished)
+            self._thread.start()
+
+            self.start_workpulse()
+            logger.info("Tracker worker thread successfully recovered.")
+        except Exception as rec_err:
+            logger.exception("Failed to recover tracker worker thread: %s", rec_err)
 
     # ==========================================================
     # TRAY
@@ -1299,6 +1394,9 @@ class MainWindow(QMainWindow):
             store.set_workpulse_manually_stopped(True)
             store.set_workpulse_active(False)
 
+        if hasattr(self, "_tracker") and self._tracker:
+            self._tracker.stop()
+
         self.set_network_status(getattr(self, "_is_network_online", True))
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
@@ -1328,6 +1426,7 @@ class MainWindow(QMainWindow):
             logger.debug("Stale workpulse_started signal received while workpulse is marked stopped; ignoring")
             return
 
+        self._worker_recovery_retries = 0
         self.set_network_status(getattr(self, "_is_network_online", True))
 
         self.start_button.setEnabled(
@@ -1579,10 +1678,30 @@ class MainWindow(QMainWindow):
 
     def _show_and_raise(self) -> None:
         """Show the main window and bring it to the foreground."""
+        self._is_background = False
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui
+                import win32con
+                hwnd = int(self.winId())
+                if hwnd:
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            except Exception:
+                pass
 
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui
+                hwnd = int(self.winId())
+                if hwnd:
+                    win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
 
     def _show_today_activity(
         self,
@@ -1638,11 +1757,43 @@ class MainWindow(QMainWindow):
 
         event.ignore()
         self.hide()
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui
+                import win32con
+                hwnd = int(self.winId())
+                if hwnd:
+                    win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            except Exception:
+                pass
+        # Verify actual tracking and worker health before reporting background status
+        is_manually_stopped = False
+        try:
+            from services.secure_session import SessionStore
+            is_manually_stopped = SessionStore().is_workpulse_manually_stopped()
+        except Exception:
+            pass
+
+        is_worker_alive = (
+            not is_manually_stopped
+            and hasattr(self, "_tracker")
+            and getattr(self._tracker, "is_workpulse", False)
+            and hasattr(self, "_thread")
+            and self._thread.isRunning()
+        )
+        is_paused = getattr(getattr(self, "dashboard_page", None), "_is_paused", False)
+
         if hasattr(self, "tray") and self.tray:
-            self.tray.show_message(
-                APP_NAME,
-                "Still workpulse in the background.",
-            )
+            if is_worker_alive and not is_paused:
+                self.tray.show_message(
+                    APP_NAME,
+                    f"{APP_NAME} is running in the background.",
+                )
+            elif is_worker_alive and is_paused:
+                self.tray.show_message(
+                    APP_NAME,
+                    f"{APP_NAME} is minimized to tray (tracking paused).",
+                )
 
     def nativeEvent(self, eventType, message):
         """Handle native Windows events including system power suspend/resume and shutdown/restart."""
@@ -1685,6 +1836,12 @@ class MainWindow(QMainWindow):
         if getattr(self, "_is_shutting_down", False):
             return
         self._is_shutting_down = True
+
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().set_clean_shutdown(True)
+        except Exception:
+            pass
 
         logger.info(
             "Shutting down application"

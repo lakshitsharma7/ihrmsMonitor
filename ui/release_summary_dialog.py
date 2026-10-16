@@ -397,6 +397,11 @@ def categorize_release_summary(summary: str) -> Dict[str, List[str]]:
     return result
 
 
+# Shared corner-radius styling tokens for release summary category sections and badges
+RELEASE_SECTION_BORDER_RADIUS = "8px"
+RELEASE_BADGE_BORDER_RADIUS = "4px"
+
+
 def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
     """
     Generate professional category-wise HTML for QTextBrowser.
@@ -410,6 +415,8 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
             "badge_bg": "#dcfce7",
             "badge_border": "#86efac",
             "badge_text": "#15803d",
+            "border_radius": RELEASE_SECTION_BORDER_RADIUS,
+            "badge_radius": RELEASE_BADGE_BORDER_RADIUS,
         },
         "IMPROVEMENT": {
             "title": "▲ IMPROVEMENT",
@@ -418,6 +425,8 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
             "badge_bg": "#ccfbf1",
             "badge_border": "#5eead4",
             "badge_text": "#0f766e",
+            "border_radius": RELEASE_SECTION_BORDER_RADIUS,
+            "badge_radius": RELEASE_BADGE_BORDER_RADIUS,
         },
         "FIX": {
             "title": "● FIX",
@@ -426,6 +435,8 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
             "badge_bg": "#fee2e2",
             "badge_border": "#fca5a5",
             "badge_text": "#b91c1c",
+            "border_radius": RELEASE_SECTION_BORDER_RADIUS,
+            "badge_radius": RELEASE_BADGE_BORDER_RADIUS,
         },
         "UNCATEGORIZED": {
             "title": "■ NOTE",
@@ -434,6 +445,8 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
             "badge_bg": "#f1f5f9",
             "badge_border": "#cbd5e1",
             "badge_text": "#475569",
+            "border_radius": RELEASE_SECTION_BORDER_RADIUS,
+            "badge_radius": RELEASE_BADGE_BORDER_RADIUS,
         },
     }
 
@@ -453,12 +466,12 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
         items_html = "".join(list_items)
 
         block = f"""
-        <table width="100%" cellpadding="10" cellspacing="0" style="background-color: {cfg['bg_color']}; border: 1px solid {cfg['border_color']}; border-radius: 8px; margin-bottom: 12px;">
+        <table class="release-card" width="100%" cellpadding="10" cellspacing="0" style="background-color: {cfg['bg_color']}; border: 1px solid {cfg['border_color']}; border-radius: {cfg['border_radius']}; margin-bottom: 12px;">
           <tr>
             <td>
               <table cellpadding="0" cellspacing="0" style="margin-bottom: 6px;">
                 <tr>
-                  <td style="background-color: {cfg['badge_bg']}; border: 1px solid {cfg['badge_border']}; border-radius: 4px; padding: 2px 8px;">
+                  <td class="release-badge" style="background-color: {cfg['badge_bg']}; border: 1px solid {cfg['badge_border']}; border-radius: {cfg['badge_radius']}; padding: 2px 8px;">
                     <span style="color: {cfg['badge_text']}; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;">{cfg['title']}</span>
                   </td>
                 </tr>
@@ -485,6 +498,14 @@ def render_categorized_summary_html(categories: Dict[str, List[str]]) -> str:
           margin: 0;
           padding: 2px;
           background-color: #ffffff;
+        }}
+        .release-card {{
+          border-radius: {RELEASE_SECTION_BORDER_RADIUS};
+          margin-bottom: 12px;
+        }}
+        .release-badge {{
+          border-radius: {RELEASE_BADGE_BORDER_RADIUS};
+          padding: 2px 8px;
         }}
       </style>
     </head>

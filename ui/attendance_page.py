@@ -856,7 +856,7 @@ class AttendancePage(QWidget):
         self.leave_balance_button.setStyleSheet(
             """
             QPushButton {
-                border-radius: 10px; font-weight: 600; font-size: 12px;
+                border-radius: 6px; font-weight: 600; font-size: 12px;
                 border: 1px solid #D9E1EC; background: #FFFFFF;
                 color: #334155; padding: 6px 14px;
             }
@@ -876,7 +876,7 @@ class AttendancePage(QWidget):
         self.error_banner.setObjectName("ErrorBanner")
         self.error_banner.setStyleSheet(
             "QLabel { background-color: #FEF2F2; color: #EF4444; "
-            "border: 1px solid #FECACA; border-radius: 10px; "
+            "border: 1px solid #FECACA; border-radius: 6px; "
             "padding: 10px 14px; font-size: 13px; font-weight: 600; }"
         )
         self.error_banner.setVisible(False)
@@ -1024,7 +1024,7 @@ class AttendancePage(QWidget):
             QPushButton {
                 background: #F8FAFC;
                 border: 1px solid #E2E8F0;
-                border-radius: 14px;
+                border-radius: 6px;
                 color: #334155;
                 font-size: 13px;
                 font-weight: 700;

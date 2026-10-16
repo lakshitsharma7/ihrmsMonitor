@@ -36,7 +36,7 @@ QMainWindow {
 
 #StatusBadge {
     padding: 4px 10px;
-    border-radius: 10px;
+    border-radius: 6px;
     font-weight: 600;
 }
 
@@ -60,7 +60,7 @@ QMainWindow {
     color: #b06000;
 }
 
-QGroupBox {
+QGroupBox, QGroupBox#TodayTimeCard, QGroupBox#AttendanceCard, QGroupBox#StatusCard {
     background-color: #ffffff;
     border: 1px solid #dfe3eb;
     border-radius: 8px;
@@ -144,6 +144,35 @@ QPushButton#WeeklyTimelineButton:hover {
     background-color: #e0f2fe;
     border-color: #38bdf8;
     color: #0369a1;
+}
+
+QPushButton#AttendanceButton {
+    background-color: #1a73e8;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+QPushButton#AttendanceButton:hover {
+    background-color: #1765cc;
+}
+
+QPushButton#StatusVersionButton {
+    background-color: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 1px 8px;
+}
+
+QPushButton#StatusVersionButton:hover {
+    background-color: #e2e8f0;
+    border-color: #94a3b8;
+}
+
+QPushButton#StatusVersionButton:pressed {
+    background-color: #cbd5e1;
 }
 
 QTableWidget {

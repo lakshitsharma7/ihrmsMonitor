@@ -357,6 +357,7 @@ class DashboardPage(QWidget):
         # Shows Active Time (HH:MM:SS) and Weekly Timeline button
         # --------------------------------------------------------------
         today_group = QGroupBox("Today's Time", content)
+        today_group.setObjectName("TodayTimeCard")
         today_layout = QVBoxLayout(today_group)
         today_layout.setContentsMargins(14, 12, 14, 12)
         today_layout.setSpacing(4)
@@ -545,17 +546,17 @@ class DashboardPage(QWidget):
         self.version_button.setToolTip("Click to view release summary and version history")
         self.version_button.setStyleSheet(
             """
-            QPushButton#StatusVersionButton {
+            QPushButton#StatusVersionButton, QPushButton {
                 background-color: #f1f5f9;
                 border: 1px solid #cbd5e1;
-                border-radius: 11px;
+                border-radius: 6px;
                 padding: 1px 8px;
             }
-            QPushButton#StatusVersionButton:hover {
+            QPushButton#StatusVersionButton:hover, QPushButton:hover {
                 background-color: #e2e8f0;
                 border-color: #94a3b8;
             }
-            QPushButton#StatusVersionButton:pressed {
+            QPushButton#StatusVersionButton:pressed, QPushButton:pressed {
                 background-color: #cbd5e1;
             }
             """

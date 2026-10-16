@@ -1283,3 +1283,12 @@ class LoginWindow(QMainWindow):
         self.username_input.setEnabled(True)
         self.password_input.setEnabled(True)
         self.toggle_password_action.setEnabled(True)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().set_clean_shutdown(True)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
