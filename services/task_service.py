@@ -336,15 +336,15 @@ class TaskService:
         raw_completed = item.get("task_completed")
         if raw_completed is not None and str(raw_completed).strip() not in ("None", "null", ""):
             task_completed_str = str(raw_completed).strip()
-        elif (submit_status in ("1", "2", "true", "True") or str(item.get("status")).strip().lower() in ("completed", "submitted")) and item.get("task_done"):
-            # When get_kra returns a submitted timesheet, the progress recorded for the timesheet is returned in task_done
+        elif (
+            timesheet_id
+            or submit_status in ("1", "2", "true", "True")
+            or str(item.get("status")).strip().lower() in ("completed", "submitted")
+        ) and item.get("task_done") is not None:
+            # When get_kra returns a timesheet entry (draft or submitted), the progress recorded for the timesheet is returned in task_done
             raw_d = str(item.get("task_done")).strip()
-            if raw_d and raw_d != "-":
-                try:
-                    f_d = float(raw_d)
-                    task_completed_str = f"{int(f_d)}" if f_d.is_integer() else f"{f_d:g}"
-                except ValueError:
-                    task_completed_str = raw_d
+            if raw_d and raw_d not in ("None", "null", "-"):
+                task_completed_str = raw_d
             else:
                 task_completed_str = ""
         else:
@@ -424,29 +424,44 @@ class TaskService:
             or "-"
         ).strip()
 
-        target = str(
-            item.get("target")
-            or item.get("target_criteria")
-            or item.get("target_value")
-            or item.get("target_date")
-            or "-"
-        ).strip()
+        raw_target = item.get("target")
+        if raw_target is None:
+            raw_target = item.get("target_criteria")
+        if raw_target is None:
+            raw_target = item.get("target_value")
+        if raw_target is None:
+            raw_target = item.get("target_date")
 
-        measurement_criteria = str(
-            item.get("measurement_criteria")
-            or item.get("measurement")
-            or item.get("criteria")
-            or item.get("kpi")
-            or "-"
-        ).strip()
+        if raw_target is not None and str(raw_target).strip() not in ("None", "null", ""):
+            target = str(raw_target).strip()
+        else:
+            target = "-"
 
-        task_done = str(
-            item.get("task_done")
-            or item.get("task_done_till_now")
-            or item.get("progress")
-            or item.get("hours_done")
-            or "-"
-        ).strip()
+        raw_mc = item.get("measurement_criteria")
+        if raw_mc is None:
+            raw_mc = item.get("measurement")
+        if raw_mc is None:
+            raw_mc = item.get("criteria")
+        if raw_mc is None:
+            raw_mc = item.get("kpi")
+
+        if raw_mc is not None and str(raw_mc).strip() not in ("None", "null", ""):
+            measurement_criteria = str(raw_mc).strip()
+        else:
+            measurement_criteria = "-"
+
+        raw_done = item.get("task_done")
+        if raw_done is None:
+            raw_done = item.get("task_done_till_now")
+        if raw_done is None:
+            raw_done = item.get("progress")
+        if raw_done is None:
+            raw_done = item.get("hours_done")
+
+        if raw_done is not None and str(raw_done).strip() not in ("None", "null", ""):
+            task_done = str(raw_done).strip()
+        else:
+            task_done = "-"
 
         emp_name = str(
             item.get("employee_name")

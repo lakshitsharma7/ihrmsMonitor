@@ -428,6 +428,7 @@ class AssignedTasksTable(QTableWidget):
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self.setAutoScroll(False)
+        self.setTabKeyNavigation(False)
 
         self.setMinimumWidth(250)
         self.setMinimumHeight(120)
@@ -576,88 +577,21 @@ class AssignedTasksTable(QTableWidget):
         return f"{d}::{key}" if d else key
 
     def _init_task_base_progress(self, task: Dict[str, Any]) -> None:
-        """Initialize authoritative base progress baseline from server data."""
-        raw_done = str(task.get("task_done") or task.get("task_done_till_now") or "").strip()
-        is_percent = raw_done.endswith("%")
-        clean_done = raw_done[:-1].strip() if is_percent else raw_done
-        decimals = len(clean_done.split(".")[1]) if "." in clean_done else 0
-        had_dash = (clean_done == "-" or not clean_done)
-
-        try:
-            done_num = float(clean_done) if clean_done and clean_done != "-" else None
-        except ValueError:
-            done_num = None
-
+        """Initialize base progress baseline from server data."""
+        raw_done = str(task.get("task_done") or task.get("task_done_till_now") or "-").strip()
         raw_comp = str(task.get("task_completed") if task.get("task_completed") is not None else "").strip()
-        try:
-            comp_num = float(raw_comp) if raw_comp else 0.0
-        except ValueError:
-            comp_num = 0.0
-
         task["_initial_done_str"] = raw_done
-        task["_initial_comp_val"] = comp_num
-        task["_is_percent"] = is_percent
-        task["_decimals"] = decimals
-        task["_had_dash"] = had_dash
-        task["_done_num"] = done_num
+        task["_initial_comp_val"] = raw_comp
 
-    def _compute_done_till_now(self, task: Dict[str, Any], completed_text: str) -> str:
+    def _compute_done_till_now(self, task: Dict[str, Any], completed_text: str = "") -> str:
         """
-        Calculate synchronized Task Done Till Now.
-        If task_done is numeric/percentage:
-          new_done = initial_done + (current_comp - initial_comp)
-        If initial_done is non-numeric/dash:
-          if current_comp is provided: new_done = current_comp
-          if current_comp is empty: new_done = "-"
+        Return the API-provided Task Done Till Now value.
+        Task Done Till Now is an API-provided value and must not be altered dynamically by Task Completed edits.
         """
-        if "_done_num" not in task:
-            self._init_task_base_progress(task)
-
-        done_num = task.get("_done_num")
-        initial_comp_val = task.get("_initial_comp_val", 0.0)
-        is_percent = bool(task.get("_is_percent", False))
-        decimals = task.get("_decimals", 0)
-        had_dash = bool(task.get("_had_dash", False))
-
-        val_str = str(completed_text or "").strip()
-        if not val_str:
-            comp_num = 0.0
-            is_empty = True
-        else:
-            try:
-                comp_num = float(val_str)
-                if comp_num < 0:
-                    comp_num = 0.0
-                    is_empty = True
-                else:
-                    is_empty = False
-            except ValueError:
-                comp_num = 0.0
-                is_empty = True
-
-        if done_num is not None:
-            delta = (comp_num - initial_comp_val) if not is_empty else (0.0 - initial_comp_val)
-            total = max(0.0, done_num + delta)
-        elif had_dash:
-            if is_empty:
-                return "-"
-            total = comp_num
-        else:
-            if is_empty:
-                return task.get("_initial_done_str", "-")
-            total = comp_num
-
-        if decimals > 0:
-            formatted = f"{total:.{decimals}f}"
-        elif total.is_integer():
-            formatted = str(int(total))
-        else:
-            formatted = f"{total:g}"
-
-        if is_percent:
-            formatted = f"{formatted}%"
-
-        return formatted
+        raw_done = task.get("task_done") or task.get("task_done_till_now") or task.get("_initial_done_str")
+        if raw_done is not None and str(raw_done).strip() not in ("None", "null", ""):
+            return str(raw_done).strip()
+        return "-"
 
     def set_submitted(self, submitted: bool) -> None:
         """Update submission state, widget read-only mode, and button visibility."""
@@ -1124,9 +1058,6 @@ class AssignedTasksTable(QTableWidget):
                         task["remark"] = draft["comment"]
                     if "task_completed" in draft:
                         task["task_completed"] = draft["task_completed"]
-                        computed_done = self._compute_done_till_now(task, draft["task_completed"])
-                        task["task_done"] = computed_done
-                        task["task_done_till_now"] = computed_done
                 else:
                     # In submitted state, if the API response is incomplete (e.g. omitted comment or task_completed),
                     # restore from the authoritative saved values using stable task key
@@ -1135,10 +1066,6 @@ class AssignedTasksTable(QTableWidget):
                         task["remark"] = draft["comment"]
                     if (task.get("task_completed") is None or str(task.get("task_completed")).strip() == "") and "task_completed" in draft:
                         task["task_completed"] = draft["task_completed"]
-                        computed_done = self._compute_done_till_now(task, draft["task_completed"])
-                        if not task.get("task_done") or str(task.get("task_done")).strip() in ("-", "0", "0.00", ""):
-                            task["task_done"] = computed_done
-                            task["task_done_till_now"] = computed_done
 
         if not self._tasks:
             self.setRowCount(1)
@@ -1284,6 +1211,23 @@ class AssignedTasksTable(QTableWidget):
             comment_layout.addWidget(comment_edit)
             self.setCellWidget(row, 9, comment_container)
 
+        # Configure logical Tab navigation order across all editable fields and actions
+        prev_edit: Optional[QWidget] = None
+        for r_idx in range(len(self._tasks)):
+            comp_le = self._get_line_edit(r_idx, 8)
+            cmt_le = self._get_line_edit(r_idx, 9)
+            if comp_le and cmt_le:
+                if prev_edit:
+                    QWidget.setTabOrder(prev_edit, comp_le)
+                QWidget.setTabOrder(comp_le, cmt_le)
+                prev_edit = cmt_le
+
+        if prev_edit:
+            QWidget.setTabOrder(prev_edit, self.save_draft_btn)
+            QWidget.setTabOrder(self.save_draft_btn, self.submit_btn)
+            if getattr(self, "additional_task_widget", None) and hasattr(self.additional_task_widget, "text_edit"):
+                QWidget.setTabOrder(self.submit_btn, self.additional_task_widget.text_edit)
+
         self.setMinimumHeight(min(450, 48 + len(self._tasks) * 54))
         self._adjust_column_widths()
         self.horizontalScrollBar().setValue(prev_h_scroll)
@@ -1301,7 +1245,7 @@ class AssignedTasksTable(QTableWidget):
                     le.setCursorPosition(cursor_pos)
 
     def _on_task_completed_changed(self, row: int, text: str) -> None:
-        """Synchronize backing task state, progress, and persistent drafts when user edits Task Completed."""
+        """Synchronize backing task state and persistent drafts when user edits Task Completed."""
         val = text.strip()
         self._edited_rows.add(row)
         if row < len(self._tasks):
@@ -1312,18 +1256,7 @@ class AssignedTasksTable(QTableWidget):
                 self._user_drafts[t_key] = {}
             self._user_drafts[t_key]["task_completed"] = val
 
-            new_done = self._compute_done_till_now(task, val)
-            task["task_done"] = new_done
-            task["task_done_till_now"] = new_done
-            self._user_drafts[t_key]["task_done"] = new_done
-
             prev_h = self.horizontalScrollBar().value()
-            done_item = self.item(row, 7)
-            if done_item and done_item.text() != new_done:
-                done_item.setText(new_done)
-                if self.horizontalScrollBar().value() != prev_h:
-                    self.horizontalScrollBar().setValue(prev_h)
-
             item = self.item(row, 8)
             if item and item.text() != val:
                 item.setText(val)
@@ -1384,8 +1317,11 @@ class AssignedTasksTable(QTableWidget):
         if edit:
             return edit.text().strip()
         if row < len(self._tasks):
-            return str(self._tasks[row].get("task_completed") or "0").strip()
-        return "0"
+            val = self._tasks[row].get("task_completed")
+            if val is not None and str(val).strip() not in ("None", "null"):
+                return str(val).strip()
+            return ""
+        return ""
 
     def _get_task_done_till_now(self, row: int) -> str:
         """Get the current Task Done Till Now value from table item or internal task dict."""
@@ -1515,8 +1451,18 @@ class AssignedTasksTable(QTableWidget):
                 resolved_date = d
 
             comm_val = self._get_comment(r)
-            comp_val = self._get_task_completed(r) or "0"
-            done_val = self._get_task_done_till_now(r) or comp_val
+            comp_val = self._get_task_completed(r)
+            if not comp_val and task.get("task_completed") is not None and str(task.get("task_completed")).strip() != "":
+                comp_val = str(task.get("task_completed")).strip()
+            if not comp_val:
+                comp_val = "0"
+            done_val = self._get_task_done_till_now(r)
+            if not done_val or done_val == "-":
+                raw_td = task.get("task_done") or task.get("task_done_till_now")
+                if raw_td is not None and str(raw_td).strip() not in ("None", "null", "-", ""):
+                    done_val = str(raw_td).strip()
+                else:
+                    done_val = comp_val
 
             kra_list.append({
                 "TimeSheet_id": str(task.get("timesheet_id") or ""),

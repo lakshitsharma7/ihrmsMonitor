@@ -218,6 +218,7 @@ class LinedTaskTextEdit(QPlainTextEdit):
         font.setStyleHint(QFont.StyleHint.SansSerif)
         self.setFont(font)
         self.setPlaceholderText("Enter additional tasks or daily activity details here...")
+        self.setTabChangesFocus(True)
 
         # Fixed left margin area holding the red margin rule at x=28px
         self.margin_area = TaskMarginArea(self)
@@ -391,6 +392,9 @@ class AdditionalTaskWidget(QWidget):
 
         actions_layout.addWidget(self.btn_container)
         layout.addLayout(actions_layout)
+
+        QWidget.setTabOrder(self.text_edit, self.save_draft_btn)
+        QWidget.setTabOrder(self.save_draft_btn, self.submit_btn)
 
     @property
     def is_submitted(self) -> bool:

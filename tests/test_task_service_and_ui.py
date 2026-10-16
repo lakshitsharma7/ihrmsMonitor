@@ -2200,7 +2200,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertTrue(addl_widget.submit_btn.isHidden())
 
     def test_task_completed_synchronizes_task_done_till_now_immediately(self):
-        """Verify changing Task Completed immediately updates Task Done Till Now without server overwrite."""
+        """Verify Task Completed updates internal draft while Task Done Till Now remains authoritative API value."""
         table = AssignedTasksTable()
         tasks = [
             {
@@ -2217,30 +2217,33 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table.set_tasks(tasks, date="2026-10-14")
         QCoreApplication.processEvents()
 
-        # Initial baseline: Done Till Now is 5
+        # Initial baseline: Done Till Now is 5 from API
         self.assertEqual(table.item(0, 7).text(), "5")
 
         comp_edit = table._get_line_edit(0, 8)
         self.assertIsNotNone(comp_edit)
 
-        # Type '3' -> 5 + (3 - 0) = 8
+        # Type '3' -> Task Completed is 3, Done Till Now remains API-provided 5
         comp_edit.setText("3")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(0, 7).text(), "8")
-        self.assertEqual(table._get_task_done_till_now(0), "8")
+        self.assertEqual(table.item(0, 7).text(), "5")
+        self.assertEqual(table._get_task_done_till_now(0), "5")
+        self.assertEqual(table._get_task_completed(0), "3")
 
-        # Type '1' -> 5 + (1 - 0) = 6
+        # Type '1' -> Task Completed is 1, Done Till Now remains 5
         comp_edit.setText("1")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(0, 7).text(), "6")
+        self.assertEqual(table.item(0, 7).text(), "5")
+        self.assertEqual(table._get_task_completed(0), "1")
 
-        # Clear text -> returns to baseline 5
+        # Clear text -> returns to empty, Done Till Now remains baseline 5
         comp_edit.setText("")
         QCoreApplication.processEvents()
         self.assertEqual(table.item(0, 7).text(), "5")
+        self.assertEqual(table._get_task_completed(0), "")
 
     def test_task_completed_synchronizes_percentage_decimals_and_dashes(self):
-        """Verify sync handles percentages, decimals, dashes, and invalid inputs gracefully."""
+        """Verify Task Done Till Now preserves percentages, decimals, and dashes as API-provided values."""
         table = AssignedTasksTable()
         tasks = [
             {
@@ -2273,26 +2276,28 @@ class TestTaskServiceAndUI(unittest.TestCase):
         comp0 = table._get_line_edit(0, 8)
         comp0.setText("15")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(0, 7).text(), "25%")
+        self.assertEqual(table.item(0, 7).text(), "10%")
+        self.assertEqual(table._get_task_completed(0), "15")
 
         comp0.setText("")
         QCoreApplication.processEvents()
         self.assertEqual(table.item(0, 7).text(), "10%")
 
-        # Row 1: Decimal (2.50 with initial completed 0.50)
+        # Row 1: Decimal
         self.assertEqual(table.item(1, 7).text(), "2.50")
         comp1 = table._get_line_edit(1, 8)
-        # Type '1.50' -> delta = 1.50 - 0.50 = +1.00 -> 3.50
         comp1.setText("1.50")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(1, 7).text(), "3.50")
+        self.assertEqual(table.item(1, 7).text(), "2.50")
+        self.assertEqual(table._get_task_completed(1), "1.50")
 
         # Row 2: Dash
         self.assertEqual(table.item(2, 7).text(), "-")
         comp2 = table._get_line_edit(2, 8)
         comp2.setText("4")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(2, 7).text(), "4")
+        self.assertEqual(table.item(2, 7).text(), "-")
+        self.assertEqual(table._get_task_completed(2), "4")
 
         comp2.setText("")
         QCoreApplication.processEvents()
@@ -2331,7 +2336,7 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table._get_line_edit(0, 9).setText("Oct 14 draft notes")
         QCoreApplication.processEvents()
 
-        self.assertEqual(table.item(0, 7).text(), "6")
+        self.assertEqual(table.item(0, 7).text(), "2")
         self.assertEqual(table._get_comment(0), "Oct 14 draft notes")
 
         # 2. Switch to Day 2
@@ -2347,21 +2352,21 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table._get_line_edit(0, 8).setText("7")
         table._get_line_edit(0, 9).setText("Oct 15 draft notes")
         QCoreApplication.processEvents()
-        self.assertEqual(table.item(0, 7).text(), "9")
+        self.assertEqual(table.item(0, 7).text(), "2")
 
         # 3. Switch back to Day 1: Day 1 draft is preserved and restored
         table.set_tasks(tasks_day1, date="2026-10-14")
         QCoreApplication.processEvents()
         self.assertEqual(table._get_task_completed(0), "4")
         self.assertEqual(table._get_comment(0), "Oct 14 draft notes")
-        self.assertEqual(table.item(0, 7).text(), "6")
+        self.assertEqual(table.item(0, 7).text(), "2")
 
         # 4. Switch back to Day 2: Day 2 draft is preserved and restored
         table.set_tasks(tasks_day2, date="2026-10-15")
         QCoreApplication.processEvents()
         self.assertEqual(table._get_task_completed(0), "7")
         self.assertEqual(table._get_comment(0), "Oct 15 draft notes")
-        self.assertEqual(table.item(0, 7).text(), "9")
+        self.assertEqual(table.item(0, 7).text(), "2")
 
     def test_failed_submission_retry_button_resets_when_user_edits(self):
         """Verify Retry button styling/text resets back to Submit when user edits inputs after failure."""
@@ -2629,15 +2634,15 @@ class TestTaskServiceAndUI(unittest.TestCase):
         table._get_line_edit(3, 9).setText("ebebe")
         QCoreApplication.processEvents()
 
-        # Requirement 8: Task Done Till Now incremental calculation
-        # Row 0: 122.00 + 32 = 154.00
-        self.assertEqual(table.item(0, 7).text(), "154.00")
-        # Row 1: 0.00 + 23 = 23.00
-        self.assertEqual(table.item(1, 7).text(), "23.00")
-        # Row 2: '-' was empty -> 34
-        self.assertEqual(table.item(2, 7).text(), "34")
-        # Row 3: 10.00 + 35 = 45.00
-        self.assertEqual(table.item(3, 7).text(), "45.00")
+        # Requirement 8: Task Done Till Now remains authoritative API value
+        # Row 0: 122.00
+        self.assertEqual(table.item(0, 7).text(), "122.00")
+        # Row 1: 0.00
+        self.assertEqual(table.item(1, 7).text(), "0.00")
+        # Row 2: '-'
+        self.assertEqual(table.item(2, 7).text(), "-")
+        # Row 3: 10.00
+        self.assertEqual(table.item(3, 7).text(), "10.00")
 
         # Requirement 6: Simulate API failure
         with patch.object(TaskService, "save_time_sheet", return_value=(False, "500 Internal Server Error", None)):
@@ -3322,6 +3327,250 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertFalse(widget.btn_container.isVisible())
         self.assertTrue(widget.text_edit.isReadOnly())
         self.assertEqual(widget.submit_btn.text(), "Submit Task")
+
+    def test_timesheet_tab_navigation_forward_and_backward(self):
+        """Verify pressing Tab moves focus from Task Completed -> Comment -> next row Task Completed, and Shift+Tab reverses."""
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
+
+        win = QMainWindow()
+        central = QWidget(win)
+        layout = QVBoxLayout(central)
+
+        table = AssignedTasksTable(central)
+        layout.addWidget(table)
+        layout.addWidget(table.actions_widget)
+
+        addl_widget = AdditionalTaskWidget(central)
+        layout.addWidget(addl_widget)
+        table.additional_task_widget = addl_widget
+
+        win.setCentralWidget(central)
+
+        tasks = [
+            {"kra_id": "101", "name": "Task Alpha", "weightage": "50%", "task_done": "10", "task_completed": "5", "comment": "Comment A"},
+            {"kra_id": "102", "name": "Task Beta", "weightage": "50%", "task_done": "20", "task_completed": "15", "comment": "Comment B"},
+        ]
+        table.set_tasks(tasks, date="2026-10-16")
+        win.show()
+        QCoreApplication.processEvents()
+
+        le_0_8 = table._get_line_edit(0, 8)
+        le_0_9 = table._get_line_edit(0, 9)
+        le_1_8 = table._get_line_edit(1, 8)
+        le_1_9 = table._get_line_edit(1, 9)
+
+        # 1. Start focus on Row 0 Task Completed
+        le_0_8.setFocus()
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_0_8)
+
+        # 2. Tab -> Row 0 Comment
+        QTest.keyClick(le_0_8, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_0_9)
+
+        # 3. Tab -> Row 1 Task Completed
+        QTest.keyClick(le_0_9, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_1_8)
+
+        # 4. Tab -> Row 1 Comment
+        QTest.keyClick(le_1_8, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_1_9)
+
+        # 5. Tab -> Save as Draft Button
+        QTest.keyClick(le_1_9, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), table.save_draft_btn)
+
+        # 6. Tab -> Submit Button
+        QTest.keyClick(table.save_draft_btn, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), table.submit_btn)
+
+        # 7. Backward Shift+Tab navigation
+        QTest.keyClick(table.submit_btn, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), table.save_draft_btn)
+
+        QTest.keyClick(table.save_draft_btn, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_1_9)
+
+        QTest.keyClick(le_1_9, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_1_8)
+
+        QTest.keyClick(le_1_8, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_0_9)
+
+        QTest.keyClick(le_0_9, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_0_8)
+
+    def test_additional_task_tab_navigation(self):
+        """Verify Tab in Additional Task editor navigates to next control without inserting tabs or spaces."""
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
+
+        win = QMainWindow()
+        central = QWidget(win)
+        layout = QVBoxLayout(central)
+
+        addl_widget = AdditionalTaskWidget(central)
+        layout.addWidget(addl_widget)
+        win.setCentralWidget(central)
+        win.show()
+        QCoreApplication.processEvents()
+
+        addl_widget.set_task_content("Initial task notes")
+        addl_widget.text_edit.setFocus()
+        QCoreApplication.processEvents()
+
+        # Press Tab inside editor
+        QTest.keyClick(addl_widget.text_edit, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+
+        # Focus must move to Save As Draft button
+        self.assertEqual(QApplication.focusWidget(), addl_widget.save_draft_btn)
+        # Text must NOT have tabs or extra spaces inserted
+        self.assertEqual(addl_widget.text_edit.toPlainText(), "Initial task notes")
+
+        # Press Tab -> Submit Task button
+        QTest.keyClick(addl_widget.save_draft_btn, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), addl_widget.submit_btn)
+
+        # Press Shift+Tab -> Save As Draft button
+        QTest.keyClick(addl_widget.submit_btn, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), addl_widget.save_draft_btn)
+
+        # Press Shift+Tab -> Additional Task text editor
+        QTest.keyClick(addl_widget.save_draft_btn, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), addl_widget.text_edit)
+
+    def test_keyboard_navigation_without_mouse_click_and_value_preservation(self):
+        """Verify typing and tabbing seamlessly persists edited values without requiring mouse clicks."""
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QMainWindow
+
+        win = QMainWindow()
+        table = AssignedTasksTable(win)
+        win.setCentralWidget(table)
+
+        tasks = [
+            {"kra_id": "201", "name": "Task 1", "weightage": "50%", "task_done": "0", "task_completed": "", "comment": ""},
+        ]
+        table.set_tasks(tasks, date="2026-10-16")
+        win.show()
+        QCoreApplication.processEvents()
+
+        le_comp = table._get_line_edit(0, 8)
+        le_comm = table._get_line_edit(0, 9)
+
+        le_comp.setFocus()
+        QCoreApplication.processEvents()
+        QTest.keyClicks(le_comp, "25")
+        QCoreApplication.processEvents()
+
+        # Tab to comment field without mouse click
+        QTest.keyClick(le_comp, Qt.Key.Key_Tab)
+        QCoreApplication.processEvents()
+        self.assertEqual(QApplication.focusWidget(), le_comm)
+
+        QTest.keyClicks(le_comm, "Module tested")
+        QCoreApplication.processEvents()
+
+        self.assertEqual(le_comp.text(), "25")
+        self.assertEqual(le_comm.text(), "Module tested")
+        self.assertEqual(table._tasks[0]["task_completed"], "25")
+        self.assertEqual(table._tasks[0]["comment"], "Module tested")
+
+
+    def test_timesheet_portal_data_matching_precision_and_no_calc(self):
+        """
+        Verify fix for data mismatch between iHRMS Desktop Timesheet/KRA values and HRMS portal:
+        1. Preserves original decimal precision from API (e.g. '32.00' not truncated to '32').
+        2. Draft timesheet records (submit_status == '0', timesheet_id present) populate
+           Task Completed with saved value rather than wiping to empty string.
+        3. Task Done Till Now is an API-provided value and is NOT recalculated from Task Completed.
+        4. Submitting preserves exact numeric strings and does not replace values with '0'.
+        """
+        svc = TaskService()
+
+        # 1. Test normalization for submitted date (matching 2026-10-16 API response)
+        submitted_item = {
+            "kra_id": "211",
+            "name": "Ivory Farmer",
+            "description": "Deleniti hic cum min",
+            "target": "1",
+            "measurement_criteria": "Culpa in eiusmod et",
+            "weightage": "25.00",
+            "category_name": "PDP",
+            "task_done": "32.00",
+            "comment": "sdadada",
+            "submit_status": "1",
+            "timesheet_id": "894",
+        }
+        norm_sub = svc._normalize_task_item(submitted_item, "2026-10-16")
+        self.assertEqual(norm_sub["task_done"], "32.00")
+        self.assertEqual(norm_sub["task_completed"], "32.00")
+        self.assertEqual(norm_sub["comment"], "sdadada")
+
+        # 2. Test normalization for draft date (matching 2026-10-15 API response)
+        draft_item = {
+            "kra_id": "211",
+            "name": "Ivory Farmer",
+            "description": "Deleniti hic cum min",
+            "target": "1",
+            "measurement_criteria": "Culpa in eiusmod et",
+            "weightage": "25.00",
+            "category_name": "PDP",
+            "task_done": "122.00",
+            "comment": "sdadada",
+            "submit_status": "0",
+            "timesheet_id": "852",
+        }
+        norm_draft = svc._normalize_task_item(draft_item, "2026-10-15")
+        self.assertEqual(norm_draft["task_done"], "122.00")
+        self.assertEqual(norm_draft["task_completed"], "122.00")
+        self.assertEqual(norm_draft["comment"], "sdadada")
+
+        # 3. Test UI table rendering and editing
+        table = AssignedTasksTable()
+        table.set_tasks([norm_draft], date="2026-10-15")
+        QCoreApplication.processEvents()
+
+        # Column 7 (Done Till Now) and Column 8 (Task Completed)
+        self.assertEqual(table.item(0, 7).text(), "122.00")
+        comp_edit = table._get_line_edit(0, 8)
+        self.assertEqual(comp_edit.text(), "122.00")
+
+        # User edits Task Completed to 135.50
+        comp_edit.setText("135.50")
+        QCoreApplication.processEvents()
+
+        # Column 7 must REMAIN '122.00' (API baseline, not calculated!)
+        self.assertEqual(table.item(0, 7).text(), "122.00")
+        self.assertEqual(table._get_task_completed(0), "135.50")
+
+        # 4. Test submission payload assembly
+        captured_payloads = []
+        with patch.object(TaskService, "save_time_sheet", side_effect=lambda **kwargs: captured_payloads.append(kwargs) or (True, "OK", {})):
+            table.submit_all_tasks(is_draft=True)
+            time.sleep(0.1)
+            QCoreApplication.processEvents()
+
+        self.assertEqual(len(captured_payloads), 1)
+        sub_items = captured_payloads[0].get("kra_list") or captured_payloads[0].get("tasks")
+        self.assertEqual(sub_items[0]["task_completed"], "135.50")
+        self.assertEqual(sub_items[0]["task_done"], "122.00")
+        self.assertEqual(sub_items[0]["remark"], "sdadada")
 
 
 if __name__ == "__main__":
