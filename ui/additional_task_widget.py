@@ -460,6 +460,12 @@ class AdditionalTaskWidget(QWidget):
             self.text_edit.setPlainText(new_val)
 
         if is_submitted is not None:
+            if is_submitted:
+                try:
+                    from services.task_service import TaskService
+                    TaskService().mark_additional_task_submitted(self._date)
+                except Exception:
+                    pass
             self.set_submitted(is_submitted)
         else:
             try:

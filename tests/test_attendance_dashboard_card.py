@@ -74,8 +74,9 @@ class TestAttendanceDashboardCard(unittest.TestCase):
         AttendanceService().record_workpulse_start()
         AttendanceService().record_punch_in(f"{today_str} 09:45:00", date_str=today_str)
 
-        dashboard = DashboardPage(activity_service=mock_svc)
-        dashboard.refresh(async_mode=False)
+        with patch.object(AttendanceService, "fetch_punch_time", return_value=None):
+            dashboard = DashboardPage(activity_service=mock_svc)
+            dashboard.refresh(async_mode=False)
 
         self.assertEqual(dashboard.punch_time_label.text(), "Punch Time: 09:45 AM")
         self.assertEqual(dashboard.attendance_punch_val_label.text(), "🟢 09:45 AM")

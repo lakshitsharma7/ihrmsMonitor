@@ -161,6 +161,115 @@ class TaskService:
 
         return resolved_indo, resolved_key
 
+    def _resolve_base_url(self) -> Optional[str]:
+        """Resolve base API URL with fallback across ApiConfig, SessionStore, and QSettings."""
+        try:
+            from config.api_config import ApiConfig
+            cfg = ApiConfig()
+            if getattr(cfg, "_base_url", None):
+                return cfg._base_url.rstrip("/")
+            if cfg.is_verified:
+                return cfg.base_url.rstrip("/")
+        except Exception:
+            pass
+
+        try:
+            from services.secure_session import SessionStore
+            sess = SessionStore().load_session()
+            if sess and sess.get("base_url"):
+                return str(sess.get("base_url")).rstrip("/")
+        except Exception:
+            pass
+
+        try:
+            from PySide6.QtCore import QSettings
+            st = QSettings("Indovision", "iHRMSMonitor")
+            b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+            if not b:
+                st_leg = QSettings("Indovision", "iHRMS")
+                b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
+            if b:
+                return str(b).rstrip("/")
+        except Exception:
+            pass
+
+        return None
+
+    def _resolve_kra_url(self) -> Optional[str]:
+        try:
+            url = ApiConfig().get_kra_url
+            if url:
+                return url
+        except Exception:
+            pass
+        env_url = os.environ.get("IHRMS_GET_KRA_API_URL")
+        if env_url:
+            return env_url
+        base = self._resolve_base_url()
+        if base:
+            return f"{base}/TaskPMS/get_kra"
+        return None
+
+    def _resolve_fill_timesheet_url(self) -> Optional[str]:
+        try:
+            url = ApiConfig().fill_time_sheet_url
+            if url:
+                return url
+        except Exception:
+            pass
+        env_url = os.environ.get("IHRMS_FILL_TIME_SHEET_API_URL")
+        if env_url:
+            return env_url
+        base = self._resolve_base_url()
+        if base:
+            return f"{base}/TaskPMS/fill_time_sheet"
+        return None
+
+    def _resolve_save_additional_task_url(self) -> Optional[str]:
+        try:
+            url = ApiConfig().save_additional_task_url
+            if url:
+                return url
+        except Exception:
+            pass
+        env_url = os.environ.get("IHRMS_SAVE_ADDITIONAL_TASK_API_URL")
+        if env_url:
+            return env_url
+        base = self._resolve_base_url()
+        if base:
+            return f"{base}/TaskPMS/save_additional_task"
+        return None
+
+    def _resolve_draft_kra_date_url(self) -> Optional[str]:
+        try:
+            url = ApiConfig().get_draft_kra_date_url
+            if url:
+                return url
+        except Exception:
+            pass
+        env_url = os.environ.get("IHRMS_GET_DRAFT_KRA_DATE_API_URL")
+        if env_url:
+            return env_url
+        base = self._resolve_base_url()
+        if base:
+            return f"{base}/TaskPMS/get_draft_kra_date"
+        return None
+
+    def _resolve_submit_kra_date_url(self) -> Optional[str]:
+        try:
+            url = ApiConfig().get_submit_kra_date_url
+            if url:
+                return url
+        except Exception:
+            pass
+        env_url = os.environ.get("IHRMS_GET_SUBMIT_KRA_DATE_API_URL")
+        if env_url:
+            return env_url
+        base = self._resolve_base_url()
+        if base:
+            return f"{base}/TaskPMS/get_submit_kra_date_v2"
+        return None
+
     def _normalize_task_item(self, item: Any, default_date: str) -> Optional[Dict[str, Any]]:
         """Normalize various API task / KRA response dict formats into uniform structure."""
         if not isinstance(item, dict):
@@ -407,7 +516,16 @@ class TaskService:
             date: <YYYY-MM-DD>
         """
         now_dt = datetime.now().astimezone()
-        date_key = str(date or now_dt.strftime("%Y-%m-%d")).strip()
+        raw_date_str = str(date or now_dt.strftime("%Y-%m-%d")).strip()
+        if len(raw_date_str) == 10 and (raw_date_str[2] in ("-", "/") and raw_date_str[5] in ("-", "/")):
+            sep = raw_date_str[2]
+            try:
+                dt = datetime.strptime(raw_date_str, f"%d{sep}%m{sep}%Y")
+                date_key = dt.strftime("%Y-%m-%d")
+            except Exception:
+                date_key = raw_date_str
+        else:
+            date_key = raw_date_str
 
         # Check rate-limiting cooldown (120 seconds) unless force=True
         current_ts = time.time()
@@ -426,15 +544,8 @@ class TaskService:
             logger.debug("TaskService: missing indo_code, returning empty task list.")
             return []
 
-        # Resolve endpoint URL from ApiConfig
-        try:
-            kra_url = ApiConfig().get_kra_url
-        except Exception as config_err:
-            logger.debug("TaskService: could not resolve get_kra_url from ApiConfig: %s", config_err)
-            kra_url = None
-
-        if not kra_url:
-            kra_url = os.environ.get("IHRMS_GET_KRA_API_URL")
+        # Resolve endpoint URL with fallback
+        kra_url = self._resolve_kra_url()
 
         if not kra_url:
             with self._state_lock:
@@ -477,17 +588,45 @@ class TaskService:
         if isinstance(res_json, list):
             raw_items = res_json
         elif isinstance(res_json, dict):
-            # Check emp_kra, data, tasks, or kra array
+            # Check emp_kra, kra_list, kraList, data, tasks, kra, result
             if isinstance(res_json.get("emp_kra"), list):
                 raw_items = res_json["emp_kra"]
+            elif isinstance(res_json.get("kra_list"), list):
+                raw_items = res_json["kra_list"]
+            elif isinstance(res_json.get("kraList"), list):
+                raw_items = res_json["kraList"]
             elif isinstance(res_json.get("data"), list):
                 raw_items = res_json["data"]
             elif isinstance(res_json.get("tasks"), list):
                 raw_items = res_json["tasks"]
             elif isinstance(res_json.get("kra"), list):
                 raw_items = res_json["kra"]
+            elif isinstance(res_json.get("result"), list):
+                raw_items = res_json["result"]
             elif isinstance(res_json.get("data"), dict):
-                raw_items = [res_json["data"]]
+                nested_data = res_json["data"]
+                if isinstance(nested_data.get("emp_kra"), list):
+                    raw_items = nested_data["emp_kra"]
+                elif isinstance(nested_data.get("kra_list"), list):
+                    raw_items = nested_data["kra_list"]
+                elif isinstance(nested_data.get("kraList"), list):
+                    raw_items = nested_data["kraList"]
+                elif isinstance(nested_data.get("tasks"), list):
+                    raw_items = nested_data["tasks"]
+                else:
+                    raw_items = [nested_data]
+            elif isinstance(res_json.get("result"), dict):
+                nested_res = res_json["result"]
+                if isinstance(nested_res.get("emp_kra"), list):
+                    raw_items = nested_res["emp_kra"]
+                elif isinstance(nested_res.get("kra_list"), list):
+                    raw_items = nested_res["kra_list"]
+                elif isinstance(nested_res.get("kraList"), list):
+                    raw_items = nested_res["kraList"]
+                elif isinstance(nested_res.get("tasks"), list):
+                    raw_items = nested_res["tasks"]
+                else:
+                    raw_items = [nested_res]
             elif any(k in res_json for k in ("kra_id", "task_id", "task_name", "kra_name", "title")):
                 raw_items = [res_json]
 
@@ -514,7 +653,7 @@ class TaskService:
                     root_date = str(res_json.get(df)).strip()
                     break
 
-        default_task_date = str(date).strip() if date else root_date
+        default_task_date = str(date).strip() if date else (root_date or date_key)
 
         root_submit_status = ""
         data_dict = res_json.get("data") if isinstance(res_json.get("data"), dict) else {}
@@ -542,6 +681,8 @@ class TaskService:
         for raw in raw_items:
             norm = self._normalize_task_item(raw, default_date=default_task_date)
             if norm:
+                if not norm.get("date"):
+                    norm["date"] = default_task_date
                 if not norm.get("employee_name") and root_emp_name:
                     norm["employee_name"] = root_emp_name
                 if not norm.get("indo_code") and root_emp_code:
@@ -593,7 +734,7 @@ class TaskService:
                     or is_server_submitted
                 )
                 if is_add_sub:
-                    self._submitted_additional_dates.add(date_key)
+                    self.mark_additional_task_submitted(date_key)
                 add_status = "Completed" if is_add_sub else "In Progress"
                 normalized.append({
                     "id": "add_task_1",
@@ -740,14 +881,7 @@ class TaskService:
         if not formatted_kra_list:
             return False, "No KRA items provided to save.", None
 
-        try:
-            fill_url = ApiConfig().fill_time_sheet_url
-        except Exception as config_err:
-            logger.debug("TaskService: could not resolve fill_time_sheet_url: %s", config_err)
-            fill_url = None
-
-        if not fill_url:
-            fill_url = os.environ.get("IHRMS_FILL_TIME_SHEET_API_URL")
+        fill_url = self._resolve_fill_timesheet_url()
 
         if not fill_url:
             return False, "Fill timesheet API endpoint not configured.", None
@@ -800,7 +934,8 @@ class TaskService:
             )
             if is_already_sub:
                 res_json["is_already_submitted"] = True
-                return False, str(resp_msg or "Timesheet already submitted"), res_json
+                self.mark_timesheet_submitted(date_val)
+                return True, str(resp_msg or "Timesheet already submitted"), res_json
 
             if str(resp_status) in ("1", "200", "True", "true") or str(res_json.get("response")).lower() in ("success", "200"):
                 if str(submit_status) == "1":
@@ -853,14 +988,7 @@ class TaskService:
         if not resolved_indo:
             return False, "User not logged in or employee code missing.", None
 
-        try:
-            save_url = ApiConfig().save_additional_task_url
-        except Exception as config_err:
-            logger.debug("TaskService: could not resolve save_additional_task_url: %s", config_err)
-            save_url = None
-
-        if not save_url:
-            save_url = os.environ.get("IHRMS_SAVE_ADDITIONAL_TASK_API_URL")
+        save_url = self._resolve_save_additional_task_url()
 
         if not save_url:
             return False, "Save additional task API endpoint not configured.", None
@@ -975,19 +1103,13 @@ class TaskService:
         """
         date_apis: list[tuple[str, str]] = []
 
-        try:
-            draft_url = ApiConfig().get_draft_kra_date_url
-            if draft_url:
-                date_apis.append(("draft_kra_date", draft_url))
-        except Exception:
-            pass
+        draft_url = self._resolve_draft_kra_date_url()
+        if draft_url:
+            date_apis.append(("draft_kra_date", draft_url))
 
-        try:
-            submit_url = ApiConfig().get_submit_kra_date_url
-            if submit_url:
-                date_apis.append(("submit_kra_date", submit_url))
-        except Exception:
-            pass
+        submit_url = self._resolve_submit_kra_date_url()
+        if submit_url:
+            date_apis.append(("submit_kra_date", submit_url))
 
         if not date_apis:
             logger.debug("_resolve_kra_cycle_date: no date-discovery API available.")

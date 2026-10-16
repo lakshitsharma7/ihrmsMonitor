@@ -376,6 +376,28 @@ class ApiConfig:
         """
 
         if not self._base_url:
+            try:
+                from services.secure_session import SessionStore
+                sess = SessionStore().load_session()
+                if sess and sess.get("base_url"):
+                    self._base_url = str(sess.get("base_url")).rstrip("/")
+            except Exception:
+                pass
+
+        if not self._base_url:
+            try:
+                from PySide6.QtCore import QSettings
+                st = QSettings("Indovision", "iHRMSMonitor")
+                b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+                if not b:
+                    st_leg = QSettings("Indovision", "iHRMS")
+                    b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
+                if b:
+                    self._base_url = str(b).rstrip("/")
+            except Exception:
+                pass
+
+        if not self._base_url:
             raise ApiConfigError(
                 "No company has been verified. "
                 "Enter and verify a Company Code first."
@@ -471,11 +493,15 @@ class ApiConfig:
     @property
     def punch_url(self) -> str | None:
         """Configurable punch endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("punch/get_punch_time")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_PUNCH_API_URL")
             or self._details.get("punch_url")
             or self._details.get("punch_api_url")
-            or (self.endpoint("punch/get_punch_time") if self.is_verified else None)
+            or default_ep
         )
         if url and not (url.lower().endswith("get_punch_time") or url.lower().endswith("get_punch_time/")):
             if url.rstrip("/").lower().endswith("punch"):
@@ -555,54 +581,74 @@ class ApiConfig:
     @property
     def get_kra_url(self) -> str | None:
         """Configurable KRA / Task fetch endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("TaskPMS/get_kra")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_GET_KRA_API_URL")
             or self._details.get("get_kra_url")
             or self._details.get("kra_url")
-            or (self.endpoint("TaskPMS/get_kra") if self.is_verified else None)
+            or default_ep
         )
         return url
 
     @property
     def get_draft_kra_date_url(self) -> str | None:
         """Configurable Draft KRA fetch endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("TaskPMS/get_draft_kra_date")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_GET_DRAFT_KRA_DATE_API_URL")
             or self._details.get("get_draft_kra_date_url")
             or self._details.get("draft_kra_date_url")
-            or (self.endpoint("TaskPMS/get_draft_kra_date") if self.is_verified else None)
+            or default_ep
         )
         return url
 
     @property
     def get_submit_kra_date_url(self) -> str | None:
         """Configurable Submit KRA fetch endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("TaskPMS/get_submit_kra_date_v2")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_GET_SUBMIT_KRA_DATE_API_URL")
             or self._details.get("get_submit_kra_date_url")
             or self._details.get("submit_kra_date_url")
-            or (self.endpoint("TaskPMS/get_submit_kra_date_v2") if self.is_verified else None)
+            or default_ep
         )
         return url
 
     @property
     def fill_time_sheet_url(self) -> str | None:
         """Configurable fill timesheet endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("TaskPMS/fill_time_sheet")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_FILL_TIME_SHEET_API_URL")
             or self._details.get("fill_time_sheet_url")
             or self._details.get("fill_timesheet_url")
-            or (self.endpoint("TaskPMS/fill_time_sheet") if self.is_verified else None)
+            or default_ep
         )
         return url
 
     @property
     def save_additional_task_url(self) -> str | None:
         """Configurable save additional task endpoint URL from AppController, environment, or default endpoint."""
+        try:
+            default_ep = self.endpoint("TaskPMS/save_additional_task")
+        except Exception:
+            default_ep = None
         url = (
             os.environ.get("IHRMS_SAVE_ADDITIONAL_TASK_API_URL")
             or self._details.get("save_additional_task_url")
-            or (self.endpoint("TaskPMS/save_additional_task") if self.is_verified else None)
+            or default_ep
         )
         return url
 

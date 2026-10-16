@@ -339,10 +339,10 @@ class AttendanceService:
         # If both punches are already recorded for this day, limit checks to once every hour
         if not force:
             if has_both_punches and (current_ts - last_fetch < 3600):
-                return day_data
+                return self.get_daily_attendance(date_key)
             # Cooldown of 3 minutes between checks to prevent continuous polling
             if current_ts - last_fetch < 180:
-                return day_data
+                return self.get_daily_attendance(date_key)
 
         # 3. Resolve indo_code and key
         resolved_indo_code = indo_code
@@ -483,15 +483,19 @@ class AttendanceService:
                 res_json.get("punch_in_time")
                 or res_json.get("punch_in")
                 or res_json.get("in_time")
+                or res_json.get("first_punch")
+                or res_json.get("first_in")
             )
             punch_out_val = (
                 res_json.get("punch_out_time")
                 or res_json.get("punch_out")
                 or res_json.get("out_time")
+                or res_json.get("last_punch")
+                or res_json.get("last_out")
             )
 
-            # Check nested data object if present
-            data_obj = res_json.get("data")
+            # Check nested data or result object if present
+            data_obj = res_json.get("data") if res_json.get("data") is not None else res_json.get("result")
             if isinstance(data_obj, dict):
                 if not punch_in_val:
                     punch_in_val = (
@@ -534,6 +538,19 @@ class AttendanceService:
             self.record_punch_out(norm_punch_out, date_str=date_key)
 
         return self.get_daily_attendance(date_key)
+
+    def get_punch_time(self, date_str: str | None = None) -> dict | None:
+        """
+        Retrieve punch in and punch out details for a given date.
+        First checks local daily attendance state; if punches are missing, attempts
+        to fetch from the Punch API.
+        """
+        norm_date = str(date_str).strip() if date_str else None
+        att = self.get_daily_attendance(norm_date)
+        if not att.get("punch_in") and not att.get("punch_out"):
+            self.fetch_punch_time(punch_date=norm_date)
+            att = self.get_daily_attendance(norm_date)
+        return att
 
     def get_daily_attendance(self, date_str: str | None = None) -> dict:
         """

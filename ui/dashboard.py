@@ -197,7 +197,10 @@ class DashboardPage(QWidget):
         if punch_formatted:
             self.punch_time_label.setText(f"Punch Time: {punch_formatted}")
             if hasattr(self, "attendance_punch_val_label"):
-                self.attendance_punch_val_label.setText(f"🟢 {punch_formatted}")
+                if punch_out_formatted and punch_out_formatted != punch_formatted:
+                    self.attendance_punch_val_label.setText(f"🟢 {punch_formatted} - {punch_out_formatted}")
+                else:
+                    self.attendance_punch_val_label.setText(f"🟢 {punch_formatted}")
                 self.attendance_punch_val_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
             if hasattr(self, "attendance_status_badge"):
                 if punch_out_formatted:
@@ -435,6 +438,13 @@ class DashboardPage(QWidget):
         title_row.addWidget(self.attendance_header_title)
         title_row.addStretch(1)
 
+        self.attendance_status_badge = QLabel("● Not Punched", attendance_group)
+        self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
+        self.attendance_status_badge.setStyleSheet(
+            "background-color: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid #cbd5e1;"
+        )
+        title_row.addWidget(self.attendance_status_badge)
+
         self.attendance_header_subtitle = QLabel("Today's Attendance", attendance_group)
         self.attendance_header_subtitle.setObjectName("AttendanceCardSubtitle")
         self.attendance_header_subtitle.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b; margin-top: 1px;")
@@ -483,10 +493,6 @@ class DashboardPage(QWidget):
         attendance_layout.addSpacing(2)
 
         # Retain backward-compatible labels for test suite and existing references
-        self.attendance_status_badge = QLabel("● Not Punched", self)
-        self.attendance_status_badge.setObjectName("AttendanceStatusBadge")
-        self.attendance_status_badge.setVisible(False)
-
         self.start_time_label = QLabel("Start Time: --:-- --", self)
         self.start_time_label.setObjectName("StatusLabel")
         self.start_time_label.setVisible(False)
@@ -659,6 +665,7 @@ class DashboardPage(QWidget):
         self.additional_task_widget = AdditionalTaskWidget(parent=self)
         self.add_additional_task_widget = self.additional_task_widget
         self.task_table.additional_task_widget = self.additional_task_widget
+        self.additional_task_widget.task_saved.connect(self._on_additional_task_saved)
         tasks_layout.addWidget(self.additional_task_widget)
 
         root.addWidget(tasks_group)
@@ -928,9 +935,9 @@ class DashboardPage(QWidget):
                 logger.debug("Sync refresh timeline error: %s", err)
 
             try:
-                tasks = TaskService().fetch_assigned_tasks(force=True)
-                self.task_table.set_tasks(tasks)
                 today_str = self._cached_calendar_date.strftime("%Y-%m-%d")
+                tasks = TaskService().fetch_assigned_tasks(date=today_str, force=True)
+                self.task_table.set_tasks(tasks, date=today_str)
                 if hasattr(self, "additional_task_widget"):
                     self.additional_task_widget.set_date(today_str)
                     found_add = False
@@ -953,12 +960,12 @@ class DashboardPage(QWidget):
                             self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
                             break
                     if not found_add:
+                        is_sub = False
                         try:
-                            from services.task_service import TaskService
-                            if TaskService().is_additional_task_submitted(today_str):
-                                self.additional_task_widget.set_submitted(True)
+                            is_sub = TaskService().is_additional_task_submitted(today_str)
                         except Exception:
-                            pass
+                            is_sub = False
+                        self.additional_task_widget.set_task_content("", is_submitted=is_sub)
             except Exception as err:
                 logger.debug("Sync refresh tasks error: %s", err)
 
@@ -997,7 +1004,8 @@ class DashboardPage(QWidget):
                 today_idle = self._service.get_today_total_idle_seconds()
                 timeline = self._service.get_today_timeline()
                 try:
-                    tasks = TaskService().fetch_assigned_tasks()
+                    fetch_date_str = fetch_date.strftime("%Y-%m-%d") if hasattr(fetch_date, "strftime") else str(fetch_date)
+                    tasks = TaskService().fetch_assigned_tasks(date=fetch_date_str, force=True)
                 except Exception as task_err:
                     logger.debug("Async fetch tasks error: %s", task_err)
                     tasks = []
@@ -1133,6 +1141,16 @@ class DashboardPage(QWidget):
                 self.last_update_label.setText(f"Last Update: {_format_last_update_display(sync_time_str)}")
         except Exception as err:
             logger.debug("Failed to apply refreshed dashboard data: %s", err)
+
+    def _on_additional_task_saved(self, payload: dict) -> None:
+        """Handle additional task saved event to keep cached tasks and UI state synchronized."""
+        try:
+            task_date = str(payload.get("date") or self._cached_calendar_date.strftime("%Y-%m-%d"))
+            from services.task_service import TaskService
+            tasks = TaskService().fetch_assigned_tasks(date=task_date, force=True)
+            self.task_table.set_tasks(tasks, date=task_date)
+        except Exception as err:
+            logger.debug("Error updating tasks after additional task saved: %s", err)
 
     def set_version(self, version: str | None = None) -> None:
         """Dynamically update the displayed application version using the single source of truth."""
