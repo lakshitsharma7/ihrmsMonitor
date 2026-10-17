@@ -15,11 +15,13 @@ settings UI never needs to know which OS it's running on.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from utils.logger import get_logger
-from utils.paths import APP_NAME, is_macos, is_windows
+from config.settings import APP_NAME
+from utils.paths import is_macos, is_windows
 
 logger = get_logger(__name__)
 
@@ -130,6 +132,14 @@ def _find_windows_executable(explicit_path: str | Path | None = None) -> Path | 
 def ensure_startup_registered(executable_path: str | None = None) -> bool:
     """Verify that auto-start is registered with the OS; if missing or invalid, register it."""
     logger.info("Verifying Windows auto-start registration status...")
+    if sys.platform.startswith("win"):
+        try:
+            clean_exe = _find_windows_executable(executable_path)
+            if clean_exe and clean_exe.is_file():
+                _register_windows_scheduled_task(clean_exe)
+        except Exception as reg_err:
+            logger.debug("Scheduled task registration check error: %s", reg_err)
+
     if not is_enabled():
         logger.info("Auto-start entry is missing or points to a non-existent binary; registering now.")
         return set_enabled(True, executable_path)
@@ -179,6 +189,65 @@ def _windows_is_enabled() -> bool:
         return False
 
 
+def _get_scheduled_task_name() -> str:
+    """Return the unique Task Scheduler task name for this user."""
+    username = os.environ.get("USERNAME", "Default")
+    return f"iHRMSDesktopAutoRestart-{username}"
+
+
+def _register_windows_scheduled_task(clean_exe: Path) -> bool:
+    """Register or update a Windows Task Scheduler task that restarts iHRMS Supervisor every 5 minutes."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        sup_candidate = clean_exe.parent / "iHRMS-Supervisor.exe"
+        target_bin = sup_candidate if sup_candidate.is_file() else clean_exe
+        target_dir = str(target_bin.parent)
+        task_name = _get_scheduled_task_name()
+
+        ps_cmd = (
+            f"$action = New-ScheduledTaskAction -Execute '{target_bin}' -Argument '--startup' -WorkingDirectory '{target_dir}'; "
+            f"$tLogon = New-ScheduledTaskTrigger -AtLogOn; "
+            f"$tRep = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5); "
+            f"$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 0); "
+            f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger @($tLogon, $tRep) -Settings $settings -Force"
+        )
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if res.returncode == 0:
+            logger.info("Successfully registered Windows scheduled task: %s", task_name)
+            return True
+        else:
+            logger.warning("Failed to register Windows scheduled task: %s (stderr: %s)", task_name, res.stderr.strip())
+            return False
+    except Exception as exc:
+        logger.warning("Error registering scheduled task: %s", exc)
+        return False
+
+
+def _unregister_windows_scheduled_task() -> bool:
+    """Unregister the Windows Task Scheduler auto-restart task."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        task_name = _get_scheduled_task_name()
+        ps_cmd = f"Unregister-ScheduledTask -TaskName '{task_name}' -Confirm:$false -ErrorAction SilentlyContinue"
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            capture_output=True,
+            timeout=10,
+        )
+        logger.info("Unregistered Windows scheduled task: %s", task_name)
+        return True
+    except Exception as exc:
+        logger.warning("Error unregistering scheduled task: %s", exc)
+        return False
+
+
 def _windows_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
     import winreg  # type: ignore
 
@@ -195,16 +264,26 @@ def _windows_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
                 )
                 return False
 
-            cmd = f'"{clean_exe}" --startup'
+            sup_candidate = clean_exe.parent / "iHRMS-Supervisor.exe"
+            if sup_candidate.is_file():
+                cmd = f'"{sup_candidate}" --startup'
+            else:
+                cmd = f'"{clean_exe}" --supervisor --startup'
+
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
             logger.info("Auto-start registration SUCCESS: HKCU\\%s\\%s = %s", _RUN_KEY_PATH, APP_NAME, cmd)
 
-            # Clean up legacy key if present
-            try:
-                winreg.DeleteValue(key, "iHRMS Monitor")
-                logger.info("Cleaned up legacy 'iHRMS Monitor' startup registry key")
-            except FileNotFoundError:
-                pass
+            # Register Task Scheduler auto-restart fallback (mirrors MeraMonitor recovery)
+            _register_windows_scheduled_task(clean_exe)
+
+            # Clean up legacy keys if present
+            for legacy_key in ("Workpulse", "iHRMS Monitor"):
+                if legacy_key != APP_NAME:
+                    try:
+                        winreg.DeleteValue(key, legacy_key)
+                        logger.info("Cleaned up legacy '%s' startup registry key", legacy_key)
+                    except FileNotFoundError:
+                        pass
             return True
         else:
             removed_any = False
@@ -215,6 +294,7 @@ def _windows_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
                     removed_any = True
                 except FileNotFoundError:
                     pass
+            _unregister_windows_scheduled_task()
             if not removed_any:
                 logger.info("No Windows auto-start Run key was present to remove")
             return True

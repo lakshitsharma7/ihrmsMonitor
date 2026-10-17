@@ -38,7 +38,7 @@ CONSENT_REQUIRED_MESSAGE = "Please accept the consent to continue."
 
 CONSENT_TEXT = (
     "By logging in to iHRMS Desktop, you acknowledge and give your consent to "
-    "your activity information for workplace productivity monitoring."
+    "your activity information for  iHRMS Desktop productivity monitoring."
 )
 
 # Hero logo tile on the login screen.
@@ -385,7 +385,7 @@ class LoginWindow(QMainWindow):
         self.login_step = 1
         self.credentials_container.setVisible(False)
 
-        # Ensure all input fields are always blank on load
+        # Ensure login fields start strictly empty on launch
         self.company_code_input.clear()
         self.username_input.clear()
         self.password_input.clear()
@@ -502,16 +502,28 @@ class LoginWindow(QMainWindow):
 
         return panel
 
-    def show_and_clear(self) -> None:
-        """Clear fields and show the window again (used for logout)."""
+    def show_and_clear(self, error_message: str | None = None, keep_company_code: bool = False) -> None:
+        """Clear fields and show the window again (used for logout or session revocation)."""
         self.login_step = 1
         self.credentials_container.setVisible(False)
         self.login_button.setText("Verify Company")
         
+        last_cc = None
+        if keep_company_code:
+            try:
+                from services.secure_session import SessionStore
+                last_cc = SessionStore().get_last_company_code()
+            except Exception:
+                pass
+
         # Drop the verified company so the next login starts from scratch.
         self._reset_company_context()
 
-        self.company_code_input.clear()
+        if keep_company_code and last_cc:
+            self.company_code_input.setText(last_cc)
+        else:
+            self.company_code_input.clear()
+
         self.username_input.clear()
         self.password_input.clear()
         self.consent_checkbox.setChecked(False)
@@ -523,7 +535,12 @@ class LoginWindow(QMainWindow):
         self._set_password_visible(False)
         self.toggle_password_action.setEnabled(True)
         self.login_button.setEnabled(True)
-        self.error_label.clear()
+        
+        if error_message:
+            self.error_label.setText(str(error_message))
+        else:
+            self.error_label.clear()
+
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -1304,4 +1321,13 @@ class LoginWindow(QMainWindow):
         except Exception:
             pass
         super().closeEvent(event)
+        # If user closes login window without an active session, cleanly quit application
+        if not getattr(self, "main_window", None):
+            from services.session_service import SessionService
+            if SessionService().current_user is None:
+                from PySide6.QtWidgets import QApplication
+                app_inst = QApplication.instance()
+                if app_inst:
+                    app_inst.quit()
+
 

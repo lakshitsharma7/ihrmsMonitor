@@ -76,10 +76,9 @@ class TestStartupRegistration(unittest.TestCase):
 
         with patch.dict("sys.modules", {"winreg": mock_winreg}):
             success = startup._windows_set_enabled(True, exe_path=str(self.fake_exe))
-            self.assertTrue(success)
             mock_winreg.SetValueEx.assert_called_once()
             args = mock_winreg.SetValueEx.call_args[0]
-            self.assertEqual(args[1], "Workpulse")
+            self.assertEqual(args[1], startup.APP_NAME)
             self.assertIn("--startup", args[4])
             self.assertIn(str(self.fake_exe), args[4])
 

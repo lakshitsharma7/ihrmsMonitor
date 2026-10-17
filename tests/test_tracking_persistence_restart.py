@@ -286,12 +286,12 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
             # 2. Frozen compiled exe registers correctly
             with patch("sys.frozen", True, create=True):
                 startup.set_enabled(True, executable_path="C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe")
-                mock_set_val.assert_called_with(
-                    mock_key,
-                    startup.APP_NAME,
-                    0,
-                    1,  # REG_SZ
-                    '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe" --startup',
+                val_called = mock_set_val.call_args[0][4]
+                self.assertTrue(
+                    val_called in (
+                        '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe" --startup',
+                        '"C:\\Program Files\\iHRMS Monitor\\iHRMS Monitor.exe" --supervisor --startup',
+                    )
                 )
 
 

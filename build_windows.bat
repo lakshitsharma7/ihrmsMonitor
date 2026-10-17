@@ -12,6 +12,7 @@ if exist "%~dp0venv\Scripts\python.exe" set "PYTHON_EXE=%~dp0venv\Scripts\python
 
 echo Using Python executable: "!PYTHON_EXE!"
 taskkill /F /IM "iHRMS-Desktop.exe" 2>nul
+taskkill /F /IM "iHRMS-Supervisor.exe" 2>nul
 taskkill /F /IM "Workpulse.exe" 2>nul
 taskkill /F /IM "iHRMS Monitor.exe" 2>nul
 "!PYTHON_EXE!" -m pip install -r requirements.txt -r requirements-windows.txt
@@ -42,6 +43,9 @@ echo [2/5] Signing Application Executable with Authenticode...
 echo ===================================================
 if exist "scripts\sign_windows.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\iHRMS-Desktop\iHRMS-Desktop.exe" -Description "iHRMS Desktop"
+    if exist "dist\iHRMS-Desktop\iHRMS-Supervisor.exe" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\sign_windows.ps1" -Target "dist\iHRMS-Desktop\iHRMS-Supervisor.exe" -Description "iHRMS Desktop Supervisor"
+    )
     if errorlevel 1 (
         echo WARNING: Application executable signing encountered an issue.
         if "%REQUIRE_SIGNING%"=="1" goto :error

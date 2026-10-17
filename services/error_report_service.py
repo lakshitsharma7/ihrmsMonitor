@@ -124,6 +124,9 @@ class ErrorReportService:
         # UI listeners registered for immediate dashboard status updates
         self._listeners: list[Any] = []
 
+        # In-memory recent error audit records
+        self._reported_errors: list[Any] = []
+
         # Cooldown cache: maps hash(signature) -> last_sent_timestamp
         self._sent_reports: dict[str, float] = {}
         self._cooldown_seconds = 3600.0  # 1 hour cooldown per unique error signature
@@ -365,6 +368,21 @@ class ErrorReportService:
             sig: ts for sig, ts in self._sent_reports.items()
             if (now - ts) < (self._cooldown_seconds * 2)
         }
+
+    def clear_error_history(self) -> None:
+        """Clear sent report cooldown history and audit state (useful for tests and resets)."""
+        with self._lock:
+            self._sent_reports.clear()
+            self._reported_errors.clear()
+            self._last_api_request = None
+            self._last_api_response = None
+            self._last_smtp_result = None
+
+    def get_recent_errors(self, limit: int = 10) -> list[Any]:
+        """Return recent in-memory error reports for diagnostic monitoring."""
+        with self._lock:
+            return list(self._reported_errors[-limit:])
+
 
     # ==============================================================
     # CONTEXT COLLECTION
@@ -1762,6 +1780,19 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
                     logger.debug(
                         "Error notification listener failed: %s", listener_err
                     )
+
+            import types
+            error_record = types.SimpleNamespace(
+                error_type=error_type,
+                error_message=error_message,
+                context=context,
+                timestamp=time.time(),
+            )
+            with self._lock:
+                self._reported_errors.append(error_record)
+                if len(self._reported_errors) > 100:
+                    self._reported_errors.pop(0)
+
 
             sig = self._get_error_signature(error_type, error_message)
             if self._is_duplicate(sig):

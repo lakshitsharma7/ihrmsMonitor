@@ -714,6 +714,8 @@ class SyncService:
             logger.info("Device re-enrollment HTTP response: %d", resp.status_code)
             if resp.status_code != 200:
                 logger.error("Device re-enrollment request failed: HTTP %d %s", resp.status_code, resp.text)
+                if resp.status_code in (401, 403) or any(k in resp.text.lower() for k in ("revoked", "invalid credentials", "unauthorized")):
+                    session_svc.notify_session_revoked("Your session has expired or was revoked by the server. Please log in again.")
                 return None
 
             enroll_json = resp.json()

@@ -67,6 +67,49 @@ VSVersionInfo(
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"Generated {out_path} for version {ver} ({v_str})")
+
+    # Also generate supervisor version info
+    sup_content = f"""# UTF-8
+#
+# Version Information file for PyInstaller - {APP_NAME} Supervisor
+#
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={v_tuple},
+    prodvers={v_tuple},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Indovision Services'),
+            StringStruct('FileDescription', '{APP_NAME} Supervisor'),
+            StringStruct('FileVersion', '{v_str}'),
+            StringStruct('InternalName', 'iHRMS-Supervisor'),
+            StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),
+            StringStruct('OriginalFilename', 'iHRMS-Supervisor.exe'),
+            StringStruct('ProductName', '{APP_NAME} Supervisor'),
+            StringStruct('ProductVersion', '{v_str}')
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    sup_path = PROJECT_ROOT / "file_version_info_supervisor.txt"
+    with open(sup_path, "w", encoding="utf-8") as f:
+        f.write(sup_content)
+    print(f"Generated {sup_path} for version {ver} ({v_str})")
     return str(out_path)
 
 

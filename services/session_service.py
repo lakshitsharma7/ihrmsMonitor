@@ -132,6 +132,7 @@ class SessionService:
         employee_id: str | None = None,
         company_code: str | None = None,
         device_token: str | None = None,
+        session_credential: str | None = None,
     ) -> None:
         """Restore a previously saved session.
         
@@ -150,6 +151,7 @@ class SessionService:
             employee_id=employee_id,
             company_code=company_code,
             device_token=device_token,
+            session_credential=session_credential,
         )
 
 
@@ -246,6 +248,33 @@ class SessionService:
                 cb()
             except Exception:
                 pass
+
+    def register_session_revoked_listener(self, callback: Any) -> None:
+        """Register a callback invoked when the session is revoked or expired."""
+        if not hasattr(self, "_revocation_listeners"):
+            self._revocation_listeners = []
+        if callback not in self._revocation_listeners:
+            self._revocation_listeners.append(callback)
+
+    def unregister_session_revoked_listener(self, callback: Any) -> None:
+        """Unregister a session revocation listener."""
+        if hasattr(self, "_revocation_listeners") and callback in self._revocation_listeners:
+            self._revocation_listeners.remove(callback)
+
+    def notify_session_revoked(self, reason: str = "Session expired or revoked") -> None:
+        """Handle server-side session revocation: purge store and notify listeners."""
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().clear_session()
+        except Exception:
+            pass
+        self.clear()
+        if hasattr(self, "_revocation_listeners"):
+            for cb in list(self._revocation_listeners):
+                try:
+                    cb(reason)
+                except Exception:
+                    pass
 
     def update_permissions(
         self,

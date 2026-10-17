@@ -144,8 +144,20 @@ class TrackerWorker(QObject):
     # -- internal ---------------------------------------------------------------
 
     def _on_tick(self) -> None:
-        state: TrackerState = self._tracker.poll()
-        self.state_changed.emit(state)
+        try:
+            state: TrackerState = self._tracker.poll()
+            self.state_changed.emit(state)
+        except Exception as exc:
+            logger.exception("Unexpected exception during TrackerWorker._on_tick: %s", exc)
+            try:
+                from services.error_report_service import ErrorReportService
+                ErrorReportService().report_error(
+                    error_type="TRACKER_WORKER_TICK_ERROR",
+                    error_message=f"TrackerWorker._on_tick failed: {exc}",
+                    exc=exc,
+                )
+            except Exception:
+                pass
 
 
 def build_tracker_thread(tracker: ActivityTracker) -> tuple[QThread, TrackerWorker]:

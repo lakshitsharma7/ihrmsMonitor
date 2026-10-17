@@ -478,6 +478,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        from PySide6.QtWidgets import QApplication
+        app_inst = QApplication.instance()
+        if app_inst:
+            app_inst.setQuitOnLastWindowClosed(False)
+
         from ui.keyboard_navigation import KeyboardNavigationEventFilter
         KeyboardNavigationEventFilter.install()
 
@@ -502,6 +507,7 @@ class MainWindow(QMainWindow):
         # Listen for dynamic permission updates pushed from backend
         from services.session_service import SessionService
         SessionService().register_permission_listener(self._apply_rbac_permissions)
+        SessionService().register_session_revoked_listener(self._on_session_revoked)
 
         # Centralized real-time network connectivity monitor for Header & Window
         try:
@@ -1679,6 +1685,28 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to clear saved session", exc_info=True)
 
         self.close()
+        self.deleteLater()
+
+    def _on_session_revoked(self, reason: str = "Session expired or revoked") -> None:
+        """Handle server-side session expiration or revocation."""
+        logger.warning("Session revocation received: %s. Transitioning to login screen.", reason)
+        try:
+            self.stop_workpulse(manual=False)
+        except Exception:
+            pass
+        self._shutdown()
+        self.hide()
+        if hasattr(self, "tray") and self.tray.tray_icon:
+            self.tray.tray_icon.hide()
+
+        login_win = self._login_window
+        if not login_win:
+            from ui.login_window import LoginWindow
+            login_win = LoginWindow()
+        login_win.show_and_clear(error_message=reason, keep_company_code=True)
+        login_win.showNormal()
+        login_win.raise_()
+        login_win.activateWindow()
         self.deleteLater()
 
     # -- tray actions -----------------------------------------------------------
