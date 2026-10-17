@@ -138,6 +138,9 @@ class DashboardPage(QWidget):
         except Exception:
             pass
 
+        from ui.keyboard_navigation import KeyboardNavigationEventFilter
+        KeyboardNavigationEventFilter.install()
+
         persisted = self._load_persisted_today_seconds(self._cached_calendar_date)
         db_seconds = 0
         try:
@@ -672,6 +675,13 @@ class DashboardPage(QWidget):
         root.addWidget(tasks_group)
         root.addStretch(1)
 
+        # Tab order from dashboard cards through to timesheet
+        QWidget.setTabOrder(self.refresh_button, self.attendance_button)
+        QWidget.setTabOrder(self.attendance_button, self.workpulse_toggle_button)
+        QWidget.setTabOrder(self.workpulse_toggle_button, self.version_button)
+        if hasattr(self, "task_table"):
+            QWidget.setTabOrder(self.version_button, self.task_table)
+
         # Retain table instances (hidden & parented) for seamless data/test compatibility without rendering on Dashboard
         self.usage_table = ApplicationUsageTable(parent=self)
         self.usage_table.setVisible(False)
@@ -687,10 +697,14 @@ class DashboardPage(QWidget):
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
-                "    background-color: #0284c7; color: #ffffff; border: none;"
+                "    background-color: #0284c7; color: #ffffff; border: 1.5px solid transparent;"
                 "}"
                 "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #0369a1;"
+                "}"
+                "QPushButton#WorkPulseToggleButton:focus {"
+                "    border: 2px solid #93c5fd;"
+                "    outline: none;"
                 "}"
             )
         elif is_active:
@@ -698,10 +712,14 @@ class DashboardPage(QWidget):
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
-                "    background-color: #ef4444; color: #ffffff; border: none;"
+                "    background-color: #ef4444; color: #ffffff; border: 1.5px solid transparent;"
                 "}"
                 "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #dc2626;"
+                "}"
+                "QPushButton#WorkPulseToggleButton:focus {"
+                "    border: 2px solid #fca5a5;"
+                "    outline: none;"
                 "}"
             )
         else:
@@ -709,10 +727,14 @@ class DashboardPage(QWidget):
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
-                "    background-color: #0284c7; color: #ffffff; border: none;"
+                "    background-color: #0284c7; color: #ffffff; border: 1.5px solid transparent;"
                 "}"
                 "QPushButton#WorkPulseToggleButton:hover {"
                 "    background-color: #0369a1;"
+                "}"
+                "QPushButton#WorkPulseToggleButton:focus {"
+                "    border: 2px solid #93c5fd;"
+                "    outline: none;"
                 "}"
             )
 

@@ -478,6 +478,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        from ui.keyboard_navigation import KeyboardNavigationEventFilter
+        KeyboardNavigationEventFilter.install()
+
         # ------------------------------------------------------
         # Build UI
         # ------------------------------------------------------
@@ -956,6 +959,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(
             central
         )
+
+        QWidget.setTabOrder(self.hrms_button, self.logout_button)
+        if hasattr(self, "dashboard_page") and hasattr(self.dashboard_page, "refresh_button"):
+            QWidget.setTabOrder(self.logout_button, self.dashboard_page.refresh_button)
 
         self.dashboard_page.refresh()
 

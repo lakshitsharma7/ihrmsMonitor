@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.attendance_service import AttendanceService
+from ui.keyboard_navigation import KeyboardNavigationEventFilter
 from utils.date_utils import format_date_display
 from utils.logger import get_logger
 
@@ -81,6 +82,8 @@ class CalendarDayCard(QFrame):
         self.setObjectName("CalendarDayCard")
         self.setFixedSize(52, 48)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if not self._is_padding:
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._setup_ui()
 
     def _setup_ui(self) -> None:  # noqa: PLR0912, PLR0915
@@ -245,6 +248,10 @@ class CalendarDayCard(QFrame):
                 background-color: #F8FAFC;
                 border-color: #E2E8F0;
             }}
+            QFrame#CalendarDayCard:focus {{
+                background-color: #EEF2FF;
+                border-color: #4F46E5;
+            }}
             /* test_compat: {border_css} {card_bg} */
             """
         )
@@ -340,11 +347,25 @@ class CalendarDayCard(QFrame):
                 "color: #1E293B; font-size: 13px; font-weight: 700; border: none; background: transparent;"
             )
 
+    def click(self) -> None:
+        """Simulate click and emit clicked signal with day data."""
+        if not self._is_padding and self._day_data:
+            self.clicked.emit(self._day_data)
+
     def mousePressEvent(self, event) -> None:
         """Emit clicked signal with day data when user clicks the card."""
         if not self._is_padding and self._day_data:
             self.clicked.emit(self._day_data)
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        """Emit clicked signal with day data when user presses Enter, Return, or Space."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if not self._is_padding and self._day_data:
+                self.clicked.emit(self._day_data)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def set_selected(self, selected: bool) -> None:
         """Toggle selected highlight on the day card."""
@@ -609,6 +630,7 @@ class AttendancePage(QWidget):
         self._day_cards: list[CalendarDayCard] = []
         self._last_rendered_data_key: tuple | None = None
         self.attendance_data_refreshed.connect(self._apply_attendance_data)
+        KeyboardNavigationEventFilter.install(self)
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -678,6 +700,10 @@ class AttendancePage(QWidget):
             QPushButton:hover {
                 border-color: #818CF8; color: #4F46E5;
                 background: rgba(255,255,255,0.90);
+            }
+            QPushButton:focus {
+                border: 2px solid #4F46E5;
+                outline: none;
             }
             """
         )
@@ -863,6 +889,9 @@ class AttendancePage(QWidget):
             QPushButton:hover {
                 border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
             }
+            QPushButton:focus {
+                border: 2px solid #4F46E5; outline: none; background: #EEF2FF;
+            }
             """
         )
         self.leave_balance_button.setToolTip("View employee leave balance and quotas")
@@ -900,6 +929,9 @@ class AttendancePage(QWidget):
             QPushButton:hover {
                 border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
             }
+            QPushButton:focus {
+                border: 2px solid #4F46E5; outline: none; background: #EEF2FF;
+            }
             """
         )
         self.prev_month_btn.clicked.connect(self._on_prev_month)
@@ -912,10 +944,11 @@ class AttendancePage(QWidget):
         self.today_btn.setStyleSheet(
             """
             QPushButton {
-                background: #4F46E5; border: none; border-radius: 8px;
+                background: #4F46E5; border: 1.5px solid transparent; border-radius: 8px;
                 color: #FFFFFF; font-weight: 700; font-size: 12px; padding: 5px 14px;
             }
             QPushButton:hover { background: #4338CA; }
+            QPushButton:focus { border: 2px solid #93c5fd; outline: none; }
             """
         )
         self.today_btn.clicked.connect(self._on_today)
@@ -960,12 +993,32 @@ class AttendancePage(QWidget):
         side_year_row = QHBoxLayout()
         side_year_row.setSpacing(8)
 
+        _side_arrow_style = """
+            QPushButton {
+                border: 1px solid transparent;
+                border-radius: 4px;
+                background: transparent;
+                font-size: 17px;
+                font-weight: 700;
+                color: #4338CA;
+                min-width: 20px;
+                max-width: 24px;
+                min-height: 24px;
+            }
+            QPushButton:hover {
+                background: #EEF2FF;
+            }
+            QPushButton:focus {
+                border: 2px solid #6366F1;
+                background: #EEF2FF;
+                outline: none;
+            }
+        """
+
         self.cal_side_year_prev = QPushButton("‹", self.cal_sidebar_panel)
         self.cal_side_year_prev.setToolTip("Previous Year")
         self.cal_side_year_prev.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cal_side_year_prev.setStyleSheet(
-            "border: none; background: transparent; font-size: 17px; font-weight: 700; color: #4338CA; max-width: 16px;"
-        )
+        self.cal_side_year_prev.setStyleSheet(_side_arrow_style)
         self.cal_side_year_prev.clicked.connect(self._on_sidebar_prev_year)
         side_year_row.addWidget(self.cal_side_year_prev)
 
@@ -978,9 +1031,7 @@ class AttendancePage(QWidget):
         self.cal_side_year_next = QPushButton("›", self.cal_sidebar_panel)
         self.cal_side_year_next.setToolTip("Next Year")
         self.cal_side_year_next.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cal_side_year_next.setStyleSheet(
-            "border: none; background: transparent; font-size: 17px; font-weight: 700; color: #4338CA; max-width: 16px;"
-        )
+        self.cal_side_year_next.setStyleSheet(_side_arrow_style)
         self.cal_side_year_next.clicked.connect(self._on_sidebar_next_year)
         side_year_row.addWidget(self.cal_side_year_next)
         side_year_row.addStretch(1)
@@ -1037,6 +1088,11 @@ class AttendancePage(QWidget):
                 background: #EEF2FF;
                 border-color: #818CF8;
                 color: #4F46E5;
+            }
+            QPushButton:focus {
+                border: 2px solid #6366F1;
+                background: #EEF2FF;
+                outline: none;
             }
         """
         self.cal_prev_btn = QPushButton("‹", self.cal_right_panel)
@@ -1121,6 +1177,15 @@ class AttendancePage(QWidget):
 
         cal_card_layout.addWidget(self.cal_right_panel, 1)
         self.root_layout.addWidget(self.calendar_group)
+
+        # Tab order for keyboard navigation
+        QWidget.setTabOrder(self.back_button, self.leave_balance_button)
+        QWidget.setTabOrder(self.leave_balance_button, self.prev_month_btn)
+        QWidget.setTabOrder(self.prev_month_btn, self.today_btn)
+        QWidget.setTabOrder(self.today_btn, self.cal_side_year_prev)
+        QWidget.setTabOrder(self.cal_side_year_prev, self.cal_side_year_next)
+        QWidget.setTabOrder(self.cal_side_year_next, self.cal_prev_btn)
+        QWidget.setTabOrder(self.cal_prev_btn, self.cal_next_btn)
 
         # Initial data load
         self.refresh()
@@ -1329,21 +1394,24 @@ class AttendancePage(QWidget):
 
             if off == 0:
                 btn.setStyleSheet(
-                    "QPushButton { border: none; background: transparent; color: #1E1B4B; "
-                    "font-size: 17px; font-weight: 800; text-align: left; padding: 4px 0; }"
-                    "QPushButton:hover { color: #4F46E5; }"
+                    "QPushButton { border: 1px solid transparent; border-radius: 4px; background: transparent; color: #1E1B4B; "
+                    "font-size: 17px; font-weight: 800; text-align: left; padding: 4px 6px; }"
+                    "QPushButton:hover { color: #4F46E5; background: #EEF2FF; }"
+                    "QPushButton:focus { border: 2px solid #6366F1; background: #EEF2FF; outline: none; }"
                 )
             elif off < 0:
                 btn.setStyleSheet(
-                    "QPushButton { border: none; background: transparent; color: #94A3B8; "
-                    "font-size: 13px; font-weight: 500; text-align: left; padding: 4px 0; }"
-                    "QPushButton:hover { color: #4F46E5; }"
+                    "QPushButton { border: 1px solid transparent; border-radius: 4px; background: transparent; color: #94A3B8; "
+                    "font-size: 13px; font-weight: 500; text-align: left; padding: 4px 6px; }"
+                    "QPushButton:hover { color: #4F46E5; background: #EEF2FF; }"
+                    "QPushButton:focus { border: 2px solid #6366F1; background: #EEF2FF; outline: none; }"
                 )
             else:
                 btn.setStyleSheet(
-                    "QPushButton { border: none; background: transparent; color: #CBD5E1; "
-                    "font-size: 13px; font-weight: 500; text-align: left; padding: 4px 0; }"
-                    "QPushButton:hover { color: #4F46E5; }"
+                    "QPushButton { border: 1px solid transparent; border-radius: 4px; background: transparent; color: #CBD5E1; "
+                    "font-size: 13px; font-weight: 500; text-align: left; padding: 4px 6px; }"
+                    "QPushButton:hover { color: #4F46E5; background: #EEF2FF; }"
+                    "QPushButton:focus { border: 2px solid #6366F1; background: #EEF2FF; outline: none; }"
                 )
 
             if sel_yr == now.year and m_idx >= now.month:

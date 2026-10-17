@@ -81,7 +81,7 @@ QGroupBox::title {
 QPushButton {
     background-color: #1a73e8;
     color: white;
-    border: none;
+    border: 1.5px solid transparent;
     border-radius: 6px;
     padding: 8px 16px;
     font-weight: 600;
@@ -89,6 +89,11 @@ QPushButton {
 
 QPushButton:hover {
     background-color: #1765cc;
+}
+
+QPushButton:focus {
+    outline: none;
+    border: 2px solid #93c5fd;
 }
 
 QPushButton:disabled {
@@ -104,6 +109,11 @@ QPushButton#StopButton:hover {
     background-color: #b3261e;
 }
 
+QPushButton#StopButton:focus {
+    outline: none;
+    border: 2px solid #fca5a5;
+}
+
 QPushButton#SecondaryButton {
     background-color: #ffffff;
     color: #1a73e8;
@@ -112,6 +122,12 @@ QPushButton#SecondaryButton {
 
 QPushButton#SecondaryButton:hover {
     background-color: #eaf1fd;
+}
+
+QPushButton#SecondaryButton:focus {
+    outline: none;
+    border: 2px solid #2563eb;
+    background-color: #f0f7ff;
 }
 
 QPushButton#RefreshButton {
@@ -130,6 +146,12 @@ QPushButton#RefreshButton:hover {
     color: #1d4ed8;
 }
 
+QPushButton#RefreshButton:focus {
+    outline: none;
+    border: 2px solid #2563eb;
+    background-color: #eff6ff;
+}
+
 QPushButton#WeeklyTimelineButton {
     background-color: #f0f7ff;
     color: #1a73e8;
@@ -146,10 +168,16 @@ QPushButton#WeeklyTimelineButton:hover {
     color: #0369a1;
 }
 
+QPushButton#WeeklyTimelineButton:focus {
+    outline: none;
+    border: 2px solid #0284c7;
+    background-color: #e0f2fe;
+}
+
 QPushButton#AttendanceButton {
     background-color: #1a73e8;
     color: white;
-    border: none;
+    border: 1.5px solid transparent;
     border-radius: 6px;
     padding: 8px 16px;
     font-weight: 600;
@@ -157,6 +185,11 @@ QPushButton#AttendanceButton {
 
 QPushButton#AttendanceButton:hover {
     background-color: #1765cc;
+}
+
+QPushButton#AttendanceButton:focus {
+    outline: none;
+    border: 2px solid #93c5fd;
 }
 
 QPushButton#StatusVersionButton {
@@ -171,8 +204,25 @@ QPushButton#StatusVersionButton:hover {
     border-color: #94a3b8;
 }
 
+QPushButton#StatusVersionButton:focus {
+    outline: none;
+    border: 2px solid #2563eb;
+    background-color: #e2e8f0;
+}
+
 QPushButton#StatusVersionButton:pressed {
     background-color: #cbd5e1;
+}
+
+QPushButton#SaveDraftButton:focus, QPushButton#AddlSaveDraftButton:focus {
+    outline: none;
+    border: 2px solid #1a73e8;
+    background-color: #f0f7ff;
+}
+
+QPushButton#SubmitTasksButton:focus, QPushButton#AddlSubmitButton:focus {
+    outline: none;
+    border: 2px solid #93c5fd;
 }
 
 QTableWidget {
@@ -426,6 +476,16 @@ QLineEdit:focus {
 #LoginButton:disabled {
     background-color: #c3ced7;
     color: #ffffff;
+}
+
+#LoginButton:focus {
+    border: 2px solid #005f75;
+    outline: none;
+}
+
+QCheckBox:focus {
+    outline: 2px solid #00a0c6;
+    border-radius: 2px;
 }
 
 #LoginError {

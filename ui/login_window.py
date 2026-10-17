@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from database.database import get_session
 from services.session_service import SessionService
+from ui.keyboard_navigation import KeyboardNavigationEventFilter
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -142,6 +143,7 @@ class LoginWindow(QMainWindow):
         # Company Code starts blank and nothing is verified yet.
         self._verified_company_code = None
 
+        KeyboardNavigationEventFilter.install(self)
         self._build_ui()
 
     # ── UI construction ───────────────────────────────────────────
@@ -484,6 +486,17 @@ class LoginWindow(QMainWindow):
         self.login_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_button.clicked.connect(self._handle_login)
         panel_layout.addWidget(self.login_button)
+
+        # Connect Enter on inputs to handle login/verify
+        self.company_code_input.returnPressed.connect(self._handle_login)
+        self.username_input.returnPressed.connect(self._handle_login)
+        self.password_input.returnPressed.connect(self._handle_login)
+
+        # Tab order
+        QWidget.setTabOrder(self.company_code_input, self.username_input)
+        QWidget.setTabOrder(self.username_input, self.password_input)
+        QWidget.setTabOrder(self.password_input, self.consent_checkbox)
+        QWidget.setTabOrder(self.consent_checkbox, self.login_button)
 
         panel_layout.addStretch(1)
 
