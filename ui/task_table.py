@@ -998,6 +998,8 @@ class AssignedTasksTable(QTableWidget):
                 task_date = selected_task.get("date")
             elif not task_date and additional_items:
                 task_date = additional_items[0].get("date")
+            prev_widget_date = self.additional_task_widget.date()
+            date_changed = bool(task_date and prev_widget_date and str(task_date).strip() != str(prev_widget_date).strip())
             if task_date:
                 self.additional_task_widget.set_date(task_date)
 
@@ -1018,13 +1020,19 @@ class AssignedTasksTable(QTableWidget):
                 )
                 self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
             else:
+                is_sub = False
                 if task_date:
                     try:
                         from services.task_service import TaskService
-                        if TaskService().is_additional_task_submitted(task_date):
-                            self.additional_task_widget.set_submitted(True)
+                        is_sub = TaskService().is_additional_task_submitted(task_date)
                     except Exception:
-                        pass
+                        is_sub = False
+                curr_content = self.additional_task_widget.task_content()
+                is_ph = getattr(self.additional_task_widget, "_is_placeholder", lambda v: False)(curr_content)
+                if date_changed or is_ph:
+                    self.additional_task_widget.set_task_content("", is_submitted=is_sub)
+                elif is_sub:
+                    self.additional_task_widget.set_submitted(True)
 
         # Capture focus state if an edit field is active
         focused_widget = QApplication.focusWidget()

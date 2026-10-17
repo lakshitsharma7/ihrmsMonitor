@@ -3573,6 +3573,114 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertEqual(sub_items[0]["remark"], "sdadada")
 
 
+    # ── Additional Task Default Text & State Binding Tests ─────────────────────────
+    def test_additional_task_new_task_no_saved_draft_is_blank(self):
+        """When there is no saved Additional Task content for date, text area must be completely blank."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-18")
+        widget.set_task_content("")
+        QCoreApplication.processEvents()
+
+        self.assertEqual(widget.task_content(), "")
+        self.assertFalse(widget.text_edit.isReadOnly())
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertFalse(widget.submit_btn.isHidden())
+
+    def test_additional_task_placeholder_such_as_draft_task_for_17th_is_blank(self):
+        """Generated placeholder content such as 'Draft task for 17th' must be removed and show blank."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-17")
+        # When backend returns generated placeholder
+        widget.set_task_content("Draft task for 17th", is_submitted=False)
+        QCoreApplication.processEvents()
+
+        self.assertEqual(widget.task_content(), "")
+        self.assertFalse(widget.text_edit.isReadOnly())
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertFalse(widget.submit_btn.isHidden())
+
+        # Test various date-based placeholder formats
+        for ph in ["Draft task for 17", "Draft task for 2026-10-17", "Draft task for Oct 17th", "Draft task for today"]:
+            widget.set_task_content(ph, is_submitted=False)
+            self.assertEqual(widget.task_content(), "", f"Placeholder {ph!r} was not filtered to blank")
+
+    def test_additional_task_existing_saved_draft_loads_content(self):
+        """An actual previously saved draft must load and display its actual content correctly."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-17")
+        saved_draft_text = "Met with backend team regarding auth token expiry handling."
+        widget.set_task_content(saved_draft_text, is_submitted=False)
+        QCoreApplication.processEvents()
+
+        self.assertEqual(widget.task_content(), saved_draft_text)
+        self.assertFalse(widget.text_edit.isReadOnly())
+        self.assertFalse(widget.save_draft_btn.isHidden())
+        self.assertFalse(widget.submit_btn.isHidden())
+
+    def test_additional_task_submitted_task_retains_read_only(self):
+        """A submitted task must retain its read-only behavior with action buttons hidden."""
+        widget = AdditionalTaskWidget()
+        widget.set_date("2026-10-16")
+        submitted_text = "Completed deployment of monitoring daemon service."
+        widget.set_task_content(submitted_text, is_submitted=True)
+        QCoreApplication.processEvents()
+
+        self.assertEqual(widget.task_content(), submitted_text)
+        self.assertTrue(widget.is_submitted)
+        self.assertTrue(widget.text_edit.isReadOnly())
+        self.assertTrue(widget.save_draft_btn.isHidden())
+        self.assertTrue(widget.submit_btn.isHidden())
+
+    def test_additional_task_switching_dates_in_table_clears_to_blank(self):
+        """Switching dates in AssignedTasksTable from a date with content to an empty date must show blank."""
+        widget = AdditionalTaskWidget()
+        table = AssignedTasksTable()
+        table.additional_task_widget = widget
+
+        # Day 1: User has saved draft
+        tasks_day1 = [
+            {
+                "id": "add_1",
+                "is_additional": True,
+                "description": "Draft work on payment gateway",
+                "submit_status": "0",
+                "date": "2026-10-17",
+            }
+        ]
+        table.set_tasks(tasks_day1, date="2026-10-17")
+        QCoreApplication.processEvents()
+        self.assertEqual(widget.task_content(), "Draft work on payment gateway")
+
+        # Day 2: Empty date with no additional task
+        tasks_day2 = [
+            {
+                "kra_id": "101",
+                "is_additional": False,
+                "name": "KRA 1",
+                "date": "2026-10-18",
+            }
+        ]
+        table.set_tasks(tasks_day2, date="2026-10-18")
+        QCoreApplication.processEvents()
+        self.assertEqual(widget.task_content(), "")
+        self.assertFalse(widget.text_edit.isReadOnly())
+
+        # Day 3: Submitted task
+        tasks_day3 = [
+            {
+                "id": "add_1",
+                "is_additional": True,
+                "description": "Reviewed release notes",
+                "submit_status": "1",
+                "date": "2026-10-16",
+            }
+        ]
+        table.set_tasks(tasks_day3, date="2026-10-16")
+        QCoreApplication.processEvents()
+        self.assertEqual(widget.task_content(), "Reviewed release notes")
+        self.assertTrue(widget.text_edit.isReadOnly())
+
+
 if __name__ == "__main__":
     unittest.main()
 

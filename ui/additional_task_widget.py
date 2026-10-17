@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 import threading
 from typing import Any, Dict, Optional
 
@@ -453,15 +454,32 @@ class AdditionalTaskWidget(QWidget):
         """Return the current working date."""
         return self._date
 
+    @staticmethod
+    def _is_placeholder(val: str) -> bool:
+        """Check if text is empty, null-like, or an automatically generated placeholder."""
+        if not val or not val.strip():
+            return True
+        v = val.strip().lower()
+        if v in ("none", "null", "undefined", "n/a", "-"):
+            return True
+        return bool(re.match(r"^draft\s+task\s+for\s+(?:\d+|today|yesterday|\w+day|\w+\s+\d+)", v))
+
     def set_task_content(self, text: str, is_submitted: Optional[bool] = None) -> None:
         """Set task text content programmatically and update submission status if provided."""
         curr = self.text_edit.toPlainText().strip()
         new_val = (text or "").strip()
-        if new_val:
+        if self._is_placeholder(new_val):
+            new_val = ""
+
+        if not new_val:
+            # When clearing content, do not overwrite if user has focused the editor and typed genuine in-progress content
+            if self.text_edit.hasFocus() and curr and not self._is_placeholder(curr):
+                pass
+            elif curr != "":
+                self.text_edit.setPlainText("")
+        else:
             if new_val != curr:
                 self.text_edit.setPlainText(new_val)
-        elif not curr and new_val != curr:
-            self.text_edit.setPlainText(new_val)
 
         if is_submitted is not None:
             if is_submitted:

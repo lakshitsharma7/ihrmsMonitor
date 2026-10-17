@@ -1097,6 +1097,8 @@ class DashboardPage(QWidget):
                 self.task_table.show_error(data.get("task_error"), date=task_date or None)
 
             if hasattr(self, "additional_task_widget"):
+                prev_widget_date = self.additional_task_widget.date()
+                date_changed = bool(task_date and prev_widget_date and str(task_date).strip() != str(prev_widget_date).strip())
                 if task_date:
                     self.additional_task_widget.set_date(task_date)
                 found_add = False
@@ -1119,13 +1121,20 @@ class DashboardPage(QWidget):
                             desc = str(t.get("description") or t.get("remark") or t.get("task") or "").strip()
                             self.additional_task_widget.set_task_content(desc, is_submitted=is_sub)
                             break
-                if not found_add and task_date:
-                    try:
-                        from services.task_service import TaskService
-                        if TaskService().is_additional_task_submitted(task_date):
-                            self.additional_task_widget.set_submitted(True)
-                    except Exception:
-                        pass
+                if not found_add:
+                    is_sub = False
+                    if task_date:
+                        try:
+                            from services.task_service import TaskService
+                            is_sub = TaskService().is_additional_task_submitted(task_date)
+                        except Exception:
+                            is_sub = False
+                    curr_content = self.additional_task_widget.task_content()
+                    is_ph = getattr(self.additional_task_widget, "_is_placeholder", lambda v: False)(curr_content)
+                    if date_changed or is_ph:
+                        self.additional_task_widget.set_task_content("", is_submitted=is_sub)
+                    elif is_sub:
+                        self.additional_task_widget.set_submitted(True)
 
             attendance = data.get("attendance")
             if attendance:
