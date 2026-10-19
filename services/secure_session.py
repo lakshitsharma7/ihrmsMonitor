@@ -37,62 +37,108 @@ TEST_CRED_TARGET = "iHRMS_Desktop_Test:session"
 
 
 def _cred_write(target: str, username: str, data: dict) -> bool:
-    """Store credential dictionary securely in Windows Credential Manager using DPAPI."""
-    if not sys.platform.startswith("win"):
-        return False
-    try:
-        import win32cred
+    """Store credential dictionary securely in Windows Credential Manager or macOS Keychain."""
+    if sys.platform.startswith("win"):
+        try:
+            import win32cred
 
-        blob_str = json.dumps(data)
-        cred = {
-            "Type": win32cred.CRED_TYPE_GENERIC,
-            "TargetName": target,
-            "UserName": username or "iHRMS_User",
-            "CredentialBlob": blob_str,
-            "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
-        }
-        win32cred.CredWrite(cred)
-        return True
-    except Exception as exc:
-        logger.debug("Windows Credential Manager CredWrite failed: %s", exc)
-        return False
+            blob_str = json.dumps(data)
+            cred = {
+                "Type": win32cred.CRED_TYPE_GENERIC,
+                "TargetName": target,
+                "UserName": username or "iHRMS_User",
+                "CredentialBlob": blob_str,
+                "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
+            }
+            win32cred.CredWrite(cred)
+            return True
+        except Exception as exc:
+            logger.debug("Windows Credential Manager CredWrite failed: %s", exc)
+            return False
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+
+            blob_str = json.dumps(data)
+            cmd = [
+                "/usr/bin/security",
+                "add-generic-password",
+                "-a", username or "iHRMS_User",
+                "-s", target,
+                "-w", blob_str,
+                "-U",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            return res.returncode == 0
+        except Exception as exc:
+            logger.debug("macOS Keychain add-generic-password failed: %s", exc)
+            return False
+    return False
 
 
 def _cred_read(target: str) -> dict | None:
-    """Retrieve and deserialize credential dictionary from Windows Credential Manager."""
-    if not sys.platform.startswith("win"):
-        return None
-    try:
-        import win32cred
+    """Retrieve and deserialize credential dictionary from Windows Credential Manager or macOS Keychain."""
+    if sys.platform.startswith("win"):
+        try:
+            import win32cred
 
-        cred = win32cred.CredRead(target, win32cred.CRED_TYPE_GENERIC)
-        raw = cred.get("CredentialBlob")
-        if raw is None:
+            cred = win32cred.CredRead(target, win32cred.CRED_TYPE_GENERIC)
+            raw = cred.get("CredentialBlob")
+            if raw is None:
+                return None
+            if isinstance(raw, bytes):
+                try:
+                    decoded = raw.decode("utf-16-le")
+                except Exception:
+                    decoded = raw.decode("utf-8", errors="replace")
+            else:
+                decoded = str(raw)
+            return json.loads(decoded)
+        except Exception:
+            # Error 1168 (Element not found) or missing target
             return None
-        if isinstance(raw, bytes):
-            try:
-                decoded = raw.decode("utf-16-le")
-            except Exception:
-                decoded = raw.decode("utf-8", errors="replace")
-        else:
-            decoded = str(raw)
-        return json.loads(decoded)
-    except Exception:
-        # Error 1168 (Element not found) or missing target
-        return None
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+
+            cmd = [
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s", target,
+                "-w",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout.strip():
+                return json.loads(res.stdout.strip())
+        except Exception:
+            return None
+    return None
 
 
 def _cred_delete(target: str) -> bool:
-    """Remove target credential from Windows Credential Manager."""
-    if not sys.platform.startswith("win"):
-        return False
-    try:
-        import win32cred
+    """Remove target credential from Windows Credential Manager or macOS Keychain."""
+    if sys.platform.startswith("win"):
+        try:
+            import win32cred
 
-        win32cred.CredDelete(target, win32cred.CRED_TYPE_GENERIC)
-        return True
-    except Exception:
-        return False
+            win32cred.CredDelete(target, win32cred.CRED_TYPE_GENERIC)
+            return True
+        except Exception:
+            return False
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+
+            cmd = [
+                "/usr/bin/security",
+                "delete-generic-password",
+                "-s", target,
+            ]
+            res = subprocess.run(cmd, capture_output=True, timeout=5)
+            return res.returncode == 0
+        except Exception:
+            return False
+    return False
 
 
 class SessionStore:
@@ -323,7 +369,8 @@ class SessionStore:
                 device_token = cred_dict.get("device_token")
 
                 if company_code and username and indo_code and api_key and device_token:
-                    logger.info("Loaded valid session from Windows Credential Manager: user=%s company=%s", username, company_code)
+                    cred_store_name = "Windows Credential Manager" if sys.platform.startswith("win") else "macOS Keychain"
+                    logger.info("Loaded valid session from %s: user=%s company=%s", cred_store_name, username, company_code)
                     session = dict(cred_dict)
                     session["workpulse_manually_stopped"] = self.is_workpulse_manually_stopped()
                     session["workpulse_active"] = self.is_workpulse_active()

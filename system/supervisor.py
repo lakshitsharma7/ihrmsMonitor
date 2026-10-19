@@ -234,7 +234,8 @@ def _set_supervisor_process_identity() -> None:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
                 "IndovisionServices.iHRMSMonitor.Supervisor"
             )
-            ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Supervisor")
+            if ctypes.windll.kernel32.GetConsoleWindow():
+                ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Supervisor")
         except Exception:
             pass
 
@@ -255,6 +256,14 @@ def spawn_detached_process(
             params.CommandLine = " ".join(f'"{arg}"' if " " in arg else arg for arg in cmd)
             if cwd:
                 params.CurrentDirectory = str(cwd)
+            # Configure Win32_ProcessStartup with SW_HIDE for background/supervisor processes
+            startup_cls = wmi.Get("Win32_ProcessStartup")
+            startup_inst = startup_cls.SpawnInstance_()
+            is_bg = any(k in params.CommandLine.lower() for k in ("--supervisor", "--startup", "--supervised", "--minimized", "--background", "--hidden"))
+            if is_bg:
+                startup_inst.ShowWindow = 0  # SW_HIDE
+            params.ProcessStartupInformation = startup_inst
+
             res = proc_mgr.ExecMethod_("Create", params)
             if res.ReturnValue == 0 and res.ProcessId:
                 logger.info("Spawned independent process via WMI: PID %d (%s)", res.ProcessId, cmd[0])
@@ -264,17 +273,25 @@ def spawn_detached_process(
 
     # Standard fallback via subprocess.Popen
     creation_flags = 0
+    startupinfo = None
     if sys.platform.startswith("win"):
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-        base_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        CREATE_NO_WINDOW = 0x08000000
+        base_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        is_bg = any(k in " ".join(cmd).lower() for k in ("--supervisor", "--startup", "--supervised", "--minimized", "--background", "--hidden"))
+        if is_bg:
+            startupinfo.wShowWindow = 0  # SW_HIDE
         try:
             proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 env=env,
                 creationflags=base_flags | CREATE_BREAKAWAY_FROM_JOB,
+                startupinfo=startupinfo,
                 close_fds=True,
             )
             return proc.pid, proc
@@ -286,6 +303,7 @@ def spawn_detached_process(
         cwd=cwd,
         env=env,
         creationflags=creation_flags,
+        startupinfo=startupinfo,
         close_fds=True,
     )
     return proc.pid, proc

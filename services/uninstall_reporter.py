@@ -260,7 +260,22 @@ def setup_offline_delivery_task() -> None:
                 f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger -Settings $settings -Force"
             ),
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        creation_flags = 0
+        startupinfo = None
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
+        subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=creation_flags,
+            startupinfo=startupinfo,
+        )
         logger.info("Scheduled task %s configured for offline uninstall delivery.", task_name)
     except Exception as e:
         logger.debug("Could not register scheduled task: %s", e)
@@ -280,7 +295,22 @@ def cleanup_offline_delivery_task() -> None:
             "/TN", task_name,
             "/F",
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        creation_flags = 0
+        startupinfo = None
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
+        subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=creation_flags,
+            startupinfo=startupinfo,
+        )
     except Exception:
         pass
 

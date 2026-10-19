@@ -26,11 +26,12 @@ from utils.paths import is_macos, is_windows
 logger = get_logger(__name__)
 
 _RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_LAUNCH_AGENT_LABEL = "com.activitytracker.app"
+_LAUNCH_AGENT_LABEL = "com.indovision.ihrms-desktop"
+_LEGACY_LAUNCH_AGENT_LABEL = "com.activitytracker.app"
 
 
-def _launch_agent_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCH_AGENT_LABEL}.plist"
+def _launch_agent_path(label: str = _LAUNCH_AGENT_LABEL) -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
 
 
 def is_enabled() -> bool:
@@ -38,7 +39,7 @@ def is_enabled() -> bool:
     if is_windows():
         return _windows_is_enabled()
     if is_macos():
-        return _launch_agent_path().exists()
+        return _macos_is_enabled()
     return False
 
 
@@ -131,7 +132,7 @@ def _find_windows_executable(explicit_path: str | Path | None = None) -> Path | 
 
 def ensure_startup_registered(executable_path: str | None = None) -> bool:
     """Verify that auto-start is registered with the OS; if missing or invalid, register it."""
-    logger.info("Verifying Windows auto-start registration status...")
+    logger.info("Verifying auto-start registration status...")
     if sys.platform.startswith("win"):
         try:
             clean_exe = _find_windows_executable(executable_path)
@@ -143,7 +144,7 @@ def ensure_startup_registered(executable_path: str | None = None) -> bool:
     if not is_enabled():
         logger.info("Auto-start entry is missing or points to a non-existent binary; registering now.")
         return set_enabled(True, executable_path)
-    logger.info("Windows auto-start entry verified active.")
+    logger.info("Auto-start entry verified active.")
     return True
 
 
@@ -189,21 +190,46 @@ def _windows_is_enabled() -> bool:
         return False
 
 
+_scheduled_task_unsupported = False
+
+
 def _get_scheduled_task_name() -> str:
     """Return the unique Task Scheduler task name for this user."""
     username = os.environ.get("USERNAME", "Default")
     return f"iHRMSDesktopAutoRestart-{username}"
 
 
-def _register_windows_scheduled_task(clean_exe: Path) -> bool:
-    """Register or update a Windows Task Scheduler task that restarts iHRMS Supervisor every 5 minutes."""
+def _is_windows_scheduled_task_registered(task_name: str) -> bool:
+    """Fast check whether the scheduled task is already registered using schtasks."""
     if not sys.platform.startswith("win"):
         return False
     try:
+        creation_flags = subprocess.CREATE_NO_WINDOW
+        res = subprocess.run(
+            ["schtasks", "/query", "/tn", task_name],
+            capture_output=True,
+            timeout=5,
+            creationflags=creation_flags,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _register_windows_scheduled_task(clean_exe: Path) -> bool:
+    """Register or update a Windows Task Scheduler task that restarts iHRMS Supervisor every 5 minutes."""
+    global _scheduled_task_unsupported
+    if not sys.platform.startswith("win") or _scheduled_task_unsupported:
+        return False
+    try:
+        task_name = _get_scheduled_task_name()
+        if _is_windows_scheduled_task_registered(task_name):
+            logger.info("Windows scheduled task %s is already registered.", task_name)
+            return True
+
         sup_candidate = clean_exe.parent / "iHRMS-Supervisor.exe"
         target_bin = sup_candidate if sup_candidate.is_file() else clean_exe
         target_dir = str(target_bin.parent)
-        task_name = _get_scheduled_task_name()
 
         ps_cmd = (
             f"$action = New-ScheduledTaskAction -Execute '{target_bin}' -Argument '--startup' -WorkingDirectory '{target_dir}'; "
@@ -212,17 +238,32 @@ def _register_windows_scheduled_task(clean_exe: Path) -> bool:
             f"$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 0); "
             f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger @($tLogon, $tRep) -Settings $settings -Force"
         )
+        creation_flags = 0
+        startupinfo = None
+        if sys.platform.startswith("win"):
+            creation_flags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
         res = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
             capture_output=True,
             text=True,
             timeout=15,
+            creationflags=creation_flags,
+            startupinfo=startupinfo,
         )
         if res.returncode == 0:
             logger.info("Successfully registered Windows scheduled task: %s", task_name)
             return True
         else:
-            logger.warning("Failed to register Windows scheduled task: %s (stderr: %s)", task_name, res.stderr.strip())
+            stderr = res.stderr.strip()
+            if "Access is denied" in stderr or "PermissionDenied" in stderr or "0x80070005" in stderr:
+                _scheduled_task_unsupported = True
+                logger.info("Scheduled task registration not permitted for unprivileged user (Run registry key will be used): %s", task_name)
+            else:
+                logger.warning("Failed to register Windows scheduled task: %s (stderr: %s)", task_name, stderr)
             return False
     except Exception as exc:
         logger.warning("Error registering scheduled task: %s", exc)
@@ -236,10 +277,20 @@ def _unregister_windows_scheduled_task() -> bool:
     try:
         task_name = _get_scheduled_task_name()
         ps_cmd = f"Unregister-ScheduledTask -TaskName '{task_name}' -Confirm:$false -ErrorAction SilentlyContinue"
+        creation_flags = 0
+        startupinfo = None
+        if sys.platform.startswith("win"):
+            creation_flags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
         subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
             capture_output=True,
             timeout=10,
+            creationflags=creation_flags,
+            startupinfo=startupinfo,
         )
         logger.info("Unregistered Windows scheduled task: %s", task_name)
         return True
@@ -312,22 +363,161 @@ _LAUNCH_AGENT_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
     <key>ProgramArguments</key>
     <array>
         <string>{exe_path}</string>
+        <string>--startup</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
 </plist>
 """
 
 
-def _macos_set_enabled(enabled: bool, exe_path: str) -> bool:
+def _find_macos_executable(explicit_path: str | Path | None = None) -> Path | None:
+    """Dynamically discover the authoritative iHRMS Desktop macOS executable inside .app bundle."""
+    if explicit_path:
+        p = Path(str(explicit_path).strip().strip('"'))
+        is_dev = "python" in p.name.lower() or p.name.endswith(".py")
+        if not is_dev:
+            if getattr(sys, "frozen", False) or p.is_file():
+                return p
+
+    if getattr(sys, "frozen", False):
+        p = Path(sys.executable)
+        is_dev = "python" in p.name.lower() or p.name.endswith(".py")
+        if not is_dev and (p.is_file() or not explicit_path):
+            return p
+
+    project_root = Path(__file__).resolve().parent.parent
+
+    candidate_paths = [
+        Path("/Applications/iHRMS-Desktop.app/Contents/MacOS/iHRMS-Desktop"),
+        Path.home() / "Applications" / "iHRMS-Desktop.app" / "Contents" / "MacOS" / "iHRMS-Desktop",
+        Path("/Applications/Workpulse.app/Contents/MacOS/Workpulse"),
+        project_root / "dist" / "iHRMS-Desktop.app" / "Contents" / "MacOS" / "iHRMS-Desktop",
+        project_root / "dist" / "Workpulse.app" / "Contents" / "MacOS" / "Workpulse",
+    ]
+
+    for candidate in candidate_paths:
+        if candidate.is_file():
+            return candidate
+
+    return Path(sys.executable) if getattr(sys, "frozen", False) else None
+
+
+def _macos_is_enabled() -> bool:
+    """Check if LaunchAgent plist is installed and points to an existing binary."""
     plist_path = _launch_agent_path()
+    if not plist_path.is_file():
+        return False
+    try:
+        import plistlib
+
+        with open(plist_path, "rb") as f:
+            data = plistlib.load(f)
+        args = data.get("ProgramArguments", [])
+        if args and isinstance(args, list):
+            target_exe = Path(args[0])
+            if target_exe.is_file() or getattr(sys, "frozen", False) is False:
+                return True
+            logger.warning(
+                "macOS LaunchAgent exists but binary does not exist on disk: %s",
+                target_exe,
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.debug("Failed to read macOS LaunchAgent plist: %s", exc)
+        return plist_path.is_file()
+
+
+def _macos_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
+    plist_path = _launch_agent_path()
+    legacy_plist = _launch_agent_path(_LEGACY_LAUNCH_AGENT_LABEL)
+
     if enabled:
+        clean_exe = _find_macos_executable(exe_path)
+        is_frozen = getattr(sys, "frozen", False)
+        if not clean_exe or (not is_frozen and not clean_exe.is_file()):
+            clean_exe = Path(exe_path) if exe_path else Path(sys.executable)
+
         plist_path.parent.mkdir(parents=True, exist_ok=True)
-        plist_path.write_text(
-            _LAUNCH_AGENT_TEMPLATE.format(label=_LAUNCH_AGENT_LABEL, exe_path=exe_path)
+        exe_str = clean_exe.as_posix() if hasattr(clean_exe, "as_posix") else str(clean_exe).replace("\\", "/")
+        content = _LAUNCH_AGENT_TEMPLATE.format(
+            label=_LAUNCH_AGENT_LABEL, exe_path=exe_str
         )
+        plist_path.write_text(content, encoding="utf-8")
+        logger.info("macOS LaunchAgent created at %s for executable %s", plist_path, exe_str)
+
+        # Clean up legacy LaunchAgent if present
+        if legacy_plist.exists():
+            try:
+                subprocess.run(
+                    ["launchctl", "unload", "-w", str(legacy_plist)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                legacy_plist.unlink(missing_ok=True)
+                logger.info("Cleaned up legacy LaunchAgent: %s", legacy_plist)
+            except Exception as leg_err:
+                logger.debug("Error cleaning legacy LaunchAgent: %s", leg_err)
+
+        # Reload LaunchAgent via launchctl
+        try:
+            subprocess.run(
+                ["launchctl", "unload", "-w", str(plist_path)],
+                capture_output=True,
+                timeout=5,
+            )
+            res = subprocess.run(
+                ["launchctl", "load", "-w", str(plist_path)],
+                capture_output=True,
+                timeout=5,
+            )
+            if res.returncode == 0:
+                logger.info("macOS LaunchAgent loaded via launchctl successfully.")
+            else:
+                logger.debug("launchctl load returncode %d: %s", res.returncode, res.stderr)
+        except Exception as lctl_err:
+            logger.debug("launchctl execution note: %s", lctl_err)
+
+        return True
     else:
+        # Unload and remove LaunchAgent
         if plist_path.exists():
-            plist_path.unlink()
-    return True
+            try:
+                subprocess.run(
+                    ["launchctl", "unload", "-w", str(plist_path)],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except Exception:
+                pass
+            try:
+                plist_path.unlink(missing_ok=True)
+                logger.info("Removed macOS LaunchAgent at %s", plist_path)
+            except Exception as unl_err:
+                logger.warning("Could not unlink LaunchAgent plist: %s", unl_err)
+
+        if legacy_plist.exists():
+            try:
+                subprocess.run(
+                    ["launchctl", "unload", "-w", str(legacy_plist)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                legacy_plist.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return True

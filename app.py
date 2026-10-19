@@ -377,70 +377,81 @@ def main() -> int:
             "Another active instance of %s is already running. Exiting gracefully.",
             APP_NAME,
         )
-        if not is_startup and sys.platform.startswith("win"):
-            try:
-                import win32gui
-                import win32con
-                import win32process
-
-                import time
-
-                pid = None
+        if not is_startup:
+            if sys.platform.startswith("win"):
                 try:
-                    pid, _, _ = lock_file.getLockInfo()
-                except Exception:
-                    pass
+                    import win32gui
+                    import win32con
+                    import win32process
 
-                def _find_genuine_windows():
-                    genuine_hwnds = []
+                    import time
 
-                    def _enum_windows_cb(hwnd, _):
-                        if not win32gui.IsWindow(hwnd):
-                            return
-                        try:
-                            # 1. Must be a top-level window (no parent)
-                            if win32gui.GetParent(hwnd):
-                                return
-
-                            # 2. Match PID if known
-                            _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
-                            if pid and win_pid != pid:
-                                return
-
-                            # 3. Class name must NOT be internal Qt helper or observer window
-                            cls = (win32gui.GetClassName(hwnd) or "").lower()
-                            if any(k in cls for k in ("observer", "titlebar", "cicloader", "trayicon", "ime", "uac", "indicator", "message")):
-                                return
-
-                            # 4. Title must be non-empty and match application window title
-                            title = (win32gui.GetWindowText(hwnd) or "").strip()
-                            if not title or not any(t in title for t in ("iHRMS Desktop", "Workpulse", "iHRMS Monitor")):
-                                return
-
-                            genuine_hwnds.append(hwnd)
-                        except Exception:
-                            pass
-
-                    win32gui.EnumWindows(_enum_windows_cb, None)
-                    return genuine_hwnds
-
-                # Wait briefly (up to ~1s) if the primary instance is in the process of creating its window
-                found_hwnds = []
-                for _ in range(5):
-                    found_hwnds = _find_genuine_windows()
-                    if found_hwnds:
-                        break
-                    time.sleep(0.2)
-
-                for hwnd in found_hwnds:
+                    pid = None
                     try:
-                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-                        win32gui.SetForegroundWindow(hwnd)
+                        pid, _, _ = lock_file.getLockInfo()
                     except Exception:
                         pass
-            except Exception:
-                pass
+
+                    def _find_genuine_windows():
+                        genuine_hwnds = []
+
+                        def _enum_windows_cb(hwnd, _):
+                            if not win32gui.IsWindow(hwnd):
+                                return
+                            try:
+                                # 1. Must be a top-level window (no parent)
+                                if win32gui.GetParent(hwnd):
+                                    return
+
+                                # 2. Match PID if known
+                                _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
+                                if pid and win_pid != pid:
+                                    return
+
+                                # 3. Class name must NOT be internal Qt helper or observer window
+                                cls = (win32gui.GetClassName(hwnd) or "").lower()
+                                if any(k in cls for k in ("observer", "titlebar", "cicloader", "trayicon", "ime", "uac", "indicator", "message")):
+                                    return
+
+                                # 4. Title must be non-empty and match application window title
+                                title = (win32gui.GetWindowText(hwnd) or "").strip()
+                                if not title or not any(t in title for t in ("iHRMS Desktop", "Workpulse", "iHRMS Monitor")):
+                                    return
+
+                                genuine_hwnds.append(hwnd)
+                            except Exception:
+                                pass
+
+                        win32gui.EnumWindows(_enum_windows_cb, None)
+                        return genuine_hwnds
+
+                    # Wait briefly (up to ~1s) if the primary instance is in the process of creating its window
+                    found_hwnds = []
+                    for _ in range(5):
+                        found_hwnds = _find_genuine_windows()
+                        if found_hwnds:
+                            break
+                        time.sleep(0.2)
+
+                    for hwnd in found_hwnds:
+                        try:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                            win32gui.SetForegroundWindow(hwnd)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            elif sys.platform == "darwin":
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ["osascript", "-e", 'tell application id "com.indovision.ihrms-desktop" to activate'],
+                        capture_output=True,
+                        timeout=3,
+                    )
+                except Exception:
+                    pass
         # Exit immediately - do not create any further Qt objects that would appear as blank taskbar previews.
         return 0
 
