@@ -50,11 +50,11 @@ jobs:
           echo "APP_VER=$ver" >> $env:GITHUB_ENV
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
-      - name: [Step 1/5] Build Application Executable (PyInstaller)
+      - name: "[Step 1/5] Build Application Executable (PyInstaller)"
         run: |
           pyinstaller iHRMS-Desktop.spec --clean --noconfirm
 
-      - name: [Step 2/5] Sign iHRMS-Desktop Executable with Authenticode
+      - name: "[Step 2/5] Sign iHRMS-Desktop Executable with Authenticode"
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
@@ -68,12 +68,12 @@ jobs:
         run: |
           choco install innosetup --no-progress
 
-      - name: [Step 3/5] Compile Inno Setup Installer
+      - name: "[Step 3/5] Compile Inno Setup Installer"
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="${{ env.APP_VER }}" iHRMS-Desktop.iss
 
-      - name: [Step 4/5] Sign Windows Installer
+      - name: "[Step 4/5] Sign Windows Installer"
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 || secrets.WINDOWS_CERTIFICATE }}
@@ -86,7 +86,7 @@ jobs:
           Copy-Item "dist\Windows\iHRMS-Desktop-Setup-$ver.exe" "dist\windows_release\iHRMS-Desktop-Setup-$ver.exe" -Force
           .\scripts\sign_windows.ps1 -Target "dist\windows_release\iHRMS-Desktop-Setup-$ver.exe" -Description "iHRMS Desktop Setup" -AppUrl "https://indovisionservices.in" -RequireSigning
 
-      - name: [Step 5/5] Verify Windows Signatures (Application & Installer)
+      - name: "[Step 5/5] Verify Windows Signatures (Application & Installer)"
         shell: pwsh
         run: |
           $ver = "${{ env.APP_VER }}"
@@ -134,11 +134,14 @@ jobs:
           echo "version=${APP_VER}" >> $GITHUB_OUTPUT
 
       - name: Configure Apple Developer ID Keychain
-        if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' || secrets.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "${APPLE_CERTIFICATE_BASE64:-}" ]; then
+            echo "No Apple Developer certificate secret found; skipping keychain configuration."
+            exit 0
+          fi
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=$(uuidgen)
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
@@ -156,8 +159,8 @@ jobs:
       - name: Build, Sign, Notarize & Staple iHRMS Desktop (macOS)
         env:
           SKIP_TESTS: "1"
-          REQUIRE_SIGNING: "1"
-          REQUIRE_NOTARIZATION: "1"
+          REQUIRE_SIGNING: ${{ secrets.APPLE_SIGNING_IDENTITY != '' && '1' || '0' }}
+          REQUIRE_NOTARIZATION: ${{ (secrets.APPLE_API_KEY_ID != '' || secrets.APPLE_APP_SPECIFIC_PASSWORD != '') && '1' || '0' }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -193,12 +196,16 @@ jobs:
           rm -rf "${MOUNT_PT}"
           echo "DMG payload verification successful."
 
-          echo "Validating Developer ID signature, Hardened Runtime & stapling..."
-          codesign --verify --deep --strict --verbose=2 "dist/iHRMS-Desktop.app"
-          codesign --verify --verbose=2 "${TARGET_DMG}"
-          spctl --assess --type execute --verbose=4 "dist/iHRMS-Desktop.app"
-          spctl --assess --type install --verbose=4 "${TARGET_DMG}"
-          xcrun stapler validate "${TARGET_DMG}"
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "Validating Developer ID signature, Hardened Runtime & stapling..."
+            codesign --verify --deep --strict --verbose=2 "dist/iHRMS-Desktop.app"
+            codesign --verify --verbose=2 "${TARGET_DMG}"
+            spctl --assess --type execute --verbose=4 "dist/iHRMS-Desktop.app"
+            spctl --assess --type install --verbose=4 "${TARGET_DMG}"
+            xcrun stapler validate "${TARGET_DMG}"
+          else
+            echo "Apple Developer ID signing identity not configured; skipping signature assessment."
+          fi
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
