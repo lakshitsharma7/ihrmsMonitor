@@ -112,6 +112,7 @@ class TestBackgroundModeAndVisibility(unittest.TestCase):
             self.assertIn("--startup", args[4])
             self.assertIn(str(self.fake_exe), args[4])
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_03_mainwindow_is_background_hidden_on_init(self):
         """Verify MainWindow(is_background=True) starts with window hidden and tray icon active."""
         from ui.main_window import MainWindow
@@ -136,6 +137,7 @@ class TestBackgroundModeAndVisibility(unittest.TestCase):
                 window._shutdown()
                 window.deleteLater()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_04_show_and_raise_restores_visibility_and_taskbar(self):
         """Verify _show_and_raise makes the window visible and marks is_background as False."""
         from ui.main_window import MainWindow
@@ -158,6 +160,7 @@ class TestBackgroundModeAndVisibility(unittest.TestCase):
                 window._shutdown()
                 window.deleteLater()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_05_close_event_minimizes_to_tray_without_killing_tracker(self):
         """Verify closing the window hides it back to tray without killing tracking or exiting."""
         from ui.main_window import MainWindow

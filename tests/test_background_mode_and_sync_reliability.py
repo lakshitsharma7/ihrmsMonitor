@@ -68,6 +68,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
     # SCENARIO 1: TRUTHFUL BACKGROUND STATUS ON CLOSE / MINIMIZE
     # ==========================================================
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_01_close_event_reports_truthful_background_status_when_active(self):
         """When tracking is actively healthy, closeEvent shows truthful background running notification."""
         self._login_test_user(workpulse_permitted=True)
@@ -96,6 +97,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
                 win.close()
                 QApplication.processEvents()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_02_close_event_suppresses_background_running_when_tracking_stopped(self):
         """When tracking is stopped or worker is dead, closeEvent must NOT falsely claim running in background."""
         self._login_test_user(workpulse_permitted=True)
@@ -123,6 +125,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
                 win.close()
                 QApplication.processEvents()
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_03_close_event_reflects_paused_state_truthfully(self):
         """When tracking is paused by user, closeEvent truthfully indicates paused status rather than active running."""
         self._login_test_user(workpulse_permitted=True)
@@ -155,6 +158,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
     # SCENARIO 2: WORKER HEALTH & SYNC CONTINUATION IN BACKGROUND
     # ==========================================================
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows win32gui")
     def test_04_worker_continues_polling_and_sync_while_hidden(self):
         """Worker thread remains alive and continues executing poll/sync cycles while window is hidden."""
         self._login_test_user(workpulse_permitted=True)
@@ -409,6 +413,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
             # Crash timestamps must equal MAX_CRASH_RESTARTS and supervisor halts
             self.assertEqual(len(supervisor._crash_timestamps), MAX_CRASH_RESTARTS)
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows supervisor")
     def test_12_supervisor_attaches_to_pid_and_recovers_on_unexpected_termination(self):
         """Supervisor attached to existing PID detects termination and spawns recovery instance."""
         target_pid = 77777
@@ -440,6 +445,7 @@ class TestBackgroundModeAndSyncReliability(unittest.TestCase):
             self.assertEqual(call_env.get("IHRMS_SUPERVISED"), "1")
             self.assertEqual(len(supervisor._crash_timestamps), 1)
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows supervisor")
     def test_13_ensure_supervisor_running_spawns_supervisor_detached(self):
         """ensure_supervisor_running spawns supervisor detached if not already active."""
         from app import ensure_supervisor_running

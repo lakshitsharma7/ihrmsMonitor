@@ -34,9 +34,15 @@ class TestSupportEmailReportingScenarios(unittest.TestCase):
         init_database()
         self.error_service = ErrorReportService()
         self.error_service._sent_reports.clear()
+        self._orig_force_email = os.environ.get("WORKPULSE_FORCE_EMAIL")
+        os.environ["WORKPULSE_FORCE_EMAIL"] = "1"
         SyncService.reset_sync_state()
 
     def tearDown(self):
+        if self._orig_force_email is not None:
+            os.environ["WORKPULSE_FORCE_EMAIL"] = self._orig_force_email
+        else:
+            os.environ.pop("WORKPULSE_FORCE_EMAIL", None)
         try:
             NetworkReachabilityMonitor().report_online()
         except Exception:

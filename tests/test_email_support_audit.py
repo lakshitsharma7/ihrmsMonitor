@@ -35,6 +35,14 @@ class TestEmailSupportAudit(unittest.TestCase):
         init_database()
         self.service = ErrorReportService()
         self.service._sent_reports.clear()
+        self._orig_force_email = os.environ.get("WORKPULSE_FORCE_EMAIL")
+        os.environ["WORKPULSE_FORCE_EMAIL"] = "1"
+
+    def tearDown(self):
+        if self._orig_force_email is not None:
+            os.environ["WORKPULSE_FORCE_EMAIL"] = self._orig_force_email
+        else:
+            os.environ.pop("WORKPULSE_FORCE_EMAIL", None)
 
     def test_flow_a_support_test_email(self):
         """Test Flow A: Manual support/test email verification."""
