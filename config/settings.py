@@ -2,7 +2,7 @@
 
 This module holds constants that are not user-editable (app name, poll
 intervals, etc). User-editable preferences (idle threshold, start-with-
-system, workpulse-enabled, track-window-titles) live in the database and are
+system, tracking-enabled, track-window-titles) live in the database and are
 accessed through ``services.settings_service.SettingsService``.
 """
 
@@ -43,7 +43,7 @@ def get_running_app_version() -> str:
     1. If running as a frozen executable (PyInstaller), inspects the embedded
        binary metadata of the current executable via win32api.GetFileVersionInfo.
     2. If running uncompiled (development / test), automatically checks the installed
-       binary in %LOCALAPPDATA%\\Programs\\Workpulse\\Workpulse.exe, the local
+       binary in %LOCALAPPDATA%\\Programs\\iHRMS Desktop\\iHRMS-Desktop.exe, the local
        dist build, or VERSION / version.txt build descriptors.
     3. Never requires manual version maintenance in code or Settings.
     """
@@ -118,7 +118,7 @@ DEFAULT_IDLE_THRESHOLD_SECONDS = 3 * 60
 # application name.
 DEFAULT_TRACK_WINDOW_TITLES = True
 
-# Default value for whether the app starts workpulse automatically on launch.
+# Default value for whether the app starts tracking automatically on launch.
 DEFAULT_TRACKING_ENABLED = True
 
 # Default value for whether the app starts with the OS.

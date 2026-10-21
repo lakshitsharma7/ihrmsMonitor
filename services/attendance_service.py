@@ -1,8 +1,8 @@
-"""Attendance and System Start workpulse service for iHRMS Monitor.
+"""Attendance and System Start tracking service for iHRMS Desktop.
 
 Tracks:
 1. Daily Windows/System boot time (system_started_at) via psutil.boot_time().
-2. Daily iHRMS Monitor workpulse start time (workpulse_started_at).
+2. Daily iHRMS Desktop tracking start time (workpulse_started_at).
 3. Optional Punch-In (punch_in) and Punch-Out (punch_out) timestamps.
 4. Handles multiple application/system restarts without overwriting daily start time.
 5. Offline-first local JSON/QSettings persistence.
@@ -47,7 +47,7 @@ def _format_dt(dt: datetime | None) -> str | None:
 
 
 class AttendanceService:
-    """Singleton service for daily system start, workpulse start, and punch workpulse."""
+    """Singleton service for daily system start, tracking start, and punch tracking."""
 
     _instance: AttendanceService | None = None
     _lock = threading.Lock()
@@ -137,9 +137,9 @@ class AttendanceService:
 
     def record_workpulse_start(self, timestamp: datetime | None = None) -> dict:
         """
-        Record the start of workpulse for today and capture system boot time.
+        Record the start of tracking for today and capture system boot time.
         
-        If workpulse already started for today's boot, the initial start time is preserved.
+        If tracking already started for today's boot, the initial start time is preserved.
         """
         with self._state_lock:
             now_local = (timestamp or datetime.now()).astimezone()
@@ -178,6 +178,8 @@ class AttendanceService:
                 day_data.get("punch_out"),
             )
             return dict(day_data)
+
+    record_tracking_start = record_workpulse_start
 
     def record_punch_in(self, punch_time: datetime | str | None = None, date_str: str | None = None) -> dict:
         """Record or update Punch-In timestamp for a given date (defaults to today)."""
@@ -557,7 +559,7 @@ class AttendanceService:
         Get attendance context (system_started_at, workpulse_started_at, punch_in, punch_out).
         
         Guarantees that system_started_at and workpulse_started_at are always populated
-        even if workpulse start was not explicitly invoked yet or Punch was never performed.
+        even if tracking start was not explicitly invoked yet or Punch was never performed.
         """
         with self._state_lock:
             now_local = datetime.now().astimezone()

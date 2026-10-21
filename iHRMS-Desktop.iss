@@ -17,7 +17,7 @@ VersionInfoCopyright=Copyright (C) 2026 Indovision Services Private Limited
 VersionInfoProductName=iHRMS Desktop
 DefaultDirName={autopf}\iHRMS Desktop
 DefaultGroupName=iHRMS Desktop
-UsePreviousAppDir=no
+UsePreviousAppDir=yes
 OutputDir=dist\Windows
 OutputBaseFilename=iHRMS-Desktop-Setup-{#MyAppVersion}
 SetupIconFile=assets\ihrms-logo-icon.ico
@@ -59,4 +59,17 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Com
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Stop-Process -Name 'iHRMS-Desktop','iHRMS-Supervisor' -Force -ErrorAction SilentlyContinue"""; Flags: runhidden
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""cmdkey /delete:iHRMS_Desktop:session 2>$null"""; Flags: runhidden
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\uninstall_notifier.ps1"""; Flags: runhidden
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ErrorCode: Integer;
+begin
+  // Terminate any running application or supervisor processes before file replacement
+  Exec('taskkill.exe', '/F /IM iHRMS-Desktop.exe', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Exec('taskkill.exe', '/F /IM iHRMS-Supervisor.exe', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Exec('taskkill.exe', '/F /IM Workpulse.exe', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Exec('taskkill.exe', '/F /IM "iHRMS Monitor.exe"', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Result := True;
+end;
 

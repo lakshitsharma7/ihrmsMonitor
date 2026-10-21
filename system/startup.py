@@ -73,14 +73,14 @@ def set_enabled(enabled: bool, executable_path: str | None = None) -> bool:
 
 
 def _find_windows_executable(explicit_path: str | Path | None = None) -> Path | None:
-    """Dynamically discover the authoritative Workpulse Windows executable.
+    """Dynamically discover the authoritative iHRMS Desktop Windows executable.
     
     Checks in order:
     1. Explicit path if passed and valid (non-python)
     2. sys.executable if running as frozen executable (PyInstaller)
-    3. Installed location in %LOCALAPPDATA%\\Programs\\Workpulse\\Workpulse.exe
+    3. Installed location in %LOCALAPPDATA%\\Programs\\iHRMS Desktop\\iHRMS-Desktop.exe
     4. Standard Program Files locations (64-bit and 32-bit)
-    5. Local project dist directory (dist\\Workpulse\\Workpulse.exe)
+    5. Local project dist directory (dist\\iHRMS-Desktop\\iHRMS-Desktop.exe)
     6. Legacy locations for smooth backward compatibility
     """
     import sys
@@ -310,7 +310,7 @@ def _windows_set_enabled(enabled: bool, exe_path: str | None = None) -> bool:
             is_frozen = getattr(sys, "frozen", False)
             if not clean_exe or (not is_frozen and not clean_exe.is_file()):
                 logger.warning(
-                    "Cannot register Windows auto-start: compiled Workpulse binary not found on disk (tried %s)",
+                    "Cannot register Windows auto-start: compiled iHRMS Desktop binary not found on disk (tried %s)",
                     exe_path,
                 )
                 return False

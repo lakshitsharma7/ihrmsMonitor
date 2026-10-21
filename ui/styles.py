@@ -40,22 +40,22 @@ QMainWindow {
     font-weight: 600;
 }
 
-#StatusBadge[workpulse="true"] {
+#StatusBadge[workpulse="true"], #StatusBadge[tracking="true"] {
     background-color: #e6f4ea;
     color: #137333;
 }
 
-#StatusBadge[workpulse="false"] {
+#StatusBadge[workpulse="false"], #StatusBadge[tracking="false"] {
     background-color: #fce8e6;
     color: #a50e0e;
 }
 
-#StatusBadge[workpulse="idle"] {
+#StatusBadge[workpulse="idle"], #StatusBadge[tracking="idle"] {
     background-color: #fef7e0;
     color: #b06000;
 }
 
-#StatusBadge[workpulse="paused"] {
+#StatusBadge[workpulse="paused"], #StatusBadge[tracking="paused"] {
     background-color: #fef7e0;
     color: #b06000;
 }

@@ -231,7 +231,7 @@ class WeeklyBarChart(QWidget):
 
 
 class WeeklyTimelinePage(QWidget):
-    """Full-page view dedicated to weekly workpulse timeline and day-by-day analysis."""
+    """Full-page view dedicated to weekly activity timeline and day-by-day analysis."""
 
     back_requested = Signal()
     weekly_data_refreshed = Signal(list)

@@ -259,7 +259,7 @@ def spawn_detached_process(
             # Configure Win32_ProcessStartup with SW_HIDE for background/supervisor processes
             startup_cls = wmi.Get("Win32_ProcessStartup")
             startup_inst = startup_cls.SpawnInstance_()
-            is_bg = any(k in params.CommandLine.lower() for k in ("--supervisor", "--startup", "--supervised", "--minimized", "--background", "--hidden"))
+            is_bg = any(k in params.CommandLine.lower() for k in ("--supervisor", "--startup", "--minimized", "--background", "--hidden"))
             if is_bg:
                 startup_inst.ShowWindow = 0  # SW_HIDE
             params.ProcessStartupInformation = startup_inst
@@ -282,7 +282,7 @@ def spawn_detached_process(
         base_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        is_bg = any(k in " ".join(cmd).lower() for k in ("--supervisor", "--startup", "--supervised", "--minimized", "--background", "--hidden"))
+        is_bg = any(k in " ".join(cmd).lower() for k in ("--supervisor", "--startup", "--minimized", "--background", "--hidden"))
         if is_bg:
             startupinfo.wShowWindow = 0  # SW_HIDE
         try:
@@ -434,6 +434,11 @@ class ProcessSupervisor:
         def _handle_sig(signum, frame):
             logger.info("%s received signal %s. Shutting down gracefully.", SUPERVISOR_NAME, signum)
             self._stop_requested = True
+            try:
+                from services.secure_session import SessionStore
+                SessionStore().set_clean_shutdown(True)
+            except Exception:
+                pass
             if self._child_process and self._child_process.poll() is None:
                 try:
                     self._child_process.terminate()
@@ -453,6 +458,30 @@ class ProcessSupervisor:
         except Exception:
             pass
 
+        # Windows Console Control Handler to gracefully handle Windows Shutdown, Logoff, and Console Close
+        _win_ctrl_handler_ref = None
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+                from ctypes import wintypes
+                PHANDLER_ROUTINE = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+                def _win_ctrl_handler(ctrl_type: int) -> bool:
+                    # 0=CTRL_C, 1=CTRL_BREAK, 2=CTRL_CLOSE, 5=CTRL_LOGOFF, 6=CTRL_SHUTDOWN
+                    logger.info("%s received Windows console control event %d. Stopping gracefully.", SUPERVISOR_NAME, ctrl_type)
+                    self._stop_requested = True
+                    try:
+                        from services.secure_session import SessionStore
+                        SessionStore().set_clean_shutdown(True)
+                    except Exception:
+                        pass
+                    return True
+
+                _win_ctrl_handler_ref = PHANDLER_ROUTINE(_win_ctrl_handler)
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(_win_ctrl_handler_ref, True)
+            except Exception as ctrl_err:
+                logger.debug("Could not install Windows console control handler: %s", ctrl_err)
+
         try:
             # Phase 1: If an initial PID was specified, or if an existing desktop is already active:
             monitored_pid = self._initial_pid
@@ -469,9 +498,9 @@ class ProcessSupervisor:
                     logger.info("%s stopping upon request.", SUPERVISOR_NAME)
                     return 0
 
-                is_clean = (exit_code == 0) and self._is_clean_shutdown()
+                is_clean = self._is_clean_shutdown()
                 if is_clean:
-                    logger.info("%s clean shutdown confirmed for PID %d. Supervisor exiting.", SUPERVISOR_NAME, monitored_pid)
+                    logger.info("%s clean shutdown confirmed for PID %d (exit_code=%s). Supervisor exiting.", SUPERVISOR_NAME, monitored_pid, exit_code)
                     return 0
 
                 # Unexpected termination detected!
@@ -516,6 +545,7 @@ class ProcessSupervisor:
                 logger.info("%s launching monitored instance: %s", SUPERVISOR_NAME, " ".join(cmd))
                 env = dict(os.environ)
                 env["IHRMS_SUPERVISED"] = "1"
+
                 try:
                     self._child_pid, self._child_process = spawn_detached_process(cmd, env=env)
                 except Exception as launch_err:
@@ -548,7 +578,7 @@ class ProcessSupervisor:
                     break
 
                 # Check if this was an intentional normal exit or logout
-                is_clean = (exit_code == 0) and self._is_clean_shutdown()
+                is_clean = self._is_clean_shutdown()
                 if is_clean:
                     logger.info(
                         "%s exited cleanly (exit_code=%s, clean_shutdown=True). Supervisor stopping.",

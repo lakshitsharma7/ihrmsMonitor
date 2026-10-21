@@ -206,10 +206,10 @@ def build_brd():
     
     add_h1(doc, "1. Executive Summary")
     add_p(doc, "The iHRMS Monitor is an enterprise-grade Windows desktop monitoring agent seamlessly integrated with the centralized iHRMS platform. Built using Python and PySide6 (Qt6), the application provides organizations with transparent, automated visibility into employee desktop activity, application usage, active vs. idle distribution, and audit verification through periodic screenshots.")
-    add_p(doc, "The solution employs an offline-first architecture to guarantee 100% data integrity even during prolonged network outages. All workpulse logs and screenshots are buffered locally in the current Windows user's writable AppData directory (%LOCALAPPDATA%\\iHRMS Monitor\\) and automatically synchronized with backend REST APIs once connectivity is restored, followed by strict server-confirmed local file cleanup.")
+    add_p(doc, "The solution employs an offline-first architecture to guarantee 100% data integrity even during prolonged network outages. All tracking logs and screenshots are buffered locally in the current Windows user's writable AppData directory (%LOCALAPPDATA%\\iHRMS Monitor\\) and automatically synchronized with backend REST APIs once connectivity is restored, followed by strict server-confirmed local file cleanup.")
 
     add_h1(doc, "2. Business Problem & Strategic Objectives")
-    add_p(doc, "Modern distributed and hybrid enterprise environments require objective, automated workpulse of workplace activities without imposing manual timesheet burdens on employees. Traditional HRMS platforms record attendance and leave but lack granular visibility into desktop productivity.")
+    add_p(doc, "Modern distributed and hybrid enterprise environments require objective, automated tracking of workplace activities without imposing manual timesheet burdens on employees. Traditional HRMS platforms record attendance and leave but lack granular visibility into desktop productivity.")
     add_p(doc, "The key business challenges solved by iHRMS Monitor include:")
     add_bullet(doc, "Automated Time Allocation", "Capturing precise start, end, and duration metrics for every opened desktop application without manual employee intervention.")
     add_bullet(doc, "Accurate Idle Time Attribution", "Preserving the active application where an employee became idle and measuring exact idle duration rather than generic unattributed idle time.")
@@ -220,7 +220,7 @@ def build_brd():
     add_h1(doc, "3. Stakeholder Roles & Access Model")
     headers = ["Stakeholder Role", "System Interaction", "Key Business Responsibilities"]
     data = [
-        ["Monitored Employee", "Windows Desktop Client (EXE)", "Logs in via Company Code & credentials; views daily personal timeline, uploaded records counter, workpulse status, and device metadata."],
+        ["Monitored Employee", "Windows Desktop Client (EXE)", "Logs in via Company Code & credentials; views daily personal timeline, uploaded records counter, tracking status, and device metadata."],
         ["HR & Operations Manager", "Central iHRMS Web Portal", "Analyzes aggregate productivity, idle duration reports, application usage breakdowns, and audit screenshots."],
         ["System Administrator", "Inno Setup Installer / CLI", "Deploys application silently across enterprise endpoints (/VERYSILENT), monitors device enrollment status and agent versions."],
         ["Backend / App Controller", "REST APIs & Database", "Verifies company tenant codes, validates device enrollment, ingests batch telemetry, and serves dynamic heartbeat configs."]
@@ -231,10 +231,10 @@ def build_brd():
     headers = ["Req ID", "Module", "Business Requirement Description", "Priority"]
     data = [
         ["BR-01", "Tenant Verification", "Verify multi-tenant Company Code against App Controller and lock base URL dynamically.", "High"],
-        ["BR-02", "Authentication & RBAC", "Authenticate employee credentials, obtain JWT, and establish role-based workpulse permissions.", "High"],
+        ["BR-02", "Authentication & RBAC", "Authenticate employee credentials, obtain JWT, and establish role-based tracking permissions.", "High"],
         ["BR-03", "Device Enrollment", "Generate deterministic Hardware UUID and bind device to employee with scoped device token.", "High"],
-        ["BR-04", "Activity WorkPulse", "Poll active foreground window every 1 sec, recording application name, title, PID, and duration.", "High"],
-        ["BR-05", "Idle WorkPulse", "Preserve active app at idle entry and record idle start, end, and total duration on resumption.", "High"],
+        ["BR-04", "Activity Tracking", "Poll active foreground window every 1 sec, recording application name, title, PID, and duration.", "High"],
+        ["BR-05", "Idle Detection", "Preserve active app at idle entry and record idle start, end, and total duration on resumption.", "High"],
         ["BR-06", "Screenshot Capture", "Capture periodic and context-switch screenshots, staged in user AppData folder.", "Medium"],
         ["BR-07", "Offline Storage", "Persist all logs in SQLite (%LOCALAPPDATA%\\iHRMS Monitor\\data\\) with zero data loss.", "High"],
         ["BR-08", "Sync & Cleanup", "Upload pending logs in batches; delete local screenshots only after server HTTP 200 confirmation.", "High"],
@@ -280,7 +280,7 @@ def build_prd():
     add_bullet(doc, "Deterministic Device Fingerprint", "Combines motherboard UUID, computer name, and OS build to generate a unique SHA-256 hardware token via /device/enroll.")
     add_bullet(doc, "Multi-User Data Segregation", "When different employees log into the same physical machine or Windows profile sequentially, all activity queries, screenshot uploads, and database records are strictly scoped by employee_id. Device tokens from previous sessions are never leaked or inherited.")
 
-    add_h2(doc, "3.3 Activity WorkPulse & Idle Intelligence")
+    add_h2(doc, "3.3 Activity Tracking & Idle Intelligence")
     add_bullet(doc, "Foreground Window Polling", "Polls Windows GetForegroundWindow and GetWindowTextW every 1 second, aggregating session durations per application.")
     add_bullet(doc, "Contextual Idle Attribution", "When Windows GetLastInputInfo exceeds the idle threshold (default 60s), the tracker captures the active application at the onset of idle. On user activity resumption, it records the exact application name, status: 'Idle', idle_start_time, idle_end_time, and idle_duration_seconds.")
 
@@ -289,7 +289,7 @@ def build_prd():
     add_bullet(doc, "Verified Server-Confirmed Cleanup", "Screenshots are saved locally as PNGs. When the sync worker uploads via /workpulse/upload_screenshot, it verifies HTTP 200 and {'response': 'Success'}. Only then is os.remove() called. Failed uploads remain safe on disk.")
 
     add_h2(doc, "3.5 UI Layout & Dashboard Enhancements")
-    add_bullet(doc, "Dynamic 'Records Uploaded' Counter", "Displays the exact count of activity records confirmed as successfully synced to the server in the WorkPulse & Status widget, updating dynamically in real time.")
+    add_bullet(doc, "Dynamic 'Records Uploaded' Counter", "Displays the exact count of activity records confirmed as successfully synced to the server in the Tracking & Status widget, updating dynamically in real time.")
     add_bullet(doc, "Streamlined User/Device Dialog", "Clean modal displaying user name, email, employee ID, company code, device UUID, device token status, IP address, and platform details.")
     add_bullet(doc, "Single Source of Truth Versioning", "Dynamically resolves the running version via PE binary headers (get_running_app_version()) and propagates it across Login, Dashboard, Settings, and About dialogs.")
 
@@ -353,11 +353,11 @@ def build_hld():
     
     add_h1(doc, "1. Architectural Overview & Component Layers")
     add_p(doc, "The iHRMS Monitor architecture follows a modular, decoupled, event-driven pattern designed for high reliability, responsiveness, and minimal system overhead.")
-    add_bullet(doc, "Presentation Layer (PySide6)", "Main Window, Login View, Dashboard, Dynamic WorkPulse Box, Activity Timeline, User/Device Details Modal, System Tray.")
+    add_bullet(doc, "Presentation Layer (PySide6)", "Main Window, Login View, Dashboard, Dynamic Tracking Box, Activity Timeline, User/Device Details Modal, System Tray.")
     add_bullet(doc, "Application Services", "SessionService (DPAPI), ApiConfig Manager, SyncService (Batch Sync & Cleanup), UpdateService (SHA-256 Staging), ErrorReportingService.")
-    add_bullet(doc, "WorkPulse & OS Engine", "ActivityTracker thread, ScreenCapture thread, PlatformActivityProvider (Win32 User32/Kernel32 hooks).")
+    add_bullet(doc, "Tracking & OS Engine", "ActivityTracker thread, ScreenCapture thread, PlatformActivityProvider (Win32 User32/Kernel32 hooks).")
     add_bullet(doc, "Data & Storage Layer", "SQLite WAL database (%LOCALAPPDATA%\\iHRMS Monitor\\data\\ihrms_monitor.db), Secure DPAPI Keyring, Screenshot Storage.")
-    add_bullet(doc, "Cloud / Backend Layer", "App Controller (/company_verify), Auth Service (/login), Device Manager (/enroll, /heartbeat), WorkPulse Service (/sync_activities_batch, /upload_screenshot), Storage Bucket.")
+    add_bullet(doc, "Cloud / Backend Layer", "App Controller (/company_verify), Auth Service (/login), Device Manager (/enroll, /heartbeat), Activity Sync Service (/workpulse/sync_activities_batch, /workpulse/upload_screenshot), Storage Bucket.")
 
     add_h1(doc, "2. Multi-Threading & Process Model")
     headers = ["Thread / Component", "Role & Execution Responsibility", "Concurrency Controls"]
@@ -410,7 +410,7 @@ def build_lld():
         ["utils/version.py", "get_running_app_version()", "Single Source of Truth version reader. Extracts PE version header or reads VERSION file."],
         ["utils/paths.py", "get_app_data_dir()", "Dynamically generates %LOCALAPPDATA%\\iHRMS Monitor\\ (data/, screenshots/, logs/, updates/)."],
         ["ui/main_window.py", "MainWindow", "Main container, status bar, user/device dialog launcher, tray icon, version display."],
-        ["ui/dashboard.py", "DashboardWidget", "Real-time activity stats, dynamic Records Uploaded counter, timeline table, workpulse toggle."]
+        ["ui/dashboard.py", "DashboardWidget", "Real-time activity stats, dynamic Records Uploaded counter, timeline table, tracking toggle."]
     ]
     add_table(doc, headers, data)
 
@@ -539,18 +539,18 @@ Indovision Consultancy Services
    - Seamlessly restarts updated EXE without requiring user intervention.
 
 8. REAL-TIME DASHBOARD "RECORDS UPLOADED" & STREAMLINED UI
-   - Live dynamic "Records Uploaded" counter in WorkPulse & Status box.
+   - Live dynamic "Records Uploaded" counter in Tracking & Status box.
    - Clean User/Device modal displaying authenticated employee profile and hardware binding.
    - Wide, responsive activity timeline table.
 
 9. MULTI-USER & SHARED WORKSTATION SEGREGATION
-   - Full isolation of workpulse logs and sync queries scoped strictly by employee_id.
+   - Full isolation of activity logs and sync queries scoped strictly by employee_id.
    - DPAPI encryption (CryptProtectData) ensures credentials and tokens are protected per user.
    - Zero token leakage or inheritance across sequential employee logins.
 
 10. AUTOMATED QUALITY ASSURANCE
     - 60 automated unit and integration tests passing across 9 comprehensive test suites.
-    - 100% test pass rate with complete coverage of auth, workpulse, storage, sync, and update flows.
+    - 100% test pass rate with complete coverage of auth, tracking, storage, sync, and update flows.
 ================================================================================
 """
     out_path = os.path.join(DOCS_DIR, "Points.txt")
@@ -599,8 +599,8 @@ def build_project_tracker_xlsx():
         ["TSK-06", "2026-09-03", "Storage & Paths", "Migrated offline SQLite DB and screenshots to %LOCALAPPDATA%\\iHRMS Monitor\\.", "Done", "Removed Program Files write attempt", "Verified (6/6 Unit Tests Passed)"],
         ["TSK-07", "2026-09-03", "Verified Cleanup", "Automated local screenshot PNG deletion strictly after server HTTP 200 Success response.", "Done", "Fixed uncleaned screenshot files", "Verified (6/6 Unit Tests Passed)"],
         ["TSK-08", "2026-09-03", "UI Improvements", "Wider responsive activity timeline table layout and custom dark/light theme styling.", "Done", "Fixed column truncation", "Verified (Visual / Manual)"],
-        ["TSK-09", "2026-09-04", "Idle WorkPulse", "Context-aware idle workpulse: preserve active application at idle onset, record duration.", "Done", "Fixed idle duration calculation", "Verified (6/6 Unit Tests Passed)"],
-        ["TSK-10", "2026-09-04", "Dashboard Counter", "Dynamic 'Records Uploaded' real-time counter in WorkPulse & Status box.", "Done", "Fixed dynamic sync signal emission", "Verified (UI & Sync tests)"],
+        ["TSK-09", "2026-09-04", "Idle Tracking", "Context-aware idle tracking: preserve active application at idle onset, record duration.", "Done", "Fixed idle duration calculation", "Verified (6/6 Unit Tests Passed)"],
+        ["TSK-10", "2026-09-04", "Dashboard Counter", "Dynamic 'Records Uploaded' real-time counter in Tracking & Status box.", "Done", "Fixed dynamic sync signal emission", "Verified (UI & Sync tests)"],
         ["TSK-11", "2026-09-04", "User/Device View", "Streamlined User/Device dialog: removed legacy 'Enrolled' fleet tab, added clickable header.", "Done", "Fixed popup trigger & tab cleanup", "Verified (UI manual test)"],
         ["TSK-12", "2026-09-04", "Multi-User Flow", "Strict query scoping by employee_id, ensuring zero data leakage on shared PCs.", "Done", "Fixed session token inheritance bug", "Verified (10/10 Unit Tests Passed)"],
         ["TSK-13", "2026-09-04", "Documentation", "Complete rewrite of BRD, PRD, SRS, HLD, LLD, Test Plan, Points.txt for iHRMS Monitor.", "Done", "Removed all legacy TA-ATS docs", "Verified (All 6 Docs Generated)"]

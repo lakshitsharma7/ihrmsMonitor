@@ -15,10 +15,10 @@ existing process. This module coordinates that relaunch:
 
   1. ``request_and_prompt()`` opens the System Settings Privacy pane and
      shows the user an instruction dialog.
-  2. The user enables Workpulse in System Settings.
+  2. The user enables iHRMS Desktop in System Settings.
   3. Clicking "Quit & Reopen" calls ``relaunch_application()``.
   4. On reopen, ``has_screen_recording_permission()`` returns True.
-  5. Screenshot workpulse starts automatically.
+  5. Screenshot tracking starts automatically.
 
 A persistent restart-counter in AppData prevents infinite relaunch loops
 if the user never actually enables the permission.
@@ -105,7 +105,7 @@ def can_relaunch() -> Tuple[bool, str]:
         return (
             False,
             f"Screen Recording permission relaunch attempted {count} times "
-            f"without success. Please manually enable Workpulse in "
+            f"without success. Please manually enable iHRMS Desktop in "
             f"System Settings > Privacy & Security > Screen Recording, "
             f"then reopen the app.",
         )
@@ -213,7 +213,7 @@ def open_screen_recording_settings() -> bool:
 
 
 def relaunch_application() -> None:
-    """Cleanly stop all background workers and relaunch Workpulse.app.
+    """Cleanly stop all background workers and relaunch iHRMS Desktop.
 
     This is called by the UI after the user enables Screen Recording in
     System Settings and clicks "Quit & Reopen". It must NEVER touch
@@ -221,7 +221,7 @@ def relaunch_application() -> None:
     update_button label – those are exclusively auto-update concerns.
     """
     _record_relaunch()
-    logger.info("MacPermissionService: launching new Workpulse.app instance before quitting")
+    logger.info("MacPermissionService: launching new iHRMS Desktop instance before quitting")
 
     try:
         # Prefer the running bundle (.app) so the correct macOS process
@@ -245,7 +245,7 @@ def relaunch_application() -> None:
             # Development mode: re-exec python interpreter
             subprocess.Popen([sys.executable] + sys.argv)
     except Exception as exc:
-        logger.error("Could not launch new Workpulse instance: %s", exc)
+        logger.error("Could not launch new iHRMS Desktop instance: %s", exc)
 
     # Release QLockFile so the new instance is not blocked by the instance guard
     try:

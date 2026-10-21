@@ -426,7 +426,7 @@ class DeviceRegistryService:
     # =========================================================================
 
     def reset_offline_alert(self, device_identifier: str) -> None:
-        """Reset offline workpulse for a specific device identifier."""
+        """Reset offline tracking for a specific device identifier."""
         with self._lock:
             self._offline_alerted_devices.discard(device_identifier)
 

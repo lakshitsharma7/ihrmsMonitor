@@ -1,5 +1,5 @@
 ================================================================================
-Workpulse - Version History
+iHRMS Desktop - Version History
 ================================================================================
 Maintained automatically. Add a new block at the top for each release.
 Do not duplicate version entries. Preserve all previous entries below.
@@ -40,8 +40,8 @@ New Features:
 - Dynamic Network Reachability Monitor:
     * Real-time network reachability detection with macOS SystemConfiguration and high-availability multi-target socket probes.
     * Real-time Online / Offline status display independent of individual API sync timeouts.
-- Workpulse Pause/Resume Status Indicator:
-    * Pause/Resume button acts as a clean workpulse status toggle without stopping background activity workpulse, screenshot capture, logging, or sync workers.
+- Tracking Pause/Resume Status Indicator:
+    * Pause/Resume button acts as a clean tracking status toggle without stopping background activity tracking, screenshot capture, logging, or sync workers.
     * Internal paused state safely stored for manager notification integration.
 - Daily Active Time Midnight Auto-Rollover:
     * Automatic midnight date transition resetting Active Time to 00:00:00 without carryover or re-login.
@@ -81,10 +81,10 @@ Improvements:
     * imei_number is always sent as an empty string (desktop has no IMEI).
     * os_type is dynamically detected as 'window' on Windows (singular lowercase matching CI4 API contract) and 'macos' on macOS.
     * device_detail is dynamically detected from machine BIOS/hardware (Manufacturer & Model).
-- Dashboard "WorkPulse & Sync Status" cleaned up:
+- Dashboard "Tracking & Sync Status" cleaned up:
     * Removed "API Sync: Sent" row (redundant).
     * Removed "Last successful API sync" row; renamed to "Last successful sync".
-- Removed and permanently hidden the "Stop WorkPulse" button and manual stop controls from the UI and system tray for all users. WorkPulse is automatically managed by system/RBAC logic and automatically resumes upon login, startup, and auto-update restarts.
+- Removed and permanently hidden the manual stop controls from the UI and system tray for all users. Tracking is automatically managed by system/RBAC logic and automatically resumes upon login, startup, and auto-update restarts.
 - Installer shortcut permission issue fixed (PrivilegesRequired=lowest).
 - Embedded Python EXE startup issue resolved.
 - Device validation no longer relies on a hardcoded IMEI/device-ID retry loop.
@@ -108,7 +108,7 @@ Bug Fixes:
     * Guaranteed pre-update data flush (activities & screenshots) before installer launch.
     * Silent Inno Setup execution & single-instance lock file clearance.
     * Automatic restart with encrypted SessionStore and ApiConfig restoration (NO re-login required).
-    * WorkPulse automatically resumes if active before update, or remains stopped if manually stopped.
+    * Tracking automatically resumes if active before update, or remains stopped if manually stopped.
     * Startup loop prevention guard with 24-hour cooldown on repeated installation failures.
 
 --------------------------------------------------------------------------------
@@ -118,13 +118,13 @@ Date: 01-09-2026
 
 New Features:
 - Automatic application update system with force-update support.
-- WorkPulse resumes automatically after application restart (session persistence).
+- Tracking resumes automatically after application restart (session persistence).
 - Company Code verification flow added to the login screen (two-step login).
-- Dynamic RBAC / permission flags pushed from server (workpulse, logout, device).
+- Dynamic RBAC / permission flags pushed from server (tracking, logout, device).
 - Device enrollment via enroll_device API on first login.
 - Secure encrypted session storage across restarts.
-- System tray with live workpulse controls and status.
-- Dashboard "WorkPulse & Sync Status" section with live counters.
+- System tray with live tracking controls and status.
+- Dashboard "Tracking & Sync Status" section with live counters.
 - Activity batch sync with pagination (batches of 25 records per request).
 - Screenshot capture on window switch and on custom interval.
 - Idle detection with configurable threshold (fetched from server settings).

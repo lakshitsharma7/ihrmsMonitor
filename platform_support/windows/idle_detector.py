@@ -1,7 +1,7 @@
 """Windows implementation of idle-time detection.
 
 Uses the ``GetLastInputInfo`` Win32 API (via ``ctypes``), augmented with
-active mouse cursor workpulse, mouse button state verification, and
+active mouse cursor tracking, mouse button state verification, and
 system resume/wake synchronization.
 """
 
@@ -38,7 +38,7 @@ except Exception as _proto_err:
     logger.debug("Could not set GetTickCount prototype: %s", _proto_err)
 
 
-# Internal state for workpulse active interactions across sleep/resume
+# Internal state for tracking active interactions across sleep/resume
 _last_cursor_pos: tuple[int, int] | None = None
 _last_interaction_mono: float = 0.0
 _last_input_dw_time: int = 0
@@ -79,7 +79,7 @@ def get_idle_seconds() -> float:
     global _last_cursor_pos, _last_interaction_mono, _last_input_dw_time, _resume_mono
     now_mono = time.monotonic()
 
-    # 1. Direct mouse cursor position workpulse
+    # 1. Direct mouse cursor position tracking
     mouse_moved = False
     try:
         pt = _POINT()

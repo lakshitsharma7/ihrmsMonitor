@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# Standalone DMG creation script for Workpulse macOS
+# Standalone DMG creation script for iHRMS Desktop macOS
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-APP_BUNDLE="${1:-dist/Workpulse.app}"
-DMG_FILE="${2:-dist/macOS/Workpulse.dmg}"
+APP_BUNDLE="${1:-dist/iHRMS-Desktop.app}"
+DMG_FILE="${2:-dist/macOS/iHRMS-Desktop.dmg}"
 DMG_STAGING="dist/dmg_staging"
 
 if [ ! -d "${APP_BUNDLE}" ]; then
-    echo "ERROR: App bundle not found at ${APP_BUNDLE}" >&2
-    exit 1
+    if [ -d "dist/Workpulse.app" ]; then
+        APP_BUNDLE="dist/Workpulse.app"
+    else
+        echo "ERROR: App bundle not found at ${APP_BUNDLE}" >&2
+        exit 1
+    fi
 fi
 
 mkdir -p "$(dirname "${DMG_FILE}")"
 
 echo "==================================================="
-echo "Creating Workpulse macOS DMG from ${APP_BUNDLE}"
+echo "Creating iHRMS Desktop macOS DMG from ${APP_BUNDLE}"
 echo "==================================================="
 
 rm -rf "${DMG_STAGING}" "${DMG_FILE}"
@@ -36,7 +40,7 @@ fi
 
 # Create compressed UDZO disk image
 hdiutil create \
-    -volname "Workpulse" \
+    -volname "iHRMS Desktop" \
     -srcfolder "${DMG_STAGING}" \
     -ov \
     -format UDZO \

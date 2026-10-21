@@ -1,4 +1,4 @@
-"""Platform-independent activity workpulse state machine."""
+"""Platform-independent activity tracking state machine."""
 
 from __future__ import annotations
 
@@ -48,6 +48,11 @@ class TrackerState:
     current_window_title: str | None
     idle_seconds: float
 
+    @property
+    def is_tracking(self) -> bool:
+        """Alias for is_workpulse."""
+        return self.is_workpulse
+
 
 # ==============================================================
 # ACTIVITY TRACKER
@@ -56,11 +61,11 @@ class TrackerState:
 
 class ActivityTracker:
     """
-    Core activity-workpulse state machine.
+    Core activity tracking state machine.
 
     Behaviour:
 
-    1. Create a session when workpulse starts.
+    1. Create a session when tracking starts.
     2. Keep the same session while the same application/process
        remains active.
     3. Create a new session when the application changes.
@@ -196,8 +201,12 @@ class ActivityTracker:
 
     @property
     def is_workpulse(self) -> bool:
-        """Return whether workpulse is currently active."""
+        """Return whether tracking/workpulse is currently active."""
+        return self._is_workpulse
 
+    @property
+    def is_tracking(self) -> bool:
+        """Return whether tracking is currently active (alias for is_workpulse)."""
         return self._is_workpulse
 
     @property
@@ -212,7 +221,7 @@ class ActivityTracker:
 
     def start(self) -> None:
         """
-        Start activity workpulse.
+        Start activity tracking.
 
         Any stale open database session from a previous
         application run is closed first.

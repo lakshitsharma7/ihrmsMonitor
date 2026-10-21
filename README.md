@@ -11,7 +11,7 @@ A cross-platform enterprise desktop activity monitoring, timesheet management, a
 - **Smart Idle Detection**: Halts active duration counting during periods of user inactivity (mouse/keyboard idle).
 - **Automated Cloud Synchronization**: Local-first SQLite queue with transactional batch uploads (`POST /workpulse/save_activity_batch`).
 - **Screenshot Capture**: Periodic desktop screen captures with offline queuing and macOS Screen Recording permission management.
-- **Attendance & Punch WorkPulse**: Integration with company punch-in/out timestamps and monthly attendance records.
+- **Attendance & Punch Tracking**: Integration with company punch-in/out timestamps and monthly attendance records.
 - **Leave Balance & Quotas**: Real-time retrieval of accrued leave types and remaining quotas.
 - **Task PMS & Timesheets**: Interactive timesheet management for Key Result Areas (KRAs) and assigned tasks.
 - **Single Sign-On HRMS Portal Bridge**: Instant browser navigation to the full HRMS Web Portal with automated credential passing.
@@ -58,7 +58,7 @@ A cross-platform enterprise desktop activity monitoring, timesheet management, a
 | Layer | Directory | Responsibility |
 |---|---|---|
 | **GUI** | `ui/` | Login, Dashboard, Attendance, Tasks, Leave, Update Dialog, System Tray |
-| **Tracker** | `tracker/` | Session state machine, window polling worker, idle workpulse |
+| **Tracker** | `tracker/` | Session state machine, window polling worker, idle tracking |
 | **Platform** | `platform_support/` | Abstract OS interface (`base.py`) + OS-specific implementations |
 | **Services** | `services/` | Sync, Authentication, Screenshots, Attendance, Tasks, Auto-Updates, Health |
 | **Database** | `database/` | SQLAlchemy models, engine, and repository access layer |
@@ -118,7 +118,7 @@ iHRMS Desktop connects dynamically to tenant-specific company endpoints resolved
 - **Version Check**: `POST /api/appcontroller/appcontroller`
 - **Diagnostic Logging**: `POST /dashboard/post_front_end_error_log`
 
-For detailed request/response schemas and architectural workflows, see [docs/WORKPULSE_SYSTEM_DOCUMENTATION.md](file:///d:/New%20folder/ihrms_monitor/docs/WORKPULSE_SYSTEM_DOCUMENTATION.md).
+For detailed request/response schemas and architectural workflows, see [Monitoring Doc/Product Requirements Document.docx](file:///d:/New%20folder/ihrms_monitor/Monitoring%20Doc/Product%20Requirements%20Document.docx).
 
 ---
 
@@ -126,7 +126,7 @@ For detailed request/response schemas and architectural workflows, see [docs/WOR
 
 1. **Source of Truth**: The live App Controller update API (`POST /api/appcontroller/appcontroller`) dynamically provides the server version and download URL (`data.apps.WINDOWS` / `data.apps.MAC`).
 2. **Semantic Precedence**: Updates trigger **only** when `server_version > installed_version` (evaluated numerically by major, minor, patch).
-3. **Loop Guard & Cooldown**: If an installation attempt fails (e.g. file lock), automatic retries for that version enter a 24-hour cooldown while keeping normal workpulse operational.
+3. **Loop Guard & Cooldown**: If an installation attempt fails (e.g. file lock), automatic retries for that version enter a 24-hour cooldown while keeping normal activity tracking operational.
 4. **Silent Detached Execution**: Windows installers run silently via detached VBScript/PowerShell runners without blocking or keeping open file locks.
 
 ---

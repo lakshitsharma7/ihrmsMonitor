@@ -180,7 +180,7 @@ class SessionService:
 
     def get_portal_credentials(self) -> Dict[str, Any] | None:
         """
-        Return the authenticated user's dynamic credentials and details for Workpulse/HRMS portal authentication.
+        Return the authenticated user's dynamic credentials and details for iHRMS portal authentication.
 
         Returns:
             Dict containing user_name, password (if present in memory), employee_id,

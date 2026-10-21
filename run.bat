@@ -18,7 +18,7 @@ if not exist "venv\Scripts\activate.bat" (
     call ".\venv\Scripts\activate.bat"
 )
 
-echo Starting Workpulse...
+echo Starting iHRMS Desktop...
 ".\venv\Scripts\python.exe" app.py
 if %errorlevel% neq 0 (
     echo Application exited with an error.

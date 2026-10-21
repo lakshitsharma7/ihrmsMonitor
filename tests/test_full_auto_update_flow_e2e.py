@@ -119,6 +119,11 @@ class TestFullAutoUpdateFlowE2E(unittest.TestCase):
                 "download_url": f"https://demo.indovisionservices.in/uploads/{installer_name}",
             }
             mock_v_resp.text = '{"status": 1, "version_code": "2.1"}'
+            binary_payload = b"0" * (1024 * 200) if sys.platform == "darwin" else (b"MZ" + b"X" * (1024 * 200))
+            mock_v_resp.headers = {"content-type": "application/octet-stream", "content-length": str(len(binary_payload))}
+            mock_v_resp.iter_content = MagicMock(return_value=[binary_payload])
+            mock_v_resp.__enter__.return_value = mock_v_resp
+            mock_v_resp.__exit__.return_value = False
 
             with patch("requests.get", return_value=mock_v_resp), \
                  patch("requests.post", return_value=mock_v_resp), \

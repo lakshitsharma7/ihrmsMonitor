@@ -158,6 +158,7 @@ class SettingsPage(QWidget):
             interval_str = f"{settings.screenshot_custom_interval // 60} minutes (custom)"
         self.current_interval_label.setText(interval_str)
 
-    def update_capture_status(self, is_workpulse: bool) -> None:
-        status_str = "Active" if is_workpulse else "Inactive"
+    def update_capture_status(self, is_active: bool = False, is_workpulse: bool | None = None) -> None:
+        active = is_workpulse if is_workpulse is not None else is_active
+        status_str = "Active" if active else "Inactive"
         self.capture_status_label.setText(status_str)

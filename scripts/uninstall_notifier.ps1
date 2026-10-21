@@ -1,4 +1,4 @@
-# iHRMS Monitor - Standalone Uninstall Notifier & Offline Delivery Script
+# iHRMS Desktop - Standalone Uninstall Notifier & Offline Delivery Script
 # Executed during application uninstall or triggered by Scheduled Task when internet becomes available.
 
 [CmdletBinding()]
@@ -6,14 +6,17 @@ param(
     [switch]$ProcessPendingOnly
 )
 
-$appName = "Workpulse"
+$appName = "iHRMS Desktop"
 $localAppData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
 $appDataDir = Join-Path $localAppData $appName
+if (-not (Test-Path $appDataDir) -and (Test-Path (Join-Path $localAppData "Workpulse"))) {
+    $appDataDir = Join-Path $localAppData "Workpulse"
+}
 if (-not (Test-Path $appDataDir) -and (Test-Path (Join-Path $localAppData "iHRMS Monitor"))) {
     $appDataDir = Join-Path $localAppData "iHRMS Monitor"
 }
 $pendingFile = Join-Path $appDataDir "pending_uninstall.json"
-$taskName = "Workpulse_Uninstall_Notifier"
+$taskName = "iHRMS_Desktop_Uninstall_Notifier"
 $supportEmail = "support-hrms@indovisionservices.in"
 $defaultBaseUrl = "https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api"
 

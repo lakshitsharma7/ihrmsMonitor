@@ -4,7 +4,7 @@ Handles:
 1. Version checking against the App Controller API (POST /appcontroller/appcontroller).
 2. Background streaming download of newer versions with progress reporting.
 3. Safe, unattended Inno Setup installation and clean application restart.
-4. Preserving all local database records, credentials, settings, and workpulse data.
+4. Preserving all local database records, credentials, settings, and tracking data.
 """
 
 from __future__ import annotations
@@ -312,6 +312,9 @@ def resolve_download_candidates(
     if is_mac:
         if clean_v:
             mac_ver_names = [
+                f"iHRMS-Desktop_v{clean_v}.dmg",
+                f"iHRMS-Desktop-{clean_v}.dmg",
+                f"iHRMS-Desktop.dmg",
                 f"Workpulse_v{clean_v}.dmg",
                 f"WorkpulseSetup_v{clean_v}.dmg",
                 f"Workpulse-{clean_v}.dmg",
@@ -324,13 +327,19 @@ def resolve_download_candidates(
                 raw_candidates.append(f"{base_domain}/uploads/version/{vname}")
                 raw_candidates.append(f"{base_domain}/{vname}")
             # GitHub Releases fallback for macOS
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/iHRMS-Desktop.dmg")
             raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/Workpulse.dmg")
             raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/WorkpulseSetup.dmg")
+        raw_candidates.append(f"{base_domain}/uploads/iHRMS-Desktop.dmg")
         raw_candidates.append(f"{base_domain}/uploads/Workpulse.dmg")
         raw_candidates.append(f"{base_domain}/hrms_api/uploads/Workpulse.dmg")
     else:
         if clean_v:
             ver_names = [
+                f"iHRMS-Desktop-Setup-{clean_v}.exe",
+                f"iHRMS-Desktop-Setup_v{clean_v}.exe",
+                f"iHRMS-Desktop-Setup.exe",
+                f"iHRMS-Desktop_v{clean_v}.exe",
                 f"WorkpulseSetup_v{clean_v}.exe",
                 f"WorkpulseSetup.exe",
                 f"Workpulse-Installer-{clean_v}.exe",
@@ -349,12 +358,14 @@ def resolve_download_candidates(
                 if activity_tracker_link and not activity_tracker_link.lower().endswith(".exe"):
                     raw_candidates.append(f"{activity_tracker_link.rstrip('/')}/{vname}")
             # GitHub Releases fallback for Windows
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/iHRMS-Desktop-Setup-{clean_v}.exe")
+            raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/iHRMS-Desktop-Setup.exe")
             raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/WorkpulseSetup.exe")
             raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/Workpulse-Installer.exe")
             raw_candidates.append(f"https://github.com/hrmsportal/ihrms_monitor/releases/download/v{clean_v}/iHRMSMonitorSetup.exe")
 
         # 6. Generic latest fallback filenames
-        generic_names = ["WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
+        generic_names = ["iHRMS-Desktop-Setup.exe", "WorkpulseSetup.exe", "Workpulse-Installer.exe", "iHRMSMonitorSetup.exe", "iHRMS-Monitor-Installer.exe"]
         for gname in generic_names:
             raw_candidates.append(f"{base_domain}/uploads/{gname}")
             raw_candidates.append(f"{base_domain}/hrms_api/uploads/{gname}")
@@ -665,13 +676,13 @@ class UpdateCheckWorker(QThread):
         clean_v = str(version).lstrip("vV").strip()
         updates_dir = get_updates_directory()
         if sys.platform == "darwin":
-            safe_name = f"Workpulse_v{clean_v}.dmg"
+            safe_name = f"iHRMS-Desktop_v{clean_v}.dmg"
             installer_path = updates_dir / safe_name
-            legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.dmg"
+            legacy_installer_path = updates_dir / f"Workpulse_v{clean_v}.dmg"
         else:
-            safe_name = f"WorkpulseSetup_v{clean_v}.exe"
+            safe_name = f"iHRMS-Desktop-Setup_v{clean_v}.exe"
             installer_path = updates_dir / safe_name
-            legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+            legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.exe"
         if not installer_path.exists() and legacy_installer_path.exists():
             installer_path = legacy_installer_path
         temp_path = updates_dir / f"{safe_name}.download"
@@ -729,12 +740,16 @@ class UpdateCheckWorker(QThread):
                         if r.status_code != 200:
                             logger.warning("Candidate %s returned HTTP %d", cand_url, r.status_code)
                             continue
-                        ct = r.headers.get("content-type", "").lower()
-                        if "text/html" in ct or "text/plain" in ct or "application/json" in ct:
+                        ct_raw = r.headers.get("content-type", "")
+                        ct = str(ct_raw).lower() if ct_raw and isinstance(ct_raw, str) else ""
+                        if ct and any(x in ct for x in ("text/html", "text/plain", "application/json")):
                             logger.warning("Candidate %s returned non-binary Content-Type: %s", cand_url, ct)
                             continue
 
-                        total_size = int(r.headers.get("content-length", 0))
+                        try:
+                            total_size = int(r.headers.get("content-length", 0))
+                        except (ValueError, TypeError):
+                            total_size = 0
                         if 0 < total_size < 1024 * 100:
                             logger.warning("Candidate %s content-length %d is too small", cand_url, total_size)
                             continue
@@ -882,7 +897,7 @@ def flush_pending_data_before_update(
             if app:
                 for widget in app.topLevelWidgets():
                     if hasattr(widget, "stop_workpulse") and hasattr(widget, "_tracker") and widget._tracker and getattr(widget._tracker, "is_workpulse", False):
-                        logger.info("Stopping active workpulse to record session before update.")
+                        logger.info("Stopping active tracking to record session before update.")
                         try:
                             widget.stop_workpulse(manual=False)
                         except TypeError:
@@ -1060,27 +1075,57 @@ def verify_post_restart_update(running_version: str | None = None) -> tuple[bool
 
 def get_installed_executable_path() -> Path:
     """
-    Dynamically resolve the real installed iHRMS Monitor executable path on the user's machine.
+    Dynamically resolve the real installed iHRMS Desktop executable path on the user's machine.
     Never points to development or workspace dist directories.
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
 
     if sys.platform == "darwin":
-        app_path = Path("/Applications/Workpulse.app")
+        app_path = Path("/Applications/iHRMS-Desktop.app")
         if app_path.exists():
             return app_path
-        user_app = Path.home() / "Applications" / "Workpulse.app"
+        user_app = Path.home() / "Applications" / "iHRMS-Desktop.app"
         if user_app.exists():
             return user_app
+        for legacy_name in ("Workpulse.app", "iHRMS Monitor.app"):
+            leg = Path("/Applications") / legacy_name
+            if leg.exists():
+                return leg
+            user_leg = Path.home() / "Applications" / legacy_name
+            if user_leg.exists():
+                return user_leg
         return app_path
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    for folder, exe_name in (("Workpulse", "Workpulse.exe"), ("iHRMS Monitor", "iHRMS Monitor.exe")):
-        p = Path(local_app_data) / "Programs" / folder / exe_name
-        if p.exists():
-            return p.resolve()
-    default_exe = Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe"
+    prog_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    prog_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+
+    candidate_paths = [
+        Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS-Desktop.exe",
+        Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files) / "iHRMS Desktop" / "iHRMS-Desktop.exe",
+        Path(prog_files) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS-Desktop.exe",
+        Path(prog_files_x86) / "iHRMS Desktop" / "iHRMS Desktop.exe",
+        Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe",
+        Path(local_app_data) / "Programs" / "iHRMS Monitor" / "iHRMS Monitor.exe",
+        Path(prog_files) / "Workpulse" / "Workpulse.exe",
+        Path(prog_files) / "iHRMS Monitor" / "iHRMS Monitor.exe",
+    ]
+    for candidate in candidate_paths:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    try:
+        from system.startup import _find_windows_executable
+        found = _find_windows_executable()
+        if found and found.is_file() and "python" not in found.name.lower():
+            return found.resolve()
+    except Exception:
+        pass
+
+    default_exe = Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS-Desktop.exe"
     return default_exe.resolve()
 
 
@@ -1155,7 +1200,7 @@ def install_update_and_restart(
     update_log_path = updates_dir / "updater.log"
 
     local_app_data = os.environ.get("LOCALAPPDATA", "")
-    default_exe = (Path(local_app_data) / "Programs" / "Workpulse" / "Workpulse.exe").resolve()
+    default_exe = (Path(local_app_data) / "Programs" / "iHRMS Desktop" / "iHRMS-Desktop.exe").resolve()
     target_exe = get_installed_executable_path()
 
     app_dir = target_exe.parent
@@ -1188,7 +1233,7 @@ def install_update_and_restart(
     # ----------------------------------------------------------
     sh_path = updates_dir / "updater.sh"
     if sys.platform == "darwin":
-        target_app = target_exe if str(target_exe).endswith(".app") else Path("/Applications/Workpulse.app")
+        target_app = target_exe if str(target_exe).endswith(".app") else Path("/Applications/iHRMS-Desktop.app")
         sh_content = f"""#!/bin/bash
 OLD_PID={current_pid}
 UPDATE_FILE="{str(update_file)}"
@@ -1203,12 +1248,13 @@ while kill -0 "$OLD_PID" 2>/dev/null && [ $waited -lt 30 ]; do
     waited=$((waited+1))
 done
 
+pkill -9 -f "iHRMS-Desktop.app" 2>/dev/null || true
 pkill -9 -f "Workpulse.app" 2>/dev/null || true
 pkill -9 -f "iHRMS Monitor" 2>/dev/null || true
 rm -f "{lock_file_path}" 2>/dev/null || true
 
 if [[ "$UPDATE_FILE" == *.dmg ]]; then
-    MOUNT_DIR=$(mktemp -d /tmp/workpulse_mount.XXXXXX)
+    MOUNT_DIR=$(mktemp -d /tmp/ihrms_mount.XXXXXX)
     echo "$(date) | [UPDATER-MAC] Mounting DMG $UPDATE_FILE to $MOUNT_DIR" >> "$LOG_FILE"
     hdiutil attach "$UPDATE_FILE" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
     SRC_APP=$(find "$MOUNT_DIR" -maxdepth 2 -name "*.app" | head -n 1)
@@ -1219,10 +1265,10 @@ if [[ "$UPDATE_FILE" == *.dmg ]]; then
             mkdir -p "$DEST_DIR"
         fi
         echo "$(date) | [UPDATER-MAC] Copying $SRC_APP to $DEST_DIR" >> "$LOG_FILE"
-        rm -rf "$DEST_DIR/Workpulse.app"
+        rm -rf "$DEST_DIR/iHRMS-Desktop.app" "$DEST_DIR/Workpulse.app"
         cp -R "$SRC_APP" "$DEST_DIR/"
-        xattr -cr "$DEST_DIR/Workpulse.app" 2>/dev/null || true
-        TARGET_APP="$DEST_DIR/Workpulse.app"
+        xattr -cr "$DEST_DIR/iHRMS-Desktop.app" 2>/dev/null || true
+        TARGET_APP="$DEST_DIR/iHRMS-Desktop.app"
     fi
     hdiutil detach "$MOUNT_DIR" -force -quiet || true
     rm -rf "$MOUNT_DIR"
@@ -1253,6 +1299,8 @@ timeout /t 1 /nobreak > NUL
 
 rem 3. Terminate running instance if still shutting down
 taskkill /F /PID {current_pid} > NUL 2>&1
+taskkill /F /IM "iHRMS-Desktop.exe" > NUL 2>&1
+taskkill /F /IM "iHRMS-Supervisor.exe" > NUL 2>&1
 taskkill /F /IM "Workpulse.exe" > NUL 2>&1
 taskkill /F /IM "iHRMS Monitor.exe" > NUL 2>&1
 timeout /t 1 /nobreak > NUL
@@ -1273,6 +1321,9 @@ cd /d "{app_dir}"
 if exist "{target_exe}" (
     echo %date% %time% ^| [UPDATER-BAT] Launching application: {target_exe} >> "{update_log_path}"
     start "" "{target_exe}"
+) else if exist "{app_dir}\\iHRMS-Desktop.exe" (
+    echo %date% %time% ^| [UPDATER-BAT] Launching application: {app_dir}\\iHRMS-Desktop.exe >> "{update_log_path}"
+    start "" "{app_dir}\\iHRMS-Desktop.exe"
 ) else if exist "{default_exe}" (
     echo %date% %time% ^| [UPDATER-BAT] Launching fallback application: {default_exe} >> "{update_log_path}"
     start "" "{default_exe}"
@@ -1349,11 +1400,13 @@ Loop
 \' Terminate lingering instances if any to release file handles
 wshShell.Run "taskkill /F /PID " & oldPid & " /T", 0, True
 WScript.Sleep 500
+wshShell.Run "taskkill /F /T /IM ""iHRMS-Desktop.exe""", 0, True
+wshShell.Run "taskkill /F /T /IM ""iHRMS-Supervisor.exe""", 0, True
 wshShell.Run "taskkill /F /T /IM ""Workpulse.exe""", 0, True
 wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
 WScript.Sleep 1000
 
-WriteLog "All previous Workpulse processes terminated."
+WriteLog "All previous iHRMS Desktop and Workpulse processes terminated."
 
 \' 2. Clean single-instance lock file
 If fso.FileExists(lockPath) Then
@@ -1395,6 +1448,8 @@ If isInstaller Then
             Exit For
         Else
             WriteLog "Installer attempt " & i & " failed with exit code " & exitCode & ". Retrying with default user directory..."
+            wshShell.Run "taskkill /F /T /IM ""iHRMS-Desktop.exe""", 0, True
+            wshShell.Run "taskkill /F /T /IM ""iHRMS-Supervisor.exe""", 0, True
             wshShell.Run "taskkill /F /T /IM ""Workpulse.exe""", 0, True
             wshShell.Run "taskkill /F /T /IM ""iHRMS Monitor.exe""", 0, True
             WScript.Sleep 1000
@@ -1458,11 +1513,15 @@ End If
 
 \' 4. Verify Installed Executable & Version and Launch
 launchTarget = ""
-If fso.FileExists(defaultExe) Then
+If fso.FileExists(targetExe) Then
+    launchTarget = targetExe
+ElseIf fso.FileExists(appDir & "\\iHRMS-Desktop.exe") Then
+    launchTarget = appDir & "\\iHRMS-Desktop.exe"
+ElseIf fso.FileExists(defaultExe) Then
     launchTarget = defaultExe
     appDir = fso.GetParentFolderName(defaultExe)
-ElseIf fso.FileExists(targetExe) Then
-    launchTarget = targetExe
+ElseIf fso.FileExists(appDir & "\\Workpulse.exe") Then
+    launchTarget = appDir & "\\Workpulse.exe"
 ElseIf fso.FileExists(appDir & "\\iHRMS Monitor.exe") Then
     launchTarget = appDir & "\\iHRMS Monitor.exe"
 End If
@@ -1475,7 +1534,7 @@ If launchTarget <> "" Then
     wshShell.Run Chr(34) & launchTarget & Chr(34), 1, False
     WriteLog "Application launch command issued successfully."
 Else
-    WriteLog "CRITICAL: No target executable found to launch. Checked: " & defaultExe & ", " & targetExe & ", " & appDir & "\\iHRMS Monitor.exe"
+    WriteLog "CRITICAL: No target executable found to launch. Checked: " & defaultExe & ", " & targetExe & ", " & appDir & "\\iHRMS-Desktop.exe"
 End If
 
 WriteLog "VBScript updater finished."
@@ -1492,7 +1551,7 @@ logFile.Close
     # ----------------------------------------------------------
     ps1_path = updates_dir / "hidden_updater.ps1"
     ps_is_installer_str = "true" if is_installer else "false"
-    ps1_content = f'''# iHRMS Monitor Silent Background Updater Fallback
+    ps1_content = f'''# iHRMS Desktop Silent Background Updater Fallback
 $oldPid = {current_pid}
 $targetExe = '{str(target_exe)}'
 $updateFile = '{str(update_file)}'
@@ -1522,10 +1581,13 @@ while ($waited -lt 30) {{
 
 Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
+Stop-Process -Name "iHRMS-Desktop" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "iHRMS-Supervisor" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "Workpulse" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "iHRMS Monitor" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
-Write-UpdateLog "All previous iHRMS Monitor processes terminated."
+Write-UpdateLog "All previous iHRMS Desktop and Workpulse processes terminated."
 
 if (Test-Path $lockPath) {{
     Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
@@ -1564,6 +1626,9 @@ if ($isInstaller) {{
             break
         }} else {{
             Write-UpdateLog "Installer attempt $i failed with code $($p.ExitCode). Retrying..."
+            Stop-Process -Name "iHRMS-Desktop" -Force -ErrorAction SilentlyContinue
+            Stop-Process -Name "iHRMS-Supervisor" -Force -ErrorAction SilentlyContinue
+            Stop-Process -Name "Workpulse" -Force -ErrorAction SilentlyContinue
             Stop-Process -Name "iHRMS Monitor" -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
         }}
@@ -1597,10 +1662,14 @@ if ($isInstaller) {{
 $launchTarget = ""
 if (Test-Path $targetExe) {{
     $launchTarget = $targetExe
-}} elseif (Test-Path (Join-Path $appDir "iHRMS Monitor.exe")) {{
-    $launchTarget = Join-Path $appDir "iHRMS Monitor.exe"
+}} elseif (Test-Path (Join-Path $appDir "iHRMS-Desktop.exe")) {{
+    $launchTarget = Join-Path $appDir "iHRMS-Desktop.exe"
 }} elseif (Test-Path $defaultExe) {{
     $launchTarget = $defaultExe
+}} elseif (Test-Path (Join-Path $appDir "Workpulse.exe")) {{
+    $launchTarget = Join-Path $appDir "Workpulse.exe"
+}} elseif (Test-Path (Join-Path $appDir "iHRMS Monitor.exe")) {{
+    $launchTarget = Join-Path $appDir "iHRMS Monitor.exe"
 }}
 
 if ($launchTarget -ne "") {{
@@ -1747,6 +1816,13 @@ Write-UpdateLog "PowerShell updater finished."
                     QCoreApplication.processEvents()
         except Exception as q_err:
             logger.debug("Error stopping application during update handoff: %s", q_err)
+
+        # Mark clean shutdown before exiting so supervisor recognizes this is an intentional update shutdown
+        try:
+            from services.secure_session import SessionStore
+            SessionStore().set_clean_shutdown(True)
+        except Exception:
+            pass
 
         # 2. Release lock file in Python
         try:
@@ -1957,13 +2033,13 @@ class UpdatePipelineWorker(QThread):
             self.status_message.emit(f"Downloading update v{clean_v}...")
             updates_dir = get_updates_directory()
             if sys.platform == "darwin":
-                safe_name = f"Workpulse_v{clean_v}.dmg"
+                safe_name = f"iHRMS-Desktop_v{clean_v}.dmg"
                 installer_path = updates_dir / safe_name
-                legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.dmg"
+                legacy_installer_path = updates_dir / f"Workpulse_v{clean_v}.dmg"
             else:
-                safe_name = f"WorkpulseSetup_v{clean_v}.exe"
+                safe_name = f"iHRMS-Desktop-Setup_v{clean_v}.exe"
                 installer_path = updates_dir / safe_name
-                legacy_installer_path = updates_dir / f"iHRMSMonitorSetup_v{clean_v}.exe"
+                legacy_installer_path = updates_dir / f"WorkpulseSetup_v{clean_v}.exe"
             if not installer_path.exists() and legacy_installer_path.exists():
                 installer_path = legacy_installer_path
             temp_path = updates_dir / f"{safe_name}.download"
@@ -2019,11 +2095,15 @@ class UpdatePipelineWorker(QThread):
                             if resp.status_code != 200:
                                 logger.debug("Candidate %s returned HTTP %s", cand_url, resp.status_code)
                                 continue
-                            ct = resp.headers.get("content-type", "").lower()
-                            if "text/html" in ct or "text/plain" in ct or "application/json" in ct:
+                            ct_raw = resp.headers.get("content-type", "")
+                            ct = str(ct_raw).lower() if ct_raw and isinstance(ct_raw, str) else ""
+                            if ct and any(x in ct for x in ("text/html", "text/plain", "application/json")):
                                 logger.debug("Candidate %s returned non-binary Content-Type: %s", cand_url, ct)
                                 continue
-                            total_size = int(resp.headers.get("content-length", 0))
+                            try:
+                                total_size = int(resp.headers.get("content-length", 0))
+                            except (ValueError, TypeError):
+                                total_size = 0
                             if 0 < total_size < 1024 * 100:
                                 logger.debug("Candidate %s content-length %d is too small", cand_url, total_size)
                                 continue

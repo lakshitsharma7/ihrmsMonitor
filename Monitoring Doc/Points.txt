@@ -1,5 +1,5 @@
 ================================================================================
-iHRMS Desktop (featuring Workpulse Engine) - Enterprise Desktop Agent (v1.1)
+iHRMS Desktop - Enterprise Desktop Agent (v1.1)
 Master Architectural Points & Feature Highlights
 Indovision Services Private Limited
 ================================================================================
@@ -22,7 +22,7 @@ Indovision Services Private Limited
 3. HARDWARE DEVICE ENROLLMENT & SCOPED TOKENS
    - Stable hardware identity generated from system motherboard / platform UUID (ioreg on macOS).
    - Workstation enrollment via POST /workpulse/enroll_device returning dedicated device_token.
-   - All subsequent workpulse, health telemetry, and screenshot payloads authenticated via device_token.
+   - All subsequent activity tracking, health telemetry, and screenshot payloads authenticated via device_token.
 
 4. REAL-TIME ACTIVITY & PLATFORM-SPECIFIC IDLE TRACKING
    - Real-time active window polling via Win32 (GetForegroundWindow/GetWindowTextW) on Windows
@@ -62,7 +62,7 @@ Indovision Services Private Limited
 
 8. ENTERPRISE DASHBOARD & HRMS INTEGRATION
    - Modern PySide6 Dashboard featuring:
-     * Start Time Card (system start / workpulse initiation)
+     * Start Time Card (system start / tracking initiation)
      * Today Total Time Card (accumulated active work duration with continuous tick persistence)
      * Punch Time Card (first punch-in and last punch-out timestamps via POST /punch/get_punch_time)
      * Attendance Status Badge (Present, Absent, Half Day, Holiday, green Missed Punch)

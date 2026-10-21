@@ -1,4 +1,4 @@
-"""Login screen for the iHRMS Monitor application."""
+"""Login screen for the iHRMS Desktop application."""
 
 from __future__ import annotations
 

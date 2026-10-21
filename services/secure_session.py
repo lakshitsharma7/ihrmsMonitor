@@ -541,6 +541,13 @@ class SessionStore:
         """Record whether user paused workpulse status."""
         self.settings.setValue(self._KEY_TRACKING_PAUSED, bool(paused))
 
+    is_tracking_manually_stopped = is_workpulse_manually_stopped
+    set_tracking_manually_stopped = set_workpulse_manually_stopped
+    is_tracking_active = is_workpulse_active
+    set_tracking_active = set_workpulse_active
+    is_tracking_paused = is_workpulse_paused
+    set_tracking_paused = set_workpulse_paused
+
     def is_clean_shutdown(self) -> bool:
         """Check if application previously shut down cleanly."""
         raw = self.settings.value(self._KEY_CLEAN_SHUTDOWN, True)

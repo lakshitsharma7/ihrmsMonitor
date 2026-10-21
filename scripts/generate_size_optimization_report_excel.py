@@ -1,6 +1,6 @@
-"""Generate comprehensive Workpulse Build Size Optimization Report Excel workbook.
+"""Generate comprehensive iHRMS Desktop Build Size Optimization Report Excel workbook.
 
-Creates Workpulse_Build_Size_Optimization_Report.xlsx:
+Creates iHRMS_Desktop_Build_Size_Optimization_Report.xlsx:
 - Before/After comparison tables
 - MB saved and percentage reduction
 - Detailed component-by-component breakdown
@@ -85,7 +85,7 @@ def build_size_report_workbook():
 
     # Title Banner
     ws_sum.merge_cells("A1:H1")
-    ws_sum["A1"].value = "WORKPULSE CLIENT — PRODUCTION BUILD SIZE OPTIMIZATION AUDIT"
+    ws_sum["A1"].value = "iHRMS DESKTOP — PRODUCTION BUILD SIZE OPTIMIZATION AUDIT"
     ws_sum["A1"].font = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
     ws_sum["A1"].fill = PatternFill(start_color=NAVY_HEADER, end_color=NAVY_HEADER, fill_type="solid")
     ws_sum["A1"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
@@ -110,11 +110,11 @@ def build_size_report_workbook():
     ws_sum.row_dimensions[5].height = 24
 
     artifacts_data = [
-        ("Windows PyInstaller Bundle (dist/Workpulse)", "Windows", 173.36, 115.93, 57.43, "33.1%", "NONE (Zero Functional Change)", "PASS (346 Tests)"),
-        ("Windows Executable Binary (Workpulse.exe)", "Windows", 9.99, 6.02, 3.97, "39.7%", "NONE (Bytecode + Excludes)", "PASS (346 Tests)"),
-        ("Windows Inno Setup Installer (WorkpulseSetup.exe)", "Windows", 52.31, 34.63, 17.68, "33.8%", "NONE (LZMA2 Ultra Compression)", "PASS (Verified Install)"),
-        ("macOS Application Bundle (Workpulse.app)", "macOS", 182.50, 121.20, 61.30, "33.6%", "NONE (Identical Exclusions)", "PASS (Specs Verified)"),
-        ("macOS Disk Image (Workpulse.dmg)", "macOS", 55.75, 36.90, 18.85, "33.8%", "NONE (Compressed DMG)", "PASS (DMG Structure OK)"),
+        ("Windows PyInstaller Bundle (dist/iHRMS-Desktop)", "Windows", 173.36, 115.93, 57.43, "33.1%", "NONE (Zero Functional Change)", "PASS (346 Tests)"),
+        ("Windows Executable Binary (iHRMS-Desktop.exe)", "Windows", 9.99, 6.02, 3.97, "39.7%", "NONE (Bytecode + Excludes)", "PASS (346 Tests)"),
+        ("Windows Inno Setup Installer (iHRMS-Desktop-Setup.exe)", "Windows", 52.31, 34.63, 17.68, "33.8%", "NONE (LZMA2 Ultra Compression)", "PASS (Verified Install)"),
+        ("macOS Application Bundle (iHRMS-Desktop.app)", "macOS", 182.50, 121.20, 61.30, "33.6%", "NONE (Identical Exclusions)", "PASS (Specs Verified)"),
+        ("macOS Disk Image (iHRMS-Desktop.dmg)", "macOS", 55.75, 36.90, 18.85, "33.8%", "NONE (Compressed DMG)", "PASS (DMG Structure OK)"),
     ]
 
     for r_idx, row_vals in enumerate(artifacts_data, 6):
@@ -214,7 +214,7 @@ def build_size_report_workbook():
             else:
                 cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    apply_styling_to_sheet(ws_comp, "WORKPULSE — COMPONENT-BY-COMPONENT SIZE OPTIMIZATION AUDIT", {
+    apply_styling_to_sheet(ws_comp, "iHRMS DESKTOP — COMPONENT-BY-COMPONENT SIZE OPTIMIZATION AUDIT", {
         "A": 28,
         "B": 44,
         "C": 22,
@@ -242,7 +242,7 @@ def build_size_report_workbook():
 
     test_groups = [
         ("Login & Authentication", "tests/test_login_enhancements.py, test_device_verification.py", 28, 28, 0, "PASS", "Company code, login form, credential validation passed"),
-        ("Activity & Idle WorkPulse", "tests/test_application_workpulse_and_timeline.py, test_idle_*.py", 42, 42, 0, "PASS", "Active window, keyboard/mouse idle detection passed"),
+        ("Activity & Idle Tracking", "tests/test_application_workpulse_and_timeline.py, test_idle_*.py", 42, 42, 0, "PASS", "Active window, keyboard/mouse idle detection passed"),
         ("Sync & Offline Resiliency", "tests/test_sync_and_idle_configuration.py, test_laptop_health_sync_e2e.py", 36, 36, 0, "PASS", "SQLite buffering, batch upload, reconnect passed"),
         ("Attendance & Punch Flow", "tests/test_attendance_and_system_start.py, test_attendance_*.py", 24, 24, 0, "PASS", "Punch-in/out, daily attendance cards passed"),
         ("Leave Balance & KRA Tasks", "tests/test_leave_balance_api_and_ui.py, test_task_service_and_ui.py", 32, 32, 0, "PASS", "Dynamic leave cards, timesheet submit passed"),
@@ -267,7 +267,7 @@ def build_size_report_workbook():
             else:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
 
-    apply_styling_to_sheet(ws_test, "WORKPULSE — POST-OPTIMIZATION REGRESSION TEST VERIFICATION", {
+    apply_styling_to_sheet(ws_test, "iHRMS DESKTOP — POST-OPTIMIZATION REGRESSION TEST VERIFICATION", {
         "A": 28,
         "B": 46,
         "C": 14,
@@ -282,9 +282,9 @@ def build_size_report_workbook():
         wb.remove(default_sheet)
 
     # Save to Root and Monitoring Doc
-    root_file = Path("Workpulse_Build_Size_Optimization_Report.xlsx").resolve()
+    root_file = Path("iHRMS_Desktop_Build_Size_Optimization_Report.xlsx").resolve()
     doc_dir = Path("Monitoring Doc").resolve()
-    doc_file = doc_dir / "Workpulse_Build_Size_Optimization_Report.xlsx"
+    doc_file = doc_dir / "iHRMS_Desktop_Build_Size_Optimization_Report.xlsx"
 
     wb.save(root_file)
     print(f"Generated size optimization report: {root_file}")

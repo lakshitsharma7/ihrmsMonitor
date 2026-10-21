@@ -238,7 +238,7 @@ class HrmsPortalService:
 
     def open_portal_with_autologin(self) -> bool:
         """
-        Open the Workpulse / HRMS Web Portal in the user's default browser with dynamic authentication.
+        Open the iHRMS Web Portal in the user's default browser with dynamic authentication.
 
         If the user is authenticated and session details are available,
         a secure temporary auto-login bridge is launched and immediately cleaned up.

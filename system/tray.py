@@ -71,12 +71,12 @@ class TrayController:
         self.show_action.triggered.connect(on_show_dashboard)
         menu.addAction(self.show_action)
 
-        self.start_action = QAction("Start WorkPulse", parent)
+        self.start_action = QAction("Start Tracking", parent)
         self.start_action.triggered.connect(on_start_workpulse)
         self.start_action.setVisible(False)
         menu.addAction(self.start_action)
 
-        self.stop_action = QAction("Stop WorkPulse", parent)
+        self.stop_action = QAction("Stop Tracking", parent)
         self.stop_action.triggered.connect(on_stop_workpulse)
         self.stop_action.setVisible(False)
         menu.addAction(self.stop_action)
@@ -118,13 +118,16 @@ class TrayController:
             return
         self.tray_icon.show()
 
-    def set_workpulse_state(self, is_workpulse: bool) -> None:
+    def set_tracking_state(self, is_tracking: bool) -> None:
         if hasattr(self, "start_action") and self.start_action:
-            self.start_action.setEnabled(not is_workpulse)
+            self.start_action.setEnabled(not is_tracking)
             self.start_action.setVisible(False)
         if hasattr(self, "stop_action") and self.stop_action:
             self.stop_action.setEnabled(False)
             self.stop_action.setVisible(False)
+
+    def set_workpulse_state(self, is_workpulse: bool) -> None:
+        self.set_tracking_state(is_workpulse)
 
     def show_message(self, title: str, message: str) -> None:
         self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 3000)

@@ -109,8 +109,10 @@ class NetworkReachabilityMonitor:
             if not base_url:
                 try:
                     from PySide6.QtCore import QSettings
-                    st = QSettings("iHRMS", "WorkPulse")
+                    st = QSettings("Indovision", "iHRMSMonitor")
                     cached = st.value("ApiConfig/last_base_url")
+                    if not cached:
+                        cached = QSettings("iHRMS", "WorkPulse").value("ApiConfig/last_base_url")
                     if cached:
                         base_url = str(cached)
                 except Exception:

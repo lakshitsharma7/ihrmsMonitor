@@ -31,6 +31,8 @@ class TrackerWorker(QObject):
     state_changed = Signal(object)  # TrackerState
     workpulse_started = Signal()
     workpulse_stopped = Signal()
+    tracking_started = workpulse_started
+    tracking_stopped = workpulse_stopped
 
     def __init__(self, tracker: ActivityTracker, poll_interval_seconds: float = POLL_INTERVAL_SECONDS) -> None:
         super().__init__()
@@ -54,63 +56,67 @@ class TrackerWorker(QObject):
     def start_workpulse(self) -> None:
         try:
             if self._timer is not None and self._timer.isActive() and self._tracker.is_workpulse:
-                logger.debug("TrackerWorker: workpulse timer is already active, ignoring duplicate start")
+                logger.debug("TrackerWorker: tracking timer is already active, ignoring duplicate start")
                 return
             if self._timer is None:
                 self.setup()
             self._tracker.start()
             if self._timer is not None and not self._timer.isActive():
                 self._timer.start()
-            logger.info("TrackerWorker: workpulse started")
+            logger.info("TrackerWorker: tracking started")
             self.workpulse_started.emit()
             # Immediately execute an initial poll so the GUI receives active state instantly
             self._on_tick()
         except Exception as exc:  # noqa: BLE001
-            logger.exception("TrackerWorker failed to start workpulse")
+            logger.exception("TrackerWorker failed to start tracking")
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(
                     error_type="TRACKING_START_ERROR",
-                    error_message=f"TrackerWorker failed to start workpulse: {exc}",
+                    error_message=f"TrackerWorker failed to start tracking: {exc}",
                     exc=exc,
                 )
             except Exception:
                 pass
+
+    start_tracking = start_workpulse
 
     @Slot()
     def stop_workpulse(self) -> None:
         try:
             if not self._tracker.is_workpulse and (self._timer is None or not self._timer.isActive()):
-                logger.debug("TrackerWorker: workpulse is already stopped, ignoring duplicate stop")
+                logger.debug("TrackerWorker: tracking is already stopped, ignoring duplicate stop")
                 return
             if self._timer is not None:
                 self._timer.stop()
             self._tracker.stop()
-            logger.info("TrackerWorker: workpulse stopped")
+            logger.info("TrackerWorker: tracking stopped")
             self.workpulse_stopped.emit()
             self.state_changed.emit(self._tracker.poll())
         except Exception as exc:  # noqa: BLE001
-            logger.exception("TrackerWorker failed to stop workpulse cleanly")
+            logger.exception("TrackerWorker failed to stop tracking cleanly")
             try:
                 from services.error_report_service import ErrorReportService
                 ErrorReportService().report_error(
                     error_type="TRACKING_STOP_ERROR",
-                    error_message=f"TrackerWorker failed to stop workpulse cleanly: {exc}",
+                    error_message=f"TrackerWorker failed to stop tracking cleanly: {exc}",
                     exc=exc,
                 )
             except Exception:
                 pass
 
+    stop_tracking = stop_workpulse
+
     @Slot()
     def cleanup(self) -> None:
-        """Stop workpulse timer and tracker instance before thread exit."""
+        """Stop tracking timer and tracker instance before thread exit."""
         try:
             if self._timer is not None:
                 self._timer.stop()
                 self._timer = None
             if self._tracker.is_workpulse:
                 self._tracker.stop()
-                logger.info("TrackerWorker: workpulse stopped on cleanup")
+                logger.info("TrackerWorker: tracking stopped on cleanup")
         except Exception as exc:  # noqa: BLE001
             logger.debug("TrackerWorker cleanup error: %s", exc)
 

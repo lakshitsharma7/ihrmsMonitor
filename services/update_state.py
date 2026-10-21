@@ -351,6 +351,8 @@ class UpdateStateManager:
             clean_v = str(target_version).lstrip("vV").strip() if target_version else ""
             patterns = ["*.download", "*.part", "*.tmp"]
             if clean_v:
+                patterns.append(f"iHRMS-Desktop-Setup_v{clean_v}.*")
+                patterns.append(f"iHRMS-Desktop_v{clean_v}.*")
                 patterns.append(f"WorkpulseSetup_v{clean_v}.*")
             for pattern in patterns:
                 for item in updates_dir.glob(pattern):

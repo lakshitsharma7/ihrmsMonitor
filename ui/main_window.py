@@ -837,7 +837,7 @@ class MainWindow(QMainWindow):
         self.status_badge.setObjectName("StatusBadge")
         self.status_badge.setProperty("workpulse", "false")
         self.status_badge.setCursor(Qt.CursorShape.ArrowCursor)
-        self.status_badge.setToolTip("Activity WorkPulse Status")
+        self.status_badge.setToolTip("Activity Tracking Status")
         header_layout.addWidget(self.status_badge)
 
         # ------------------------------------------------------
@@ -857,17 +857,17 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.hrms_button)
 
         # ------------------------------------------------------
-        # WorkPulse controls (Internal, hidden from all users)
+        # Tracking controls (Internal, hidden from all users)
         # ------------------------------------------------------
 
-        self.start_button = QPushButton("Start WorkPulse", header)
+        self.start_button = QPushButton("Start Tracking", header)
         self.start_button.setObjectName("PrimaryButton")
         self.start_button.clicked.connect(self.start_workpulse)
         self.start_button.setVisible(False)
         self.start_button.hide()
         header_layout.addWidget(self.start_button)
 
-        self.stop_button = QPushButton("Stop WorkPulse", header)
+        self.stop_button = QPushButton("Stop Tracking", header)
         self.stop_button.setObjectName("SecondaryButton")
         self.stop_button.clicked.connect(lambda: self.stop_workpulse(manual=False))
         self.stop_button.setEnabled(False)
@@ -1303,6 +1303,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "status_badge") and self.status_badge:
             self.status_badge.setText("Online" if is_online else "Offline")
             self.status_badge.setProperty("workpulse", "true" if is_online else "false")
+            self.status_badge.setProperty("tracking", "true" if is_online else "false")
             try:
                 self.status_badge.style().unpolish(self.status_badge)
                 self.status_badge.style().polish(self.status_badge)
@@ -1366,7 +1367,7 @@ class MainWindow(QMainWindow):
             self.settings_page.update_capture_status(True)
         if hasattr(self, "dashboard_page") and self.dashboard_page:
             self.dashboard_page.set_workpulse_active(True)
-            if self.dashboard_page.current_app_label.text() in ("Not workpulse", ""):
+            if self.dashboard_page.current_app_label.text() in ("Not workpulse", "Not tracking", ""):
                 self.dashboard_page.current_app_label.setText("Detecting...")
 
         # Guard against duplicate start if tracker is already workpulse
@@ -1422,11 +1423,17 @@ class MainWindow(QMainWindow):
 
         self._request_stop.emit()
 
+    start_tracking = start_workpulse
+    stop_tracking = stop_workpulse
+    _ensure_tracking_started = _ensure_workpulse_started
+
     @Slot()
     def stop_workpulse_for_update(self) -> None:
-        """Stop workpulse cleanly before an auto-update without setting the manual stop flag."""
-        logger.info("Stopping workpulse cleanly before auto-update installation.")
+        """Stop tracking cleanly before an auto-update without setting the manual stop flag."""
+        logger.info("Stopping tracking cleanly before auto-update installation.")
         self.stop_workpulse(manual=False)
+
+    stop_tracking_for_update = stop_workpulse_for_update
 
     @Slot()
     def _on_workpulse_started(
@@ -1560,7 +1567,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _update_status_icon(self) -> None:
-        """Render Workpulse logo/icon in header (green when online, red when offline)."""
+        """Render status logo/icon in header (green when online, red when offline)."""
         if not hasattr(self, "status_icon") or not self.status_icon:
             return
 

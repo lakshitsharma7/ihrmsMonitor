@@ -1,4 +1,4 @@
-"""Cross-platform test runner for Workpulse CI and local execution.
+"""Cross-platform test runner for iHRMS Desktop CI and local execution.
 
 Executes all discovered unit and integration tests and terminates cleanly with
 os._exit() to prevent PySide6/Qt thread teardown deadlocks on macOS/Linux.

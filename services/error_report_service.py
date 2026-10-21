@@ -763,14 +763,14 @@ class ErrorReportService:
 
         return (
             "==================================================\n"
-            "WORKPULSE ERROR REPORT\n"
+            "iHRMS DESKTOP / WORKPULSE ERROR REPORT\n"
             f"{app_name} - Critical Error Report\n"
             "==================================================\n\n"
             f"Employee Name            : {emp_name}\n"
             f"Employee Code / ID       : {emp_code} (ID: {emp_id})\n"
             f"Device / Host Name       : {hostname}\n"
             f"OS / Platform            : {os_name} {os_version} ({architecture})\n"
-            f"Workpulse App Version    : v{app_version}\n\n"
+            f"{app_name} Version       : v{app_version} (Workpulse App Version: v{app_version})\n\n"
             "==================================================\n"
             "CONNECTIVITY & SYNC DIAGNOSTICS\n"
             "==================================================\n\n"
@@ -808,7 +808,7 @@ class ErrorReportService:
             f"Company Code             : {user.get('company_code', 'N/A')}\n"
             f"Role                     : {user.get('role', 'N/A')}\n"
             f"OS User                  : {device.get('os_user', 'N/A')}\n"
-            f"WorkPulse State          : {context.get('workpulse_status', 'Unknown')}\n"
+            f"Tracking State (WorkPulse) : {context.get('workpulse_status', 'Unknown')}\n"
             f"Update State             : {context.get('update_status', 'Unknown')}\n"
             f"Python Version           : {python_version}\n\n"
             "--- Traceback ---\n"
@@ -901,7 +901,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
 <body>
 <div class="container">
   <div class="header">
-    <h1>WORKPULSE SUPPORT REPORT</h1>
+    <h1>iHRMS DESKTOP / WORKPULSE SUPPORT REPORT</h1>
     <p>Application Diagnostics & Network/Sync Failure Incident Report</p>
   </div>
   
@@ -912,7 +912,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
       <tr><td class="label">Employee Code / ID</td><td class="val"><strong>{emp_code}</strong> (ID: {emp_id})</td></tr>
       <tr><td class="label">Device / Host Name</td><td class="val"><code>{hostname}</code></td></tr>
       <tr><td class="label">OS / Platform</td><td class="val">{os_name} {os_version} ({architecture})</td></tr>
-      <tr><td class="label">Workpulse Version</td><td class="val"><strong>v{app_version}</strong></td></tr>
+      <tr><td class="label">{app_name} Version</td><td class="val"><strong>v{app_version}</strong> (Workpulse Version: v{app_version})</td></tr>
     </table>
   </div>
 
@@ -979,7 +979,7 @@ pre.code-block {{ background: #282c34; color: #abb2bf; padding: 12px; border-rad
   </div>
 
   <div class="footer">
-    Workpulse v{app_version} &bull; Confidential Support Diagnostic Report &bull; {now_local}
+    {app_name} v{app_version} &bull; Confidential Support Diagnostic Report &bull; {now_local}
   </div>
 </div>
 </body>

@@ -1,5 +1,5 @@
 """
-Verification and Test Script for Workpulse Error Reporting.
+Verification and Test Script for iHRMS Desktop Error Reporting.
 
 Verifies all requirements:
 1. Local Python development -> No support email sent for normal development errors or test runs.
@@ -28,7 +28,7 @@ from utils.paths import get_log_file_path
 
 def main() -> None:
     print("=" * 75)
-    print("WORKPULSE ERROR REPORTING VERIFICATION & VALIDATION SUITE")
+    print("iHRMS DESKTOP ERROR REPORTING VERIFICATION & VALIDATION SUITE")
     print("=" * 75)
 
     service = ErrorReportService()

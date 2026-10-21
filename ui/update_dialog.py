@@ -274,7 +274,7 @@ class UpdateDialog(QDialog):
             try:
                 updates_dir = get_updates_directory()
                 clean_v = str(self._version).lstrip("vV").strip()
-                for p in updates_dir.glob(f"WorkpulseSetup_v{clean_v}.*"):
+                for p in list(updates_dir.glob(f"iHRMS-Desktop-Setup_v{clean_v}.*")) + list(updates_dir.glob(f"iHRMS-Desktop_v{clean_v}.*")) + list(updates_dir.glob(f"WorkpulseSetup_v{clean_v}.*")):
                     try:
                         p.unlink()
                     except Exception:

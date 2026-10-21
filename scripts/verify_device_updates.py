@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verification CLI script for Workpulse Windows EXE auto-updates across all enrolled laptops.
+"""Verification CLI script for iHRMS Desktop Windows EXE auto-updates across all enrolled laptops.
 
 Usage:
     python scripts/verify_device_updates.py [--json]
@@ -48,7 +48,7 @@ def print_fleet_verification_report(as_json: bool = False, check_offline: bool =
         return 0
 
     print("\n" + "=" * 80)
-    print("      WORKPULSE - ENROLLED WINDOWS DEVICES AUTO-UPDATE VERIFICATION      ")
+    print("      iHRMS DESKTOP - ENROLLED WINDOWS DEVICES AUTO-UPDATE VERIFICATION      ")
     print("=" * 80)
     print(f"Current Host Running Version : {current_running_ver} (Authoritative Build Metadata)")
     print(f"Total Enrolled Devices       : {summary['total']}")
