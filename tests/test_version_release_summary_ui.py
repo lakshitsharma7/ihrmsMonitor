@@ -284,14 +284,14 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
 
     def test_get_all_releases_order_newest_to_oldest(self):
         """Verify releases list is ordered newest to oldest."""
-        releases = get_all_releases(installed_version="1.1", server_version="2.5")
+        releases = get_all_releases(installed_version="1.0.0", server_version="2.5")
         self.assertTrue(len(releases) >= 2)
         # First item is the newer server update
         self.assertEqual(releases[0]["version"], "2.5")
         self.assertTrue(releases[0]["is_update"])
 
         # Second item is installed version
-        self.assertEqual(releases[1]["version"], "1.1")
+        self.assertEqual(releases[1]["version"], "1.0.0")
         self.assertTrue(releases[1]["is_installed"])
 
     def test_release_notes_categorization_and_colors_across_versions(self):
@@ -352,7 +352,13 @@ class TestVersionReleaseSummaryUI(unittest.TestCase):
             self.assertNotIn("Native macOS & Windows production distribution", pt_10)
 
             # Switch back to 1.1
-            dlg.version_combo.setCurrentIndex(0)
+            idx_11 = None
+            for i in range(dlg.version_combo.count()):
+                if dlg.version_combo.itemData(i).get("version") == "1.1":
+                    idx_11 = i
+                    break
+            self.assertIsNotNone(idx_11)
+            dlg.version_combo.setCurrentIndex(idx_11)
             self.assertIn("Native macOS & Windows", dlg.summary_text.toPlainText())
         finally:
             dlg.close()

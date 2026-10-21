@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release Tag (e.g. v1.0)'
+        description: 'Release Tag (e.g. v1.0.0)'
         required: true
-        default: 'v1.0'
+        default: 'v1.0.0'
   push:
     tags:
       - 'v*'
@@ -43,7 +43,7 @@ jobs:
         id: get_version
         shell: pwsh
         run: |
-          $ver = "1.0"
+          $ver = "1.0.0"
           if (Test-Path "VERSION") {
             $ver = (Get-Content "VERSION").Trim()
           }
@@ -126,7 +126,7 @@ jobs:
       - name: Extract Application Version
         id: get_version
         run: |
-          APP_VER="1.0"
+          APP_VER="1.0.0"
           if [ -f "VERSION" ]; then
             APP_VER="$(tr -d '[:space:]' < VERSION)"
           fi

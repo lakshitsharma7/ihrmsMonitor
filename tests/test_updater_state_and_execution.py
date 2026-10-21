@@ -131,7 +131,7 @@ class TestUpdateStateAndExecution(unittest.TestCase):
                 vbs = tmp_path / "hidden_updater.vbs"
                 self.assertTrue(vbs.exists())
                 vbs_text = vbs.read_text(encoding="utf-8")
-                self.assertIn("iHRMS Monitor Silent Background Updater", vbs_text)
+                self.assertIn("iHRMS Desktop Silent Background Updater", vbs_text)
                 self.assertIn("updater.log", vbs_text)
                 self.assertIn("/DIR=", vbs_text)
                 self.assertIn("ihrms_monitor.lock", vbs_text)
@@ -144,7 +144,7 @@ class TestUpdateStateAndExecution(unittest.TestCase):
                 ps1 = tmp_path / "hidden_updater.ps1"
                 self.assertTrue(ps1.exists())
                 ps1_text = ps1.read_text(encoding="utf-8")
-                self.assertIn("iHRMS Monitor Silent Background Updater Fallback", ps1_text)
+                self.assertIn("iHRMS Desktop Silent Background Updater Fallback", ps1_text)
                 self.assertIn("updater.log", ps1_text)
                 self.assertIn("/DIR=", ps1_text)
                 self.assertIn("-WorkingDirectory $appDir", ps1_text)

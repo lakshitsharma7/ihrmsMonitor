@@ -48,8 +48,8 @@ class TestTrayMenu(unittest.TestCase):
 
         # Verify other essential actions are present
         self.assertIn("Show Dashboard", action_texts)
-        self.assertIn("Start WorkPulse", action_texts)
-        self.assertIn("Stop WorkPulse", action_texts)
+        self.assertIn("Start Tracking", action_texts)
+        self.assertIn("Stop Tracking", action_texts)
         self.assertIn("Today's Activity", action_texts)
         self.assertIn("Settings", action_texts)
         self.assertIn("Check for Updates", action_texts)

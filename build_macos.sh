@@ -11,7 +11,7 @@ ENTITLEMENTS_FILE="entitlements.mac.plist"
 APP_BUNDLE="dist/iHRMS-Desktop.app"
 DMG_STAGING="dist/dmg_staging"
 
-APP_VER="1.0"
+APP_VER="1.0.0"
 if [ -f "VERSION" ]; then
     APP_VER="$(tr -d '[:space:]' < VERSION)"
 fi

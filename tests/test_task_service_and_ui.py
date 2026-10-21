@@ -3682,6 +3682,141 @@ class TestTaskServiceAndUI(unittest.TestCase):
         self.assertTrue(widget.text_edit.isReadOnly())
 
 
+    def test_extract_task_done_preserves_zeros_decimals_and_numeric_strings(self):
+        """Verify _extract_task_done handles 0, decimals, strings, and missing values correctly without truthiness bugs."""
+        from ui.task_table import _extract_task_done
+
+        self.assertEqual(_extract_task_done({"task_done": 0}), "0")
+        self.assertEqual(_extract_task_done({"task_done": "0"}), "0")
+        self.assertEqual(_extract_task_done({"task_done": "0.00"}), "0.00")
+        self.assertEqual(_extract_task_done({"task_done": 0.0}), "0.0")
+        self.assertEqual(_extract_task_done({"task_done": "12.00"}), "12.00")
+        self.assertEqual(_extract_task_done({"task_done": "876.50"}), "876.50")
+        self.assertEqual(_extract_task_done({"task_done": None}), "-")
+        self.assertEqual(_extract_task_done({"task_done": "-"}), "-")
+        self.assertEqual(_extract_task_done({"task_done": "null"}), "-")
+        self.assertEqual(_extract_task_done({"task_done": "None"}), "-")
+        self.assertEqual(_extract_task_done({"task_done": ""}), "-")
+        self.assertEqual(_extract_task_done({"task_done_till_now": "45.00"}), "45.00")
+        self.assertEqual(_extract_task_done({"taskDoneTillNow": 0}), "0")
+        self.assertEqual(_extract_task_done(None), "-")
+
+    def test_task_done_till_now_baseline_resolution_on_unsubmitted_date(self):
+        """Verify TaskService resolves Task Done Till Now from prior submitted/drafted timesheets when unsubmitted."""
+        cfg = ApiConfig()
+        cfg.set_cached_configuration(
+            company_code="COMP123",
+            base_url="https://hrms.example.com/ci4/api",
+        )
+        SessionService().login(
+            username="dinesh",
+            role="Employee",
+            indo_code="EC-098",
+            api_key="testapikey111",
+        )
+
+        def mock_post_dispatch(url, *args, **kwargs):
+            m = MagicMock()
+            m.status_code = 200
+            m.text = "{}"
+            data = kwargs.get("data", {})
+            if "TaskPMS/get_kra" in url:
+                dt = data.get("date")
+                if dt == "2026-10-21":
+                    m.json.return_value = {
+                        "response": 200,
+                        "status": 1,
+                        "emp_kra": [
+                            {"kra_id": "211", "name": "Ivory Farmer", "target": "20.00", "weightage": "20.00", "timesheet_id": None, "task_done": None},
+                            {"kra_id": "212", "name": "Donna Mcgee", "target": "40.00", "weightage": "20.00", "timesheet_id": None, "task_done": None},
+                            {"kra_id": "213", "name": "Phillip Bright", "target": "900.00", "weightage": "30.00", "timesheet_id": None, "task_done": None},
+                            {"kra_id": "214", "name": "Boris Guy", "target": "100.00", "weightage": "30.00", "timesheet_id": None, "task_done": None},
+                        ],
+                    }
+                elif dt == "2026-10-19":
+                    m.json.return_value = {
+                        "response": 200,
+                        "status": 1,
+                        "emp_kra": [
+                            {"kra_id": "211", "name": "Ivory Farmer", "target": "20.00", "weightage": "20.00", "timesheet_id": "601", "task_done": "12.00"},
+                            {"kra_id": "212", "name": "Donna Mcgee", "target": "40.00", "weightage": "20.00", "timesheet_id": "602", "task_done": "34.00"},
+                            {"kra_id": "213", "name": "Phillip Bright", "target": "900.00", "weightage": "30.00", "timesheet_id": "603", "task_done": "876.00"},
+                            {"kra_id": "214", "name": "Boris Guy", "target": "100.00", "weightage": "30.00", "timesheet_id": "604", "task_done": "99.00"},
+                        ],
+                    }
+                else:
+                    m.json.return_value = {"response": 200, "status": 1, "emp_kra": []}
+            elif "TaskPMS/get_submit_kra_date_v2" in url:
+                m.json.return_value = {
+                    "response": 200,
+                    "status": 1,
+                    "submit_kra_date": ["2026-10-01", "2026-10-16", "2026-10-19"],
+                }
+            elif "TaskPMS/get_draft_kra_date" in url:
+                m.json.return_value = {
+                    "response": 200,
+                    "status": 1,
+                    "submit_kra_date": [{"task_date": "2026-10-17"}],
+                }
+            else:
+                m.json.return_value = {"response": 200, "status": 1}
+            return m
+
+        with patch("requests.post", side_effect=mock_post_dispatch):
+            svc = TaskService()
+            svc.clear_cache()
+            tasks = svc.fetch_assigned_tasks(date="2026-10-21", force=True)
+
+            self.assertEqual(len(tasks), 4)
+            self.assertEqual(tasks[0]["task_done"], "12.00")
+            self.assertEqual(tasks[0]["task_done_till_now"], "12.00")
+            self.assertEqual(tasks[1]["task_done"], "34.00")
+            self.assertEqual(tasks[1]["task_done_till_now"], "34.00")
+            self.assertEqual(tasks[2]["task_done"], "876.00")
+            self.assertEqual(tasks[2]["task_done_till_now"], "876.00")
+            self.assertEqual(tasks[3]["task_done"], "99.00")
+            self.assertEqual(tasks[3]["task_done_till_now"], "99.00")
+
+            # Verify table UI renders these exact numeric values in column 7
+            table = AssignedTasksTable()
+            table.set_tasks(tasks, date="2026-10-21")
+            QCoreApplication.processEvents()
+
+            self.assertEqual(table.item(0, 7).text(), "12.00")
+            self.assertEqual(table.item(1, 7).text(), "34.00")
+            self.assertEqual(table.item(2, 7).text(), "876.00")
+            self.assertEqual(table.item(3, 7).text(), "99.00")
+
+    def test_date_switching_updates_task_done_and_does_not_leak_stale_values(self):
+        """Verify switching between dates displays corresponding Task Done Till Now values and does not leak stale values."""
+        table = AssignedTasksTable()
+
+        tasks_date1 = [
+            {"kra_id": "211", "name": "Ivory Farmer", "task_done": "12.00", "task_completed": ""},
+            {"kra_id": "212", "name": "Donna Mcgee", "task_done": "34.00", "task_completed": ""},
+        ]
+        table.set_tasks(tasks_date1, date="2026-10-21")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "12.00")
+        self.assertEqual(table.item(1, 7).text(), "34.00")
+
+        # Switch to date with zeros and dashes
+        tasks_date2 = [
+            {"kra_id": "211", "name": "Ivory Farmer", "task_done": "0", "task_completed": ""},
+            {"kra_id": "212", "name": "Donna Mcgee", "task_done": "-", "task_completed": ""},
+        ]
+        table.set_tasks(tasks_date2, date="2026-10-10")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "0")
+        self.assertEqual(table.item(1, 7).text(), "-")
+
+        # Switch back to date1
+        table.set_tasks(tasks_date1, date="2026-10-21")
+        QCoreApplication.processEvents()
+        self.assertEqual(table.item(0, 7).text(), "12.00")
+        self.assertEqual(table.item(1, 7).text(), "34.00")
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -82,7 +82,7 @@ jobs:
       - name: Extract Application Version
         id: get_version
         run: |
-          APP_VER="1.0"
+          APP_VER="1.0.0"
           if [ -f "VERSION" ]; then
             APP_VER="$(tr -d '[:space:]' < VERSION)"
           fi

@@ -1343,7 +1343,7 @@ del "%~f0"
     # ----------------------------------------------------------
     vbs_path = updates_dir / "hidden_updater.vbs"
     vbs_is_installer_str = "True" if is_installer else "False"
-    vbs_content = f'''\' iHRMS Monitor Silent Background Updater
+    vbs_content = f'''\' iHRMS Desktop Silent Background Updater
 Option Explicit
 
 Dim fso, wshShell, objWMI, colProc

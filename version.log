@@ -5,6 +5,19 @@ Maintained automatically. Add a new block at the top for each release.
 Do not duplicate version entries. Preserve all previous entries below.
 ================================================================================
 
+Version 1.0.0
+Date: 21-10-2026
+
+New Features:
+- Authoritative application release version set to 1.0.0 consistently across Windows and macOS builds.
+- Synchronized Windows PE file version metadata, Inno Setup installer version, and macOS bundle version.
+
+Improvements:
+- Preserved dynamic API-driven version checking, auto-update compatibility, and multi-platform packaging.
+- Maintained backward compatibility and historical version tracking.
+
+--------------------------------------------------------------------------------
+
 Version 1.1
 Date: 05-10-2026
 

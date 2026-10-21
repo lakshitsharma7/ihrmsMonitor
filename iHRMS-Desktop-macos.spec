@@ -234,7 +234,7 @@ coll = COLLECT(
     name='iHRMS-Desktop',
 )
 
-app_version = '1.0'
+app_version = '1.0.0'
 if os.path.exists('VERSION'):
     try:
         with open('VERSION', 'r', encoding='utf-8') as vf:

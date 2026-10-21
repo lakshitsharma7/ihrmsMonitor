@@ -274,6 +274,34 @@ def format_task_date(raw_date: Any) -> str:
     return cleaned
 
 
+def _extract_task_done(task: Optional[Dict[str, Any]]) -> str:
+    """
+    Safely extract task done / progress value from task dict.
+    Preserves valid numeric values including 0, 0.00, decimals, and numeric strings.
+    Returns '-' only when no usable value is present.
+    """
+    if not isinstance(task, dict):
+        return "-"
+    for key in (
+        "task_done",
+        "task_done_till_now",
+        "taskDoneTillNow",
+        "taskDone",
+        "done_till_now",
+        "task_progress",
+        "progress",
+        "hours_done",
+        "total_done",
+        "_initial_done_str",
+    ):
+        val = task.get(key)
+        if val is not None:
+            s = str(val).strip()
+            if s and s not in ("None", "null", "-"):
+                return s
+    return "-"
+
+
 class TaskTableSignals(QObject):
     """Qt signals for asynchronous timesheet submit/save operations."""
 
@@ -578,7 +606,7 @@ class AssignedTasksTable(QTableWidget):
 
     def _init_task_base_progress(self, task: Dict[str, Any]) -> None:
         """Initialize base progress baseline from server data."""
-        raw_done = str(task.get("task_done") or task.get("task_done_till_now") or "-").strip()
+        raw_done = _extract_task_done(task)
         raw_comp = str(task.get("task_completed") if task.get("task_completed") is not None else "").strip()
         task["_initial_done_str"] = raw_done
         task["_initial_comp_val"] = raw_comp
@@ -588,10 +616,7 @@ class AssignedTasksTable(QTableWidget):
         Return the API-provided Task Done Till Now value.
         Task Done Till Now is an API-provided value and must not be altered dynamically by Task Completed edits.
         """
-        raw_done = task.get("task_done") or task.get("task_done_till_now") or task.get("_initial_done_str")
-        if raw_done is not None and str(raw_done).strip() not in ("None", "null", ""):
-            return str(raw_done).strip()
-        return "-"
+        return _extract_task_done(task)
 
     def set_submitted(self, submitted: bool) -> None:
         """Update submission state, widget read-only mode, and button visibility."""
@@ -1120,7 +1145,7 @@ class AssignedTasksTable(QTableWidget):
             target = str(task.get("target") or "-").strip()
             criteria = str(task.get("measurement_criteria") or "-").strip()
             weight = str(task.get("weightage") or "-").strip()
-            task_done = str(task.get("task_done") or task.get("task_done_till_now") or "-").strip()
+            task_done = _extract_task_done(task)
             task_completed = str(task.get("task_completed") if task.get("task_completed") is not None else "").strip()
             comment = str(task.get("comment") or task.get("remark") or "").strip()
 
@@ -1337,7 +1362,7 @@ class AssignedTasksTable(QTableWidget):
         if item:
             return item.text().strip()
         if row < len(self._tasks):
-            return str(self._tasks[row].get("task_done") or self._tasks[row].get("task_done_till_now") or "").strip()
+            return _extract_task_done(self._tasks[row])
         return ""
 
     def _get_comment(self, row: int) -> str:
@@ -1466,9 +1491,9 @@ class AssignedTasksTable(QTableWidget):
                 comp_val = "0"
             done_val = self._get_task_done_till_now(r)
             if not done_val or done_val == "-":
-                raw_td = task.get("task_done") or task.get("task_done_till_now")
-                if raw_td is not None and str(raw_td).strip() not in ("None", "null", "-", ""):
-                    done_val = str(raw_td).strip()
+                raw_td = _extract_task_done(task)
+                if raw_td != "-":
+                    done_val = raw_td
                 else:
                     done_val = comp_val
 
@@ -1605,10 +1630,11 @@ class AssignedTasksTable(QTableWidget):
                         self._user_drafts[t_key]["comment"] = saved_rem
                         t["comment"] = saved_rem
                         t["remark"] = saved_rem
-                    if matched.get("task_done"):
-                        self._user_drafts[t_key]["task_done"] = str(matched["task_done"])
-                        t["task_done"] = str(matched["task_done"])
-                        t["task_done_till_now"] = str(matched["task_done"])
+                    matched_done = _extract_task_done(matched)
+                    if matched_done != "-":
+                        self._user_drafts[t_key]["task_done"] = matched_done
+                        t["task_done"] = matched_done
+                        t["task_done_till_now"] = matched_done
                 t["submit_status"] = "1"
                 t["status"] = "Completed"
                 if isinstance(t.get("raw"), dict):
@@ -1632,10 +1658,12 @@ class AssignedTasksTable(QTableWidget):
                         if not ft.get("comment") and saved_rem:
                             ft["comment"] = saved_rem
                             ft["remark"] = saved_rem
-                        if not ft.get("task_done") or str(ft.get("task_done")).strip() in ("-", "0", "0.00", ""):
-                            if matched.get("task_done"):
-                                ft["task_done"] = str(matched["task_done"])
-                                ft["task_done_till_now"] = str(matched["task_done"])
+                        curr_done = _extract_task_done(ft)
+                        if curr_done == "-":
+                            matched_done = _extract_task_done(matched)
+                            if matched_done != "-":
+                                ft["task_done"] = matched_done
+                                ft["task_done_till_now"] = matched_done
                 self.set_tasks(fresh_tasks, date=submission_date)
             else:
                 self.set_tasks(self._tasks, date=submission_date)
@@ -1673,8 +1701,9 @@ class AssignedTasksTable(QTableWidget):
                         if comp:
                             self._user_drafts[t_key]["task_completed"] = comp
                             t["task_completed"] = comp
-                        if item.get("task_done"):
-                            self._user_drafts[t_key]["task_done"] = str(item["task_done"])
+                        item_done = _extract_task_done(item)
+                        if item_done != "-":
+                            self._user_drafts[t_key]["task_done"] = item_done
 
             self.set_submitted(False)
             if fresh_tasks:
@@ -1688,6 +1717,10 @@ class AssignedTasksTable(QTableWidget):
                             if item.get("remark") or item.get("comment"):
                                 ft["comment"] = str(item.get("remark") or item.get("comment")).strip()
                                 ft["remark"] = ft["comment"]
+                            item_done = _extract_task_done(item)
+                            if item_done != "-":
+                                ft["task_done"] = item_done
+                                ft["task_done_till_now"] = item_done
                 self.set_tasks(fresh_tasks, date=submission_date)
 
             if hasattr(self, "buttons_container"):

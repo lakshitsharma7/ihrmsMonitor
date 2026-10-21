@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -38,6 +38,7 @@ class TaskService:
         self._cached_tasks: Dict[str, List[Dict[str, Any]]] = {}
         self._submitted_dates: set[str] = set()
         self._submitted_additional_dates: set[str] = set()
+        self._baseline_done_cache: Dict[str, Dict[str, str]] = {}
         self._last_error: Optional[str] = None
 
     @property
@@ -53,6 +54,7 @@ class TaskService:
             self._last_fetch_ts.clear()
             self._submitted_dates.clear()
             self._submitted_additional_dates.clear()
+            self._baseline_done_cache.clear()
             self._last_error = None
 
     def mark_timesheet_submitted(self, date: Optional[str]) -> None:
@@ -454,9 +456,21 @@ class TaskService:
         if raw_done is None:
             raw_done = item.get("task_done_till_now")
         if raw_done is None:
+            raw_done = item.get("taskDoneTillNow")
+        if raw_done is None:
+            raw_done = item.get("taskDone")
+        if raw_done is None:
+            raw_done = item.get("done_till_now")
+        if raw_done is None:
+            raw_done = item.get("task_progress")
+        if raw_done is None:
             raw_done = item.get("progress")
         if raw_done is None:
             raw_done = item.get("hours_done")
+        if raw_done is None:
+            raw_done = item.get("total_done")
+        if raw_done is None:
+            raw_done = item.get("completed_till_now")
 
         if raw_done is not None and str(raw_done).strip() not in ("None", "null", ""):
             task_done = str(raw_done).strip()
@@ -767,6 +781,37 @@ class TaskService:
                     "is_additional": True,
                     "raw": res_json,
                 })
+
+        # ── Resolve Task Done Till Now Baseline Progress ────────────────────────
+        # On unsubmitted dates, get_kra returns task_done: null because no daily
+        # record exists yet. Query prior submitted/drafted timesheets to resolve
+        # the employee's latest cumulative progress for each KRA.
+        # ──────────────────────────────────────────────────────────────────────
+        kra_tasks_needing_done = [
+            t
+            for t in normalized
+            if not t.get("is_additional")
+            and not t.get("timesheet_id")
+            and (
+                t.get("task_done") == "-"
+                or t.get("task_done") is None
+                or str(t.get("task_done")).strip() in ("None", "null", "")
+            )
+        ]
+        if kra_tasks_needing_done and resolved_indo and resolved_key:
+            baseline_map = self._fetch_baseline_task_done_map(
+                target_date=date_key,
+                indo_code=resolved_indo,
+                key=resolved_key,
+            )
+            if baseline_map:
+                for t in kra_tasks_needing_done:
+                    kid = str(t.get("kra_id") or "").strip()
+                    kname = str(t.get("name") or t.get("title") or "").strip()
+                    val = baseline_map.get(kid) or baseline_map.get(kname)
+                    if val is not None and str(val).strip() not in ("None", "null", "", "-"):
+                        t["task_done"] = str(val).strip()
+                        t["task_done_till_now"] = str(val).strip()
 
         # ── KRA date-cycle fallback ────────────────────────────────────────────
         # The backend KRA system assigns tasks to specific cycle dates (not to
@@ -1168,6 +1213,13 @@ class TaskService:
                         or body.get("draft_date")
                         or body.get("submit_date")
                     )
+                    # Also support submit_kra_date array or data array
+                    if not candidate and isinstance(body.get("submit_kra_date"), list) and body["submit_kra_date"]:
+                        last_elem = body["submit_kra_date"][-1]
+                        if isinstance(last_elem, str):
+                            candidate = last_elem
+                        elif isinstance(last_elem, dict):
+                            candidate = last_elem.get("task_date") or last_elem.get("date")
                     # Sometimes the date is nested inside data/kra_date_data
                     if not candidate and isinstance(body.get("data"), dict):
                         d = body["data"]
@@ -1175,25 +1227,30 @@ class TaskService:
                             d.get("date")
                             or d.get("kra_date")
                             or d.get("assigned_date")
+                            or d.get("task_date")
                         )
                     if not candidate and isinstance(body.get("data"), list) and body["data"]:
-                        first = body["data"][0]
-                        if isinstance(first, dict):
+                        last_row = body["data"][-1]
+                        if isinstance(last_row, dict):
                             candidate = (
-                                first.get("date")
-                                or first.get("kra_date")
-                                or first.get("assigned_date")
+                                last_row.get("date")
+                                or last_row.get("kra_date")
+                                or last_row.get("assigned_date")
+                                or last_row.get("task_date")
                             )
+                        elif isinstance(last_row, str):
+                            candidate = last_row
                 elif isinstance(body, list) and body:
-                    first = body[0]
-                    if isinstance(first, dict):
+                    last_row = body[-1]
+                    if isinstance(last_row, dict):
                         candidate = (
-                            first.get("date")
-                            or first.get("kra_date")
-                            or first.get("assigned_date")
+                            last_row.get("date")
+                            or last_row.get("kra_date")
+                            or last_row.get("assigned_date")
+                            or last_row.get("task_date")
                         )
-                    elif isinstance(first, str):
-                        candidate = first
+                    elif isinstance(last_row, str):
+                        candidate = last_row
 
                 if candidate:
                     candidate = str(candidate).strip()
@@ -1211,4 +1268,147 @@ class TaskService:
             "_resolve_kra_cycle_date: no date found from any date-discovery API."
         )
         return None
+
+    def _fetch_baseline_task_done_map(
+        self,
+        target_date: str,
+        indo_code: str,
+        key: str,
+    ) -> Dict[str, str]:
+        """
+        Query prior submitted and drafted timesheet dates for the employee to
+        resolve the baseline cumulative progress (Task Done Till Now) for each KRA.
+        Returns a mapping from kra_id (and task title) to the latest valid task_done value.
+        """
+        cache_key = f"{indo_code}::{target_date}"
+        with self._state_lock:
+            if cache_key in self._baseline_done_cache:
+                return dict(self._baseline_done_cache[cache_key])
+
+        baseline_map: Dict[str, str] = {}
+        try:
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+        except Exception:
+            return baseline_map
+
+        month_str = target_dt.strftime("%B")
+        year_str = str(target_dt.year)
+
+        candidate_dates: set[str] = set()
+
+        def _collect_dates(m: str, y: str) -> None:
+            submit_url = self._resolve_submit_kra_date_url()
+            if submit_url:
+                try:
+                    payload = {
+                        "key": key,
+                        "indo_code": indo_code,
+                        "month": m,
+                        "year": y,
+                    }
+                    r = requests.post(submit_url, data=payload, timeout=8)
+                    if r.status_code == 200:
+                        data = r.json()
+                        dates = data.get("submit_kra_date") or data.get("data") or []
+                        for d in dates:
+                            if isinstance(d, str) and len(d) >= 10:
+                                candidate_dates.add(d[:10])
+                            elif isinstance(d, dict):
+                                dv = d.get("task_date") or d.get("date")
+                                if dv and len(str(dv)) >= 10:
+                                    candidate_dates.add(str(dv)[:10])
+                except Exception as e:
+                    logger.debug("Failed querying submit_kra_date for baseline: %s", e)
+
+            draft_url = self._resolve_draft_kra_date_url()
+            if draft_url:
+                try:
+                    payload = {
+                        "key": key,
+                        "indo_code": indo_code,
+                        "month": m,
+                        "year": y,
+                    }
+                    r = requests.post(draft_url, data=payload, timeout=8)
+                    if r.status_code == 200:
+                        data = r.json()
+                        rows = data.get("submit_kra_date") or data.get("data") or []
+                        for row in rows:
+                            if isinstance(row, dict):
+                                dv = row.get("task_date") or row.get("date")
+                                if dv and len(str(dv)) >= 10:
+                                    candidate_dates.add(str(dv)[:10])
+                            elif isinstance(row, str) and len(row) >= 10:
+                                candidate_dates.add(row[:10])
+                except Exception as e:
+                    logger.debug("Failed querying draft_kra_date for baseline: %s", e)
+
+        _collect_dates(month_str, year_str)
+
+        prior_dates = sorted([d for d in candidate_dates if d < target_date], reverse=True)
+        if not prior_dates and target_dt.day <= 7:
+            # Check previous month if near start of current month
+            prev_month_dt = target_dt.replace(day=1) - timedelta(days=1)
+            _collect_dates(prev_month_dt.strftime("%B"), str(prev_month_dt.year))
+            prior_dates = sorted([d for d in candidate_dates if d < target_date], reverse=True)
+
+        kra_url = self._resolve_kra_url()
+        if kra_url and prior_dates:
+            for p_date in prior_dates:
+                try:
+                    p_payload = {
+                        "key": key,
+                        "indo_code": indo_code,
+                        "date": p_date,
+                    }
+                    r_p = requests.post(kra_url, data=p_payload, timeout=8)
+                    if r_p.status_code == 200:
+                        p_json = r_p.json()
+                        items: List[Any] = []
+                        if isinstance(p_json, dict):
+                            items = p_json.get("emp_kra") or p_json.get("kra_list") or p_json.get("data") or []
+                        elif isinstance(p_json, list):
+                            items = p_json
+
+                        for item in items:
+                            if not isinstance(item, dict):
+                                continue
+                            kid = str(item.get("kra_id") or item.get("id") or "").strip()
+                            kname = str(item.get("name") or item.get("title") or item.get("task_name") or "").strip()
+                            raw_done = item.get("task_done")
+                            if raw_done is None:
+                                raw_done = item.get("task_done_till_now")
+                            if raw_done is None:
+                                raw_done = item.get("taskDoneTillNow")
+                            if raw_done is None:
+                                raw_done = item.get("taskDone")
+                            if raw_done is None:
+                                raw_done = item.get("done_till_now")
+                            if raw_done is None:
+                                raw_done = item.get("task_progress")
+                            if raw_done is None:
+                                raw_done = item.get("progress")
+                            if raw_done is None:
+                                raw_done = item.get("hours_done")
+                            if raw_done is None:
+                                raw_done = item.get("total_done")
+                            if raw_done is None:
+                                raw_done = item.get("completed_till_now")
+
+                            if raw_done is not None and str(raw_done).strip() not in ("None", "null", "", "-"):
+                                val_str = str(raw_done).strip()
+                                if kid and kid not in baseline_map:
+                                    baseline_map[kid] = val_str
+                                if kname and kname not in baseline_map:
+                                    baseline_map[kname] = val_str
+
+                        if baseline_map:
+                            break
+                except Exception as p_err:
+                    logger.debug("Failed querying get_kra on prior date %s: %s", p_date, p_err)
+
+        with self._state_lock:
+            self._baseline_done_cache[cache_key] = baseline_map
+
+        return baseline_map
 
