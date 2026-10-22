@@ -24,3 +24,7 @@ class WindowsActivityProvider(PlatformActivityProvider):
     def reset_after_resume(self) -> None:
         idle_detector.reset_after_resume()
 
+    def is_workstation_locked(self) -> bool:
+        return active_window.is_workstation_locked()
+
+

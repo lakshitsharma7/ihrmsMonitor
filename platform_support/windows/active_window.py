@@ -14,12 +14,35 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def is_workstation_locked() -> bool:
+    """Return True if the Windows workstation is currently locked or secure desktop is active.
+
+    Uses OpenInputDesktop + SwitchDesktop. When the workstation is locked (Win + L)
+    or UAC secure desktop is active, SwitchDesktop fails because the user desktop
+    is not the active input desktop.
+    """
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hDesk = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP = 0x0100
+        if not hDesk:
+            return True
+        is_switchable = user32.SwitchDesktop(hDesk)
+        user32.CloseDesktop(hDesk)
+        return not bool(is_switchable)
+    except Exception:
+        return False
+
+
 def get_active_application() -> ActiveApplication | None:
     """Return the foreground application on Windows, or ``None`` on failure.
 
     Never raises - any pywin32/psutil error is logged and swallowed so a
     single failed API call can never take down the tracker loop.
     """
+    if is_workstation_locked():
+        return None
+
     hwnd = 0
     window_title = None
     pid = None
@@ -70,6 +93,11 @@ def get_active_application() -> ActiveApplication | None:
                 # the window title so we still record *something* useful.
                 logger.debug("Process %s vanished or is inaccessible", pid, exc_info=True)
                 application_name = window_title or "Unknown"
+
+        # Do not track Windows lock screen, logon UI, or screensaver as user application
+        lock_binaries = ("lockapp.exe", "logonui.exe", "screensaver.exe")
+        if application_name and application_name.lower() in lock_binaries:
+            return None
 
         return ActiveApplication(
             application_name=application_name,

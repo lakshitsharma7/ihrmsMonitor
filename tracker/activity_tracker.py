@@ -420,9 +420,16 @@ class ActivityTracker:
 
             was_idle = self._is_idle
 
+            is_locked = False
+            if hasattr(self._provider, "is_workstation_locked"):
+                try:
+                    is_locked = bool(self._provider.is_workstation_locked())
+                except Exception:
+                    is_locked = False
+
             now_idle = (
-                idle_seconds
-                >= self._idle_threshold_seconds
+                idle_seconds >= self._idle_threshold_seconds
+                or is_locked
             )
 
             # --------------------------------------------------

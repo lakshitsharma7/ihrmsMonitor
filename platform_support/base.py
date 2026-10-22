@@ -60,3 +60,8 @@ class PlatformActivityProvider:
         """Reinitialize idle/activity detection after system resume from sleep."""
         pass
 
+    def is_workstation_locked(self) -> bool:
+        """Return whether the workstation is currently locked."""
+        return False
+
+

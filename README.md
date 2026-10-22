@@ -141,13 +141,13 @@ pyinstaller iHRMS-Desktop.spec --clean --noconfirm
 # Build installer via Inno Setup
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" iHRMS-Desktop.iss
 ```
-Output: `dist\Windows\iHRMS-Desktop-Setup-1.1.exe`
+Output: `dist\Windows\iHRMS-Desktop-Setup-1.0.0.exe`
 
 ### macOS App & DMG
 ```bash
 ./build_macos.sh
 ```
-Output: `dist/macOS/iHRMS-Desktop-1.1.dmg` and `dist/iHRMS-Desktop.app`
+Output: `dist/macOS/iHRMS-Desktop-1.0.0.dmg` and `dist/iHRMS-Desktop.app`
 
 ---
 
