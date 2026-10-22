@@ -14,6 +14,7 @@ Verifies:
 
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,6 @@ from database.database import get_session, init_database
 from database.models import ActivitySession
 from database.repository import ActivityRepository
 from platform_support.base import ActiveApplication, PlatformActivityProvider
-from platform_support.windows import active_window
 from services.session_service import SessionService
 from services.sync_service import SyncService
 from tracker.activity_tracker import ActivityTracker
@@ -120,8 +120,11 @@ class TestWindowsLockAndDisplayOffTracking(unittest.TestCase):
     # -------------------------------------------------------------------------
     # 1. Detection of Windows Lock State
     # -------------------------------------------------------------------------
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows platform")
     def test_is_workstation_locked_detection(self):
         """Verify is_workstation_locked correctly reflects desktop switchability."""
+        from platform_support.windows import active_window
+
         with patch("ctypes.windll.user32.OpenInputDesktop") as mock_open:
             with patch("ctypes.windll.user32.SwitchDesktop") as mock_switch:
                 with patch("ctypes.windll.user32.CloseDesktop"):
@@ -138,8 +141,11 @@ class TestWindowsLockAndDisplayOffTracking(unittest.TestCase):
                     mock_open.return_value = 0
                     self.assertTrue(active_window.is_workstation_locked())
 
+    @unittest.skipUnless(sys.platform.startswith("win"), "Requires Windows platform")
     def test_get_active_application_filters_lock_screen_and_locked_state(self):
         """Verify get_active_application returns None when locked or when LockApp/LogonUI is active."""
+        from platform_support.windows import active_window
+
         with patch.object(active_window, "is_workstation_locked", return_value=True):
             app = active_window.get_active_application()
             self.assertIsNone(app)
