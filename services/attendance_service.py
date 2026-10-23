@@ -114,14 +114,76 @@ class AttendanceService:
         except Exception as write_err:
             logger.debug("Could not write attendance_state.json: %s", write_err)
 
-    def clear_cache(self) -> None:
-        """Clear cached monthly attendance and punch responses."""
-        if hasattr(self, "_monthly_cache"):
-            self._monthly_cache.clear()
-        if hasattr(self, "_monthly_cache_ts"):
-            self._monthly_cache_ts.clear()
-        if hasattr(self, "_last_punch_fetch_ts"):
-            self._last_punch_fetch_ts.clear()
+    def _get_active_employee_id(self) -> str | None:
+        try:
+            from services.session_service import SessionService
+            u = SessionService().current_user
+            if u:
+                return u.indo_code or u.employee_id or u.username
+        except Exception:
+            pass
+        try:
+            from services.secure_session import SessionStore
+            s = SessionStore().load_session()
+            if s:
+                return s.get("indo_code") or s.get("employee_id") or s.get("username")
+        except Exception:
+            pass
+        return None
+
+    def _get_safe_stored_employee_id(self) -> str | None:
+        try:
+            from PySide6.QtCore import QSettings
+            from config.api_config import ApiConfig
+            st = QSettings("Indovision", "iHRMSMonitor")
+            last_co = st.value("last_company_code") or st.value("login/company_code")
+            curr_co = ApiConfig().company_code
+            if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                return st.value("last_employee_id") or None
+        except Exception:
+            pass
+        return None
+
+    def _get_safe_stored_base_url(self) -> str | None:
+        try:
+            from PySide6.QtCore import QSettings
+            from config.api_config import ApiConfig
+            st = QSettings("Indovision", "iHRMSMonitor")
+            last_co = st.value("last_company_code") or st.value("login/company_code")
+            curr_co = ApiConfig().company_code
+            if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                last_b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+                if not last_b:
+                    st_leg = QSettings("Indovision", "iHRMS")
+                    last_b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
+                if last_b:
+                    return str(last_b).rstrip("/")
+        except Exception:
+            pass
+        return None
+
+    def clear_cache(self, indo_code: str | None = None) -> None:
+        """Clear cached attendance, punch, and leave records for an employee or all employees."""
+        if indo_code:
+            indo_str = str(indo_code).strip()
+            if hasattr(self, "_monthly_cache"):
+                self._monthly_cache = {k: v for k, v in self._monthly_cache.items() if not str(k).startswith(f"{indo_str}_")}
+                self._monthly_cache_ts = {k: v for k, v in self._monthly_cache_ts.items() if not str(k).startswith(f"{indo_str}_")}
+            if hasattr(self, "_leave_cache"):
+                self._leave_cache = {k: v for k, v in self._leave_cache.items() if not str(k).startswith(f"{indo_str}_")}
+                self._leave_cache_ts = {k: v for k, v in self._leave_cache_ts.items() if not str(k).startswith(f"{indo_str}_")}
+            if hasattr(self, "_cache"):
+                self._cache = {k: v for k, v in self._cache.items() if not str(k).startswith(f"{indo_str}_")}
+            if hasattr(self, "_last_punch_fetch_ts"):
+                self._last_punch_fetch_ts = {k: v for k, v in self._last_punch_fetch_ts.items() if not str(k).startswith(f"{indo_str}_")}
+        else:
+            self._monthly_cache = {}
+            self._monthly_cache_ts = {}
+            self._leave_cache = {}
+            self._leave_cache_ts = {}
+            self._cache = {}
+            self._last_punch_fetch_ts = {}
+        logger.info("AttendanceService cache cleared (indo_code=%s)", indo_code)
 
     def clear_state(self, date_str: str | None = None) -> None:
         """Clear state for a specific date or all dates (used during resets / tests)."""
@@ -203,13 +265,22 @@ class AttendanceService:
             if not day_data.get("workpulse_started_at"):
                 day_data["workpulse_started_at"] = _format_dt(now_local)
 
+            active_emp = self._get_active_employee_id()
+            if active_emp:
+                if "punches" not in day_data or not isinstance(day_data["punches"], dict):
+                    day_data["punches"] = {}
+                if active_emp not in day_data["punches"]:
+                    day_data["punches"][active_emp] = {}
+                day_data["punches"][active_emp]["punch_in"] = p_str
+                day_data["employee_id"] = active_emp
+
             day_data["punch_in"] = p_str
             if "punch_out" not in day_data:
                 day_data["punch_out"] = None
 
             state[date_key] = day_data
             self._save_state(state)
-            logger.info("Recorded Punch-In for %s: %s", date_key, p_str)
+            logger.info("Recorded Punch-In for %s (emp=%s): %s", date_key, active_emp, p_str)
             return dict(day_data)
 
     def record_punch_out(self, punch_time: datetime | str | None = None, date_str: str | None = None) -> dict:
@@ -234,11 +305,20 @@ class AttendanceService:
             if not day_data.get("workpulse_started_at"):
                 day_data["workpulse_started_at"] = _format_dt(now_local)
 
+            active_emp = self._get_active_employee_id()
+            if active_emp:
+                if "punches" not in day_data or not isinstance(day_data["punches"], dict):
+                    day_data["punches"] = {}
+                if active_emp not in day_data["punches"]:
+                    day_data["punches"][active_emp] = {}
+                day_data["punches"][active_emp]["punch_out"] = p_str
+                day_data["employee_id"] = active_emp
+
             day_data["punch_out"] = p_str
 
             state[date_key] = day_data
             self._save_state(state)
-            logger.info("Recorded Punch-Out for %s: %s", date_key, p_str)
+            logger.info("Recorded Punch-Out for %s (emp=%s): %s", date_key, active_emp, p_str)
             return dict(day_data)
 
     def _normalize_punch_time_str(self, time_val: Any, date_key: str) -> str | None:
@@ -326,11 +406,20 @@ class AttendanceService:
             date_key = now_local.strftime("%Y-%m-%d")
             punch_date_api_str = now_local.strftime("%d-%m-%Y")
 
-        # 2. Check rate limit / cooldown (unless force is True)
-        if not hasattr(self, "_last_punch_fetch_ts"):
-            self._last_punch_fetch_ts = {}
+        # 3. Resolve indo_code and key
+        resolved_indo_code = indo_code
+        if not resolved_indo_code:
+            resolved_indo_code = self._get_active_employee_id()
 
-        last_fetch = self._last_punch_fetch_ts.get(date_key, 0.0)
+        if not resolved_indo_code:
+            resolved_indo_code = self._get_safe_stored_employee_id()
+
+        if not resolved_indo_code:
+            logger.debug("Punch API: No indo_code / employee_id available; skipping punch fetch.")
+            return None
+
+        cache_key = f"{resolved_indo_code}_{date_key}"
+        last_fetch = self._last_punch_fetch_ts.get(cache_key, 0.0)
         current_ts = time.time()
 
         with self._state_lock:
@@ -345,38 +434,6 @@ class AttendanceService:
             # Cooldown of 3 minutes between checks to prevent continuous polling
             if current_ts - last_fetch < 180:
                 return self.get_daily_attendance(date_key)
-
-        # 3. Resolve indo_code and key
-        resolved_indo_code = indo_code
-        if not resolved_indo_code:
-            try:
-                from services.session_service import SessionService
-                u = SessionService().current_user
-                if u:
-                    resolved_indo_code = u.indo_code or u.employee_id or u.username
-            except Exception:
-                pass
-
-        if not resolved_indo_code:
-            try:
-                from services.secure_session import SessionStore
-                s = SessionStore().load_session()
-                if s:
-                    resolved_indo_code = s.get("indo_code") or s.get("employee_id") or s.get("username")
-            except Exception:
-                pass
-
-        if not resolved_indo_code:
-            try:
-                from PySide6.QtCore import QSettings
-                st = QSettings("Indovision", "iHRMSMonitor")
-                resolved_indo_code = st.value("last_employee_id") or None
-            except Exception:
-                pass
-
-        if not resolved_indo_code:
-            logger.debug("Punch API: No indo_code / employee_id available; skipping punch fetch.")
-            return None
 
         resolved_key = key or os.environ.get("IHRMS_PUNCH_API_KEY")
         if not resolved_key:
@@ -407,7 +464,26 @@ class AttendanceService:
 
         # 4. Resolve Punch endpoint URL
         punch_url = os.environ.get("IHRMS_PUNCH_API_URL")
+        base_url_candidate = None
         if not punch_url:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and getattr(u, "base_url", None):
+                    base_url_candidate = str(u.base_url).rstrip("/")
+            except Exception:
+                pass
+
+        if not punch_url and not base_url_candidate:
+            try:
+                from services.secure_session import SessionStore
+                sess = SessionStore().load_session()
+                if sess and sess.get("base_url"):
+                    base_url_candidate = str(sess.get("base_url")).rstrip("/")
+            except Exception:
+                pass
+
+        if not punch_url and not base_url_candidate:
             try:
                 from config.api_config import ApiConfig
                 cfg = ApiConfig()
@@ -416,39 +492,27 @@ class AttendanceService:
             except Exception:
                 pass
 
-        if not punch_url:
-            base_url_candidate = None
-            try:
-                from services.secure_session import SessionStore
-                sess = SessionStore().load_session()
-                if sess and sess.get("base_url"):
-                    base_url_candidate = str(sess.get("base_url")).rstrip("/")
-            except Exception:
-                pass
-            if not base_url_candidate:
-                try:
-                    from PySide6.QtCore import QSettings
-                    st = QSettings("Indovision", "iHRMSMonitor")
-                    last_b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
-                    if not last_b:
-                        st_leg = QSettings("Indovision", "iHRMS")
-                        last_b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
-                    if last_b:
-                        base_url_candidate = str(last_b).rstrip("/")
-                except Exception:
-                    pass
-            if base_url_candidate:
-                punch_url = f"{base_url_candidate}/punch/get_punch_time"
+        if not punch_url and not base_url_candidate:
+            base_url_candidate = self._get_safe_stored_base_url()
+
+        if not punch_url and base_url_candidate:
+            punch_url = f"{base_url_candidate}/punch/get_punch_time"
 
         if not punch_url:
-            punch_url = "https://ihrms.indovisionservices.in/hrms_api/ci4/api/punch/get_punch_time"
+            logger.warning("Punch API: No dynamic base_url configured for active company; skipping punch fetch.")
+            return None
 
         # 5. Call Punch API
-        self._last_punch_fetch_ts[date_key] = current_ts
+        self._last_punch_fetch_ts[cache_key] = current_ts
         req_payload = {
             "indo_code": str(resolved_indo_code),
             "key": str(resolved_key),
             "punch_date": str(punch_date_api_str),
+        }
+
+        api_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "iHRMS-Monitor/1.0",
         }
 
         logger.info(
@@ -458,8 +522,19 @@ class AttendanceService:
         )
 
         try:
-            resp = requests.post(punch_url, data=req_payload, timeout=10)
+            resp = requests.post(punch_url, data=req_payload, headers=api_headers, timeout=10)
             logger.info("Punch API response: HTTP %d %s", resp.status_code, resp.text[:200])
+            if resp.status_code == 406:
+                logger.warning(
+                    "Punch API HTTP 406 Not Acceptable (url=%s, headers=%s, body=%s). Retrying with JSON payload.",
+                    punch_url, resp.headers, resp.text[:200]
+                )
+                json_headers = dict(api_headers)
+                json_headers["Content-Type"] = "application/json"
+                resp_retry = requests.post(punch_url, json=req_payload, headers=json_headers, timeout=10)
+                logger.info("Punch API retry response: HTTP %d %s", resp_retry.status_code, resp_retry.text[:200])
+                if resp_retry.status_code < 400:
+                    resp = resp_retry
             resp.raise_for_status()
             res_json = resp.json()
         except Exception as api_err:
@@ -582,34 +657,29 @@ class AttendanceService:
                 state[date_key] = day_data
                 self._save_state(state)
 
+            active_emp = self._get_active_employee_id()
+            punches_map = day_data.get("punches") if isinstance(day_data.get("punches"), dict) else {}
+
+            p_in = day_data.get("punch_in")
+            p_out = day_data.get("punch_out")
+
+            if active_emp:
+                if active_emp in punches_map:
+                    p_in = punches_map[active_emp].get("punch_in")
+                    p_out = punches_map[active_emp].get("punch_out")
+                elif day_data.get("employee_id") and day_data.get("employee_id") != active_emp:
+                    # Punches stored in day_data belong to a different employee
+                    p_in = None
+                    p_out = None
+
             return {
                 "date": day_data.get("date", date_key),
                 "hostname": day_data.get("hostname", socket.gethostname()),
                 "system_started_at": day_data.get("system_started_at") or _format_dt(_get_boot_datetime()),
                 "workpulse_started_at": day_data.get("workpulse_started_at") or _format_dt(now_local),
-                "punch_in": day_data.get("punch_in"),
-                "punch_out": day_data.get("punch_out"),
+                "punch_in": p_in,
+                "punch_out": p_out,
             }
-
-    def clear_cache(self, indo_code: str | None = None) -> None:
-        """Clear cached attendance, punch, and leave records for an employee or all employees."""
-        if indo_code:
-            indo_str = str(indo_code).strip()
-            if hasattr(self, "_monthly_cache"):
-                self._monthly_cache = {k: v for k, v in self._monthly_cache.items() if not str(k).startswith(f"{indo_str}_")}
-                self._monthly_cache_ts = {k: v for k, v in self._monthly_cache_ts.items() if not str(k).startswith(f"{indo_str}_")}
-            if hasattr(self, "_leave_cache"):
-                self._leave_cache = {k: v for k, v in self._leave_cache.items() if not str(k).startswith(f"{indo_str}_")}
-                self._leave_cache_ts = {k: v for k, v in self._leave_cache_ts.items() if not str(k).startswith(f"{indo_str}_")}
-            if hasattr(self, "_cache"):
-                self._cache = {k: v for k, v in self._cache.items() if not str(k).startswith(f"{indo_str}_")}
-        else:
-            self._monthly_cache = {}
-            self._monthly_cache_ts = {}
-            self._leave_cache = {}
-            self._leave_cache_ts = {}
-            self._cache = {}
-        logger.info("AttendanceService cache cleared (indo_code=%s)", indo_code)
 
     def get_monthly_attendance_record(
         self,
@@ -703,32 +773,7 @@ class AttendanceService:
             resolved_year = now.year
 
         # 2. Resolve indo_code and key from active session context
-        resolved_indo = indo_code
-        if not resolved_indo:
-            try:
-                from services.session_service import SessionService
-                u = SessionService().current_user
-                if u:
-                    resolved_indo = u.indo_code or u.employee_id or u.username
-            except Exception:
-                pass
-
-        if not resolved_indo:
-            try:
-                from services.secure_session import SessionStore
-                s = SessionStore().load_session()
-                if s:
-                    resolved_indo = s.get("indo_code") or s.get("employee_id") or s.get("username")
-            except Exception:
-                pass
-
-        if not resolved_indo:
-            try:
-                st = QSettings("Indovision", "iHRMSMonitor")
-                resolved_indo = st.value("last_employee_id") or None
-            except Exception:
-                pass
-
+        resolved_indo = indo_code or self._get_active_employee_id() or self._get_safe_stored_employee_id()
         if not resolved_indo:
             import sys
             if any("test" in arg.lower() or "unittest" in arg.lower() for arg in sys.argv):
@@ -846,23 +891,31 @@ class AttendanceService:
             except Exception:
                 pass
         if not att_url and not base_url_candidate:
-            try:
-                from PySide6.QtCore import QSettings
-                st = QSettings("Indovision", "iHRMSMonitor")
-                last_b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
-                if not last_b:
-                    st_leg = QSettings("Indovision", "iHRMS")
-                    last_b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
-                if last_b:
-                    base_url_candidate = str(last_b).rstrip("/")
-            except Exception:
-                pass
+            base_url_candidate = self._get_safe_stored_base_url()
 
         if not att_url:
             if base_url_candidate:
                 att_url = f"{base_url_candidate}/attendance/get_attendance_record"
             else:
-                att_url = "https://ihrms.indovisionservices.in/hrms_api/ci4/api/attendance/get_attendance_record"
+                logger.warning("Attendance Record API: No dynamic base_url configured for active company.")
+                return {
+                    "status": 0,
+                    "error": "No dynamic base_url configured for active company",
+                    "month": resolved_month_name,
+                    "year": resolved_year,
+                    "days": [],
+                    "present_days": [],
+                    "summary": {
+                        "present": 0,
+                        "absent": 0,
+                        "half_day": 0,
+                        "missed_punch": 0,
+                        "leave": 0,
+                        "week_off": 0,
+                        "holiday": 0,
+                        "total_days": 0,
+                    },
+                }
 
         # Resolve company ID for diagnostic logging
         company_id = None
@@ -875,7 +928,10 @@ class AttendanceService:
             try:
                 from PySide6.QtCore import QSettings
                 st = QSettings("Indovision", "iHRMSMonitor")
-                company_id = st.value("ApiConfig/last_company_id") or st.value("session/company_id")
+                last_co = st.value("last_company_code") or st.value("login/company_code")
+                curr_co = ApiConfig().company_code
+                if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                    company_id = st.value("ApiConfig/last_company_id") or st.value("session/company_id")
             except Exception:
                 pass
 
@@ -912,12 +968,28 @@ class AttendanceService:
             resolved_year,
         )
 
+        api_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "iHRMS-Monitor/1.0",
+        }
+
         res_json = None
         error_msg = None
         http_code = 0
         try:
-            resp = requests.post(att_url, data=req_payload, timeout=12)
+            resp = requests.post(att_url, data=req_payload, headers=api_headers, timeout=12)
             http_code = resp.status_code
+            if http_code == 406:
+                logger.warning(
+                    "Attendance Record API HTTP 406 Not Acceptable (url=%s, headers=%s, body=%s). Retrying with JSON payload.",
+                    sanitized_url, resp.headers, resp.text[:200]
+                )
+                json_headers = dict(api_headers)
+                json_headers["Content-Type"] = "application/json"
+                resp_retry = requests.post(att_url, json=req_payload, headers=json_headers, timeout=12)
+                if resp_retry.status_code < 400:
+                    resp = resp_retry
+                    http_code = resp.status_code
             resp.raise_for_status()
             res_json = resp.json()
         except Exception as api_err:
@@ -941,6 +1013,32 @@ class AttendanceService:
 
         # Check for application-level failure response (e.g. status 99999 unauthorized / invalid key)
         if isinstance(res_json, dict) and app_status in (0, 99999) and not res_json.get("result"):
+            msg_str = str(res_json.get("message") or "").strip()
+            is_no_data = any(k in msg_str.lower() for k in ("no record", "no data", "not found", "record not found", "data not found"))
+            if is_no_data:
+                logger.info(
+                    "Attendance Record API: No records found for employee_id=%s, month=%s, year=%s",
+                    resolved_indo, resolved_month_name, resolved_year
+                )
+                return {
+                    "response": res_json.get("response", 200),
+                    "status": 1,
+                    "month": resolved_month_name,
+                    "year": resolved_year,
+                    "days": [],
+                    "summary": {
+                        "present": 0,
+                        "absent": 0,
+                        "week_off": 0,
+                        "leave": 0,
+                        "holiday": 0,
+                        "total_days": 0,
+                    },
+                    "freezed": False,
+                    "raw_result": {},
+                    "error": None,
+                }
+
             err_msg = res_json.get("message") or f"API session rejected or unauthorized (status: {app_status})."
             logger.warning(
                 "Attendance Record API returned failure status %s: %s (employee_id=%s, month=%s, year=%s)",
@@ -2251,33 +2349,7 @@ class AttendanceService:
         import time
 
         # 1. Resolve indo_code and key from active session context
-        resolved_indo = indo_code
-        if not resolved_indo:
-            try:
-                from services.session_service import SessionService
-                u = SessionService().current_user
-                if u:
-                    resolved_indo = u.indo_code or u.employee_id or u.username
-            except Exception:
-                pass
-
-        if not resolved_indo:
-            try:
-                from services.secure_session import SessionStore
-                s = SessionStore().load_session()
-                if s and s.get("indo_code"):
-                    resolved_indo = s.get("indo_code")
-            except Exception:
-                pass
-
-        if not resolved_indo:
-            try:
-                from PySide6.QtCore import QSettings
-                st = QSettings("Indovision", "iHRMSMonitor")
-                resolved_indo = st.value("last_employee_id") or None
-            except Exception:
-                pass
-
+        resolved_indo = indo_code or self._get_active_employee_id() or self._get_safe_stored_employee_id()
         if not resolved_indo:
             import sys
             if any("test" in arg.lower() or "unittest" in arg.lower() for arg in sys.argv):
@@ -2326,6 +2398,8 @@ class AttendanceService:
         if not hasattr(self, "_leave_cache"):
             self._leave_cache = {}
             self._leave_cache_ts = {}
+        if not hasattr(self, "_leave_lock"):
+            self._leave_lock = threading.Lock()
 
         cache_key = f"{resolved_indo}_{resolved_key}"
         now_ts = time.time()
@@ -2335,23 +2409,24 @@ class AttendanceService:
 
         # 3. Resolve URL
         leave_url = os.environ.get("IHRMS_LEAVE_QUOTA_API_URL")
+        base_url_candidate = None
         if not leave_url:
             try:
                 from services.session_service import SessionService
                 s = SessionService().current_user
                 if s and getattr(s, "base_url", None):
-                    leave_url = f"{str(s.base_url).rstrip('/')}/leave/leave_quota"
+                    base_url_candidate = str(s.base_url).rstrip("/")
             except Exception:
                 pass
-        if not leave_url:
+        if not leave_url and not base_url_candidate:
             try:
                 from services.secure_session import SessionStore
                 sess = SessionStore().load_session()
                 if sess and sess.get("base_url"):
-                    leave_url = f"{str(sess.get('base_url')).rstrip('/')}/leave/leave_quota"
+                    base_url_candidate = str(sess.get("base_url")).rstrip("/")
             except Exception:
                 pass
-        if not leave_url:
+        if not leave_url and not base_url_candidate:
             try:
                 from config.api_config import ApiConfig
                 cfg = ApiConfig()
@@ -2359,13 +2434,24 @@ class AttendanceService:
                     leave_url = cfg.leave_quota_url
             except Exception:
                 pass
+        if not leave_url and not base_url_candidate:
+            base_url_candidate = self._get_safe_stored_base_url()
 
         if not leave_url:
-            leave_url = "https://ihrms.indovisionservices.in/hrms_api/ci4/api/leave/leave_quota"
+            if base_url_candidate:
+                leave_url = f"{base_url_candidate}/leave/leave_quota"
+            else:
+                logger.warning("get_leave_quota: No dynamic base_url configured for active company.")
+                return {"status": 0, "error": "No dynamic base_url configured for active company", "data": []}
 
         req_payload = {
             "indo_code": str(resolved_indo),
             "key": str(resolved_key),
+        }
+
+        api_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "iHRMS-Monitor/1.0",
         }
 
         logger.info(
@@ -2376,32 +2462,53 @@ class AttendanceService:
 
         res_json = None
         error_msg = None
-        try:
-            resp = requests.post(leave_url, data=req_payload, timeout=12)
-            logger.info("Leave Quota API response: HTTP %d (size: %d bytes)", resp.status_code, len(resp.content))
-            
-            # If backend returns non-200 with JSON error message
+        with self._leave_lock:
+            # Re-check cache inside lock to prevent redundant in-flight executions
+            if not force and cache_key in self._leave_cache:
+                if time.time() - self._leave_cache_ts.get(cache_key, 0) < 300:
+                    return self._leave_cache[cache_key]
+
             try:
-                res_json = resp.json()
-            except Exception:
-                res_json = None
+                resp = requests.post(leave_url, data=req_payload, headers=api_headers, timeout=12)
+                logger.info("Leave Quota API response: HTTP %d (size: %d bytes)", resp.status_code, len(resp.content))
+                if resp.status_code == 406:
+                    logger.warning(
+                        "Leave Quota API HTTP 406 Not Acceptable (url=%s, headers=%s, body=%s). Retrying with JSON payload.",
+                        leave_url, resp.headers, resp.text[:200]
+                    )
+                    json_headers = dict(api_headers)
+                    json_headers["Content-Type"] = "application/json"
+                    resp_retry = requests.post(leave_url, json=req_payload, headers=json_headers, timeout=12)
+                    if resp_retry.status_code < 400:
+                        resp = resp_retry
 
-            if resp.status_code >= 400:
-                if isinstance(res_json, dict):
-                    msgs = res_json.get("messages") or res_json.get("message")
-                    if isinstance(msgs, dict):
-                        error_msg = msgs.get("message") or msgs.get("response") or str(msgs)
-                    elif msgs:
-                        error_msg = str(msgs)
+                # If backend returns non-200 with JSON error message
+                try:
+                    res_json = resp.json()
+                except Exception:
+                    res_json = None
+
+                if resp.status_code >= 400:
+                    if isinstance(res_json, dict):
+                        msgs = res_json.get("messages") or res_json.get("message")
+                        if isinstance(msgs, dict):
+                            error_msg = msgs.get("error") or msgs.get("message") or msgs.get("response") or str(msgs)
+                        elif msgs:
+                            error_msg = str(msgs)
+                        else:
+                            err_val = res_json.get("error")
+                            error_msg = str(err_val) if err_val and not str(err_val).isdigit() else f"HTTP {resp.status_code}"
                     else:
-                        error_msg = res_json.get("error") or f"HTTP {resp.status_code}"
-                else:
-                    error_msg = f"HTTP {resp.status_code}: {resp.text[:100]}"
-                logger.warning("Leave Quota API returned error: %s", error_msg)
+                        error_msg = f"HTTP {resp.status_code}: {resp.text[:100]}"
 
-        except Exception as exc:
-            error_msg = f"Network/Connection error: {str(exc)}"
-            logger.error("Failed to fetch leave quota from %s: %s", leave_url, exc)
+                    if resp.status_code == 409 or (isinstance(res_json, dict) and res_json.get("status") == 409):
+                        if not error_msg or error_msg in ("409", "HTTP 409"):
+                            error_msg = "A conflict occurred while retrieving employee leave quota records. Please try again or contact HR."
+                    logger.warning("Leave Quota API returned error: %s", error_msg)
+
+            except Exception as exc:
+                error_msg = f"Network/Connection error: {str(exc)}"
+                logger.error("Failed to fetch leave quota from %s: %s", leave_url, exc)
 
         if error_msg or not res_json:
             return {

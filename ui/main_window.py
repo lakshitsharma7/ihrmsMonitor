@@ -846,7 +846,7 @@ class MainWindow(QMainWindow):
         self.hrms_button = QPushButton(" iHRMS", header)
         self.hrms_button.setObjectName("SecondaryButton")
         self.hrms_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.hrms_button.setToolTip("Open iHRMS Web Portal (https://ihrms.indovisionservices.in)")
+        self._update_portal_tooltip()
 
         globe_icon = _load_icon("globe")
         if not globe_icon.isNull():
@@ -1296,6 +1296,8 @@ class MainWindow(QMainWindow):
         display_name = session.display_name if session else "User"
         if hasattr(self, "user_label") and self.user_label:
             self.user_label.setText(f"Welcome, {display_name}")
+
+        self._update_portal_tooltip()
 
     def set_network_status(self, is_online: bool) -> None:
         """Update header network connectivity badge, icon, and propagate reachability state."""
@@ -2096,8 +2098,39 @@ class MainWindow(QMainWindow):
         """Handle header update button click: trigger manual silent re-check without popup."""
         self._check_for_updates(manual=True)
 
+    def showEvent(self, event) -> None:
+        """Refresh dynamic company portal URL and state when main window is displayed."""
+        super().showEvent(event)
+        self._update_portal_tooltip()
+
+    def _update_portal_tooltip(self) -> None:
+        """Update portal button tooltip and state with the dynamic company portal URL."""
+        try:
+            from services.hrms_portal_service import HrmsPortalService, is_valid_https_url
+            portal_url = HrmsPortalService().get_resolved_portal_url()
+            if portal_url and is_valid_https_url(portal_url):
+                self.hrms_button.setEnabled(True)
+                self.hrms_button.setToolTip(f"Open iHRMS Web Portal ({portal_url})")
+            else:
+                self.hrms_button.setToolTip("iHRMS Web Portal is not available for this company")
+        except Exception:
+            self.hrms_button.setToolTip("Open iHRMS Web Portal")
+
     def _open_hrms_portal(self) -> None:
         """Open the iHRMS web portal in the user's default external browser with auto-login."""
-        from services.hrms_portal_service import HrmsPortalService
-        HrmsPortalService().open_portal_with_autologin()
+        self._update_portal_tooltip()
+        from services.hrms_portal_service import HrmsPortalService, is_valid_https_url
+        portal_service = HrmsPortalService()
+        portal_url = portal_service.get_resolved_portal_url()
+        if not portal_url or not is_valid_https_url(portal_url):
+            logger.warning("iHRMS Web Portal URL is missing or invalid for the active company.")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "iHRMS Web Portal",
+                "iHRMS Web Portal URL is not configured or available for this company.",
+            )
+            return
+
+        portal_service.open_portal_with_autologin()
 

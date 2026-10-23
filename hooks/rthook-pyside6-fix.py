@@ -63,6 +63,10 @@ try:
             if val and not os.path.isfile(val):
                 os.environ.pop(env_var, None)
 
+        # Remove conflicting global python environment variables that disrupt embedded interpreter
+        for py_env in ("PYTHONHOME", "PYTHONPATH"):
+            os.environ.pop(py_env, None)
+
         # Resolve bundled TLS CA certificate bundle dynamically
         exe_dir = Path(sys.executable).parent
         ca_candidates = [

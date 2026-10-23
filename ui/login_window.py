@@ -725,6 +725,7 @@ class LoginWindow(QMainWindow):
         from config.api_config import ApiConfig, ApiConfigError
         api_config = ApiConfig()
 
+        logger.info("Processing company verification in UI: company_code=%s", company_code)
         try:
             api_config.load(company_code=company_code, force=True)
 
@@ -765,7 +766,7 @@ class LoginWindow(QMainWindow):
             self.username_input.setFocus()
 
         except ApiConfigError as config_err:
-            logger.error("Company verification failed: %s", config_err)
+            logger.error("Company verification failed: code=%s, validation_failure_reason=%s", company_code, config_err)
 
             # Leave no trace of any previously verified company.
             self._reset_company_context()
@@ -778,6 +779,15 @@ class LoginWindow(QMainWindow):
 
             # Surface the message the verification API itself returned.
             self.error_label.setText(str(config_err))
+        except Exception as unexp_err:
+            logger.exception("Unexpected error verifying company code: %s", unexp_err)
+            self._reset_company_context()
+            self.company_code_check_action.setVisible(False)
+            self.company_code_input.setReadOnly(False)
+            self.login_button.setEnabled(True)
+            self.company_code_input.setEnabled(True)
+            self.error_label.setStyleSheet("")
+            self.error_label.setText("Verification service error. Please check your connection and try again.")
 
     def _handle_login(self) -> None:
         self.error_label.clear()
@@ -847,12 +857,7 @@ class LoginWindow(QMainWindow):
 
         # Guarantee no lingering session or token from a previous user exists
         from services.session_service import SessionService
-        from services.secure_session import SessionStore
         SessionService().clear()
-        try:
-            SessionStore().clear_session()
-        except Exception:
-            pass
 
         from config.api_config import ApiConfig, ApiConfigError, get_device_id
         from utils.device import get_device_info
@@ -862,15 +867,32 @@ class LoginWindow(QMainWindow):
         # verified and saw confirmed on screen.
         api_config = ApiConfig()
 
+        norm_entered = str(company_code or "").strip().upper()
+        norm_verified = str(self._verified_company_code or "").strip().upper()
+        norm_configured = str(api_config.company_code or "").strip().upper()
+
+        # If configuration context in memory was unverified or lost, re-adopt if company code matches
+        if (not api_config.is_verified or norm_configured != norm_entered) and norm_entered:
+            if norm_verified == norm_entered or self.login_step == 2:
+                try:
+                    logger.info("Re-confirming company configuration for '%s' prior to login", company_code)
+                    api_config.load(company_code=company_code, force=False)
+                    self._verified_company_code = company_code
+                    norm_verified = str(self._verified_company_code or "").strip().upper()
+                    norm_configured = str(api_config.company_code or "").strip().upper()
+                except Exception as load_err:
+                    logger.warning("Could not re-resolve company configuration for '%s': %s", company_code, load_err)
+
         if (
             not api_config.is_verified
-            or self._verified_company_code != company_code
-            or api_config.company_code != company_code
+            or norm_verified != norm_entered
+            or norm_configured != norm_entered
         ):
             logger.error(
-                "Login attempted without a matching verified company "
-                "(entered=%s, verified=%s)",
+                "Login validation failure: company not verified "
+                "(entered=%s, verified=%s, configured=%s)",
                 company_code,
+                self._verified_company_code,
                 api_config.company_code,
             )
 
@@ -884,6 +906,14 @@ class LoginWindow(QMainWindow):
         api_url = api_config.base_url
         url = api_config.login_url
 
+        parsed_login = urllib.parse.urlparse(url)
+        logger.info(
+            "Login API request [START]: host=%s path=%s company_code=%s",
+            parsed_login.netloc,
+            parsed_login.path,
+            company_code,
+        )
+
         from utils.device import get_device_info, get_dynamic_os_type
 
         device_info = get_device_info()
@@ -893,6 +923,7 @@ class LoginWindow(QMainWindow):
         req_headers = {
             "User-Agent": "iHRMS-Monitor/1.0 (Windows NT 10.0; Win64; x64)",
             "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json, text/plain, */*",
         }
 
         # Build the login payload exactly as the API requires:
@@ -943,6 +974,14 @@ class LoginWindow(QMainWindow):
                 with urllib.request.urlopen(req, timeout=15, context=ssl_context) as response:
                     res_body = response.read().decode("utf-8")
                 res_json = json.loads(res_body)
+
+            res_status = res_json.get("status") if isinstance(res_json, dict) else "unknown"
+            logger.info(
+                "Login API response: host=%s path=%s status=%s",
+                parsed_login.netloc,
+                parsed_login.path,
+                res_status,
+            )
 
             if res_json and res_json.get("status") == 2:
                 logger.info(
@@ -1187,6 +1226,16 @@ class LoginWindow(QMainWindow):
                         break
 
                 employee_id = emp_code
+                email_val = (
+                    res_json.get("email")
+                    or res_json.get("user_email")
+                    or res_json.get("userEmail")
+                    or login_data.get("email")
+                    or login_data.get("user_email")
+                    or login_data.get("userEmail")
+                    or (username if "@" in str(username) else None)
+                )
+
                 SessionService().login(
                     username,
                     role=user_type,
@@ -1203,6 +1252,11 @@ class LoginWindow(QMainWindow):
                         else None
                     ),
                     company_code=company_code,
+                    company_id=api_config.company_id,
+                    base_url=api_config.base_url,
+                    portal_url=api_config.portal_url,
+                    logo_url=api_config.logo_url,
+                    email=email_val,
                     device_token=device_token,
                     raw_login_data=res_json,
                     session_credential=password,
@@ -1223,6 +1277,9 @@ class LoginWindow(QMainWindow):
                         device_info=device_info,
                         workpulse_permitted=workpulse_permitted,
                         base_url=api_config.base_url,
+                        portal_url=api_config.portal_url,
+                        logo_url=api_config.logo_url,
+                        email=email_val,
                         company_id=api_config.company_id,
                         allow_user_device=allow_user_device,
                         allow_logout=allow_logout,
@@ -1270,6 +1327,11 @@ class LoginWindow(QMainWindow):
                 msg = res_json.get("message") if res_json else "Invalid username or password."
                 if isinstance(msg, dict):
                     msg = " ".join(str(v) for v in msg.values())
+                logger.warning(
+                    "Login rejected by API: status=%s, reason=%s",
+                    res_json.get("status") if res_json else "None",
+                    msg,
+                )
                 self._show_login_error(str(msg) if msg else "Invalid username or password.")
                 
         except Exception as exc:

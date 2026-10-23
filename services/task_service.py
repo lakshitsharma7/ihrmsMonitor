@@ -131,9 +131,13 @@ class TaskService:
         if not resolved_indo:
             try:
                 from PySide6.QtCore import QSettings
+                from config.api_config import ApiConfig
 
                 st = QSettings("Indovision", "iHRMSMonitor")
-                resolved_indo = st.value("last_employee_id") or None
+                last_co = st.value("last_company_code") or st.value("login/company_code")
+                curr_co = ApiConfig().company_code
+                if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                    resolved_indo = st.value("last_employee_id") or None
             except Exception:
                 pass
 
@@ -164,7 +168,15 @@ class TaskService:
         return resolved_indo, resolved_key
 
     def _resolve_base_url(self) -> Optional[str]:
-        """Resolve base API URL with fallback across ApiConfig, SessionStore, and QSettings."""
+        """Resolve base API URL with fallback across SessionService, ApiConfig, SessionStore, and QSettings."""
+        try:
+            from services.session_service import SessionService
+            user = SessionService().current_user
+            if user and getattr(user, "base_url", None):
+                return str(user.base_url).rstrip("/")
+        except Exception:
+            pass
+
         try:
             from config.api_config import ApiConfig
             cfg = ApiConfig()
@@ -185,13 +197,17 @@ class TaskService:
 
         try:
             from PySide6.QtCore import QSettings
+            from config.api_config import ApiConfig
             st = QSettings("Indovision", "iHRMSMonitor")
-            b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
-            if not b:
-                st_leg = QSettings("Indovision", "iHRMS")
-                b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
-            if b:
-                return str(b).rstrip("/")
+            last_co = st.value("last_company_code") or st.value("login/company_code")
+            curr_co = ApiConfig().company_code
+            if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+                if not b:
+                    st_leg = QSettings("Indovision", "iHRMS")
+                    b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
+                if b:
+                    return str(b).rstrip("/")
         except Exception:
             pass
 
@@ -594,14 +610,29 @@ class TaskService:
             {"key": "***", "indo_code": resolved_indo, "date": date_key},
         )
 
+        api_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "iHRMS-Monitor/1.0",
+        }
+
         try:
-            resp = requests.post(kra_url, data=req_payload, timeout=10)
+            resp = requests.post(kra_url, data=req_payload, headers=api_headers, timeout=10)
             logger.info(
                 "Task API response: HTTP %d (response_len=%d) %s",
                 resp.status_code,
                 len(resp.text),
                 resp.text[:1000],
             )
+            if resp.status_code == 406:
+                logger.warning(
+                    "Task API HTTP 406 Not Acceptable (url=%s, headers=%s, body=%s). Retrying with JSON payload.",
+                    kra_url, resp.headers, resp.text[:200]
+                )
+                json_headers = dict(api_headers)
+                json_headers["Content-Type"] = "application/json"
+                resp_retry = requests.post(kra_url, json=req_payload, headers=json_headers, timeout=10)
+                if resp_retry.status_code < 400:
+                    resp = resp_retry
             resp.raise_for_status()
             res_json = resp.json()
         except Exception as api_err:
@@ -964,7 +995,11 @@ class TaskService:
             resp = requests.post(
                 fill_url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/plain, */*",
+                    "User-Agent": "iHRMS-Monitor/1.0",
+                },
                 timeout=15,
             )
             logger.info(
@@ -1071,6 +1106,10 @@ class TaskService:
             resp = requests.post(
                 save_url,
                 files=multipart_data,
+                headers={
+                    "Accept": "application/json, text/plain, */*",
+                    "User-Agent": "iHRMS-Monitor/1.0",
+                },
                 timeout=15,
             )
             logger.info(
@@ -1306,7 +1345,11 @@ class TaskService:
                         "month": m,
                         "year": y,
                     }
-                    r = requests.post(submit_url, data=payload, timeout=8)
+                    api_headers = {
+                        "Accept": "application/json, text/plain, */*",
+                        "User-Agent": "iHRMS-Monitor/1.0",
+                    }
+                    r = requests.post(submit_url, data=payload, headers=api_headers, timeout=8)
                     if r.status_code == 200:
                         data = r.json()
                         dates = data.get("submit_kra_date") or data.get("data") or []
@@ -1329,7 +1372,11 @@ class TaskService:
                         "month": m,
                         "year": y,
                     }
-                    r = requests.post(draft_url, data=payload, timeout=8)
+                    api_headers = {
+                        "Accept": "application/json, text/plain, */*",
+                        "User-Agent": "iHRMS-Monitor/1.0",
+                    }
+                    r = requests.post(draft_url, data=payload, headers=api_headers, timeout=8)
                     if r.status_code == 200:
                         data = r.json()
                         rows = data.get("submit_kra_date") or data.get("data") or []
@@ -1361,7 +1408,11 @@ class TaskService:
                         "indo_code": indo_code,
                         "date": p_date,
                     }
-                    r_p = requests.post(kra_url, data=p_payload, timeout=8)
+                    api_headers = {
+                        "Accept": "application/json, text/plain, */*",
+                        "User-Agent": "iHRMS-Monitor/1.0",
+                    }
+                    r_p = requests.post(kra_url, data=p_payload, headers=api_headers, timeout=8)
                     if r_p.status_code == 200:
                         p_json = r_p.json()
                         items: List[Any] = []

@@ -539,6 +539,11 @@ def main() -> int:
                 api_key=saved_session["api_key"],
                 employee_id=saved_session.get("employee_id"),
                 company_code=saved_session["company_code"],
+                company_id=saved_session.get("company_id") or getattr(api_config, "company_id", None),
+                base_url=saved_session.get("base_url") or getattr(api_config, "base_url", None),
+                portal_url=saved_session.get("portal_url") or getattr(api_config, "portal_url", None),
+                logo_url=saved_session.get("logo_url") or getattr(api_config, "logo_url", None),
+                email=saved_session.get("email"),
                 device_token=saved_session["device_token"],
                 session_credential=saved_session.get("session_credential"),
             )

@@ -23,6 +23,11 @@ class UserSession:
     raw_login_data: Dict[str, Any] = field(default_factory=dict)
     # ── Company context ───────────────────────────────────────
     company_code: str | None = None    # verified company code
+    company_id: str | None = None      # verified company ID
+    base_url: str | None = None        # verified API base URL
+    portal_url: str | None = None      # verified web portal URL
+    logo_url: str | None = None        # verified company logo URL
+    email: str | None = None           # employee email address
     device_token: str | None = None    # device enrollment token
     device_info: Dict[str, str] | None = None  # device information
     # ── In-memory portal auth credential (runtime only) ───────
@@ -87,6 +92,11 @@ class SessionService:
         api_key: str | None = None,
         employee_id: str | None = None,
         company_code: str | None = None,
+        company_id: str | None = None,
+        base_url: str | None = None,
+        portal_url: str | None = None,
+        logo_url: str | None = None,
+        email: str | None = None,
         device_token: str | None = None,
         raw_login_data: Dict[str, Any] | None = None,
         session_credential: str | None = None,
@@ -106,6 +116,11 @@ class SessionService:
             api_key=api_key,
             employee_id=employee_id,
             company_code=company_code,
+            company_id=company_id,
+            base_url=base_url,
+            portal_url=portal_url,
+            logo_url=logo_url,
+            email=email,
             device_token=device_token,
             raw_login_data=raw_login_data or {},
             session_credential=session_credential,
@@ -113,6 +128,11 @@ class SessionService:
         try:
             from services.attendance_service import AttendanceService
             AttendanceService().clear_cache()
+        except Exception:
+            pass
+        try:
+            from services.task_service import TaskService
+            TaskService().clear_cache()
         except Exception:
             pass
         self.notify_permission_listeners()
@@ -131,6 +151,11 @@ class SessionService:
         api_key: str | None = None,
         employee_id: str | None = None,
         company_code: str | None = None,
+        company_id: str | None = None,
+        base_url: str | None = None,
+        portal_url: str | None = None,
+        logo_url: str | None = None,
+        email: str | None = None,
         device_token: str | None = None,
         session_credential: str | None = None,
     ) -> None:
@@ -150,6 +175,11 @@ class SessionService:
             api_key=api_key,
             employee_id=employee_id,
             company_code=company_code,
+            company_id=company_id,
+            base_url=base_url,
+            portal_url=portal_url,
+            logo_url=logo_url,
+            email=email,
             device_token=device_token,
             session_credential=session_credential,
         )
@@ -314,6 +344,11 @@ class SessionService:
         try:
             from services.attendance_service import AttendanceService
             AttendanceService().clear_cache()
+        except Exception:
+            pass
+        try:
+            from services.task_service import TaskService
+            TaskService().clear_cache()
         except Exception:
             pass
         self.notify_permission_listeners()

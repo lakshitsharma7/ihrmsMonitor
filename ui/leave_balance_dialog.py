@@ -761,9 +761,11 @@ class LeaveBalanceDialog(QDialog):
 
         self.data_loaded.connect(self._apply_leave_data)
         self._setup_ui()
+        self._is_dialog_initialized = False
         self.set_network_status(self._is_network_online)
         self._monitor.register_listener(self._on_reachability_changed)
         self.refresh()
+        self._is_dialog_initialized = True
 
     def _setup_ui(self) -> None:
         self.setStyleSheet(
@@ -984,10 +986,13 @@ class LeaveBalanceDialog(QDialog):
             return "Unable to connect to the server. Please check your network connection."
 
         s_lower = s.lower()
+        if "409" in s_lower or "conflict" in s_lower:
+            return "A conflict occurred while retrieving leave balance records. Please try again or contact HR."
+
         if any(tech in s_lower for tech in [
             "exception", "traceback", "traceback (most recent call last)",
             "file \"", "line ", "errno", "socket", "https://", "http://",
-            "indovisionservices.in", "softdev"
+            "indovisionservices.in", "softdev", "http 40", "http 50", "status 40", "status 50"
         ]):
             return "Unable to load leave balance. Please try again."
 
@@ -1019,7 +1024,9 @@ class LeaveBalanceDialog(QDialog):
                 self.empty_state.setVisible(True)
         else:
             # Reconnected: If we currently have no cards or were showing an error/empty state, auto-refresh
-            if not self._cards or self.empty_state.isVisible() or self.error_container.isVisible():
+            if getattr(self, "_is_dialog_initialized", False) and (
+                not self._cards or self.empty_state.isVisible() or self.error_container.isVisible()
+            ):
                 self.refresh(force=True)
 
     def closeEvent(self, event) -> None:

@@ -1562,6 +1562,18 @@ class AttendancePage(QWidget):
             self._show_error("Unable to load attendance. Please try again.")
             return
 
+        # Ensure incoming data corresponds to the currently selected month and year
+        incoming_m = str(data.get("month") or "").strip().lower()
+        incoming_y = str(data.get("year") or "").strip()
+        curr_m = str(self.month_combo.currentText() or "").strip().lower()
+        curr_y = str(self.year_combo.currentText() or "").strip()
+        if incoming_m and curr_m and incoming_m != curr_m:
+            logger.debug("Discarding stale attendance response for month %s (current: %s)", incoming_m, curr_m)
+            return
+        if incoming_y and curr_y and incoming_y != curr_y:
+            logger.debug("Discarding stale attendance response for year %s (current: %s)", incoming_y, curr_y)
+            return
+
         if data.get("error"):
             self._show_error("Unable to load attendance. Please try again.")
             self.empty_state.setVisible(True)
@@ -2079,6 +2091,11 @@ class AttendancePage(QWidget):
                 }
                 """
             )
+            from services.hrms_portal_service import HrmsPortalService, is_valid_https_url
+            p_url = HrmsPortalService().get_resolved_portal_url()
+            if not p_url or not is_valid_https_url(p_url):
+                btn_portal.setEnabled(False)
+                btn_portal.setToolTip("iHRMS Web Portal is not available for this company")
             btn_portal.clicked.connect(lambda: HrmsPortalService().open_portal_with_autologin())
             btn_row.addWidget(btn_portal)
         except Exception:

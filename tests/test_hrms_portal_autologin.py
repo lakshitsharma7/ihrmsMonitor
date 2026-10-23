@@ -46,8 +46,8 @@ class TestHrmsPortalAutoLogin(unittest.TestCase):
         """Verify portal URL is dynamically resolved from AppController details."""
         service = HrmsPortalService()
 
-        # Without config details -> default
-        self.assertEqual(service.get_resolved_portal_url(), DEFAULT_PORTAL_URL.rstrip("/") + "/")
+        # Without config details and unverified -> None (never leak Indovision)
+        self.assertIsNone(service.get_resolved_portal_url())
 
         # With AppController portal_url
         ApiConfig().set_cached_configuration(
@@ -98,6 +98,7 @@ class TestHrmsPortalAutoLogin(unittest.TestCase):
             indo_code="EC-999",
             employee_id="999",
             company_code="CORP_X",
+            portal_url="https://hrms.corpx.com/",
             raw_login_data={
                 "data": {
                     "email": "active.emp@example.com",
@@ -153,8 +154,14 @@ class TestHrmsPortalAutoLogin(unittest.TestCase):
 
     @patch("services.hrms_portal_service.QDesktopServices.openUrl")
     def test_open_portal_fallback_when_unauthenticated(self, mock_open_url):
-        """Verify open_portal_with_autologin falls back to direct URL when no credentials exist."""
+        """Verify open_portal_with_autologin falls back to direct URL when no credentials exist for verified company."""
         mock_open_url.return_value = True
+
+        ApiConfig().set_cached_configuration(
+            company_code="INDO_TEST",
+            base_url="https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api",
+            details={"portal_url": "https://softdev.indovisionservices.in/ihrms84/"},
+        )
 
         service = HrmsPortalService()
         result = service.open_portal_with_autologin()
@@ -169,13 +176,108 @@ class TestHrmsPortalAutoLogin(unittest.TestCase):
     def test_main_window_hrms_button_triggers_portal_service(self, mock_auto_login):
         """Verify MainWindow._open_hrms_portal delegates to HrmsPortalService."""
         mock_auto_login.return_value = True
-        window = MainWindow()
-        try:
-            window._open_hrms_portal()
-            mock_auto_login.assert_called_once()
-        finally:
-            window.close()
-            window.deleteLater()
+        ApiConfig().set_cached_configuration(
+            company_code="TEST_CORP",
+            base_url="https://api.testcorp.com/hrms_api/ci4/api",
+            details={"portal_url": "https://hrms.testcorp.com/portal"},
+        )
+        with patch.object(MainWindow, "_check_for_updates"), \
+             patch.object(MainWindow, "_sync_permissions_from_backend"), \
+             patch.object(MainWindow, "_build_tracker"), \
+             patch.object(MainWindow, "_build_tray"), \
+             patch.object(MainWindow, "start_workpulse"):
+            window = MainWindow()
+            try:
+                window._open_hrms_portal()
+                mock_auto_login.assert_called_once()
+            finally:
+                window.close()
+                window.deleteLater()
+
+    def test_company_a_alphabridge_portal_url(self):
+        """Company A login -> Company A portal URL."""
+        ApiConfig().set_cached_configuration(
+            company_code="ALPHA12C1R112021",
+            base_url="https://www.alphabridge.tech/ihrms/hrms_api/ci4/api/",
+            details={"portal_url": None},
+        )
+        service = HrmsPortalService()
+        self.assertEqual(service.get_resolved_portal_url(), "https://www.alphabridge.tech/ihrms/")
+
+    def test_company_b_indovision_portal_url(self):
+        """Company B login -> Company B portal URL."""
+        ApiConfig().set_cached_configuration(
+            company_code="INDO_CORP",
+            base_url="https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api",
+            details={"portal_url": "https://softdev.indovisionservices.in/ihrms84/"},
+        )
+        service = HrmsPortalService()
+        self.assertEqual(service.get_resolved_portal_url(), "https://softdev.indovisionservices.in/ihrms84/")
+
+    def test_switching_companies_updates_portal_url_and_tooltip(self):
+        """Switching companies -> URL and tooltip update."""
+        # 1. Company A
+        ApiConfig().set_cached_configuration(
+            company_code="ALPHA12C1R112021",
+            base_url="https://www.alphabridge.tech/ihrms/hrms_api/ci4/api/",
+            details={},
+        )
+        service = HrmsPortalService()
+        self.assertEqual(service.get_resolved_portal_url(), "https://www.alphabridge.tech/ihrms/")
+        with patch.object(MainWindow, "_check_for_updates"), \
+             patch.object(MainWindow, "_sync_permissions_from_backend"), \
+             patch.object(MainWindow, "_build_tracker"), \
+             patch.object(MainWindow, "_build_tray"), \
+             patch.object(MainWindow, "start_workpulse"):
+            win = MainWindow()
+            try:
+                win._update_portal_tooltip()
+                self.assertIn("https://www.alphabridge.tech/ihrms/", win.hrms_button.toolTip())
+
+                # 2. Switch to Company B
+                ApiConfig().reset()
+                ApiConfig().set_cached_configuration(
+                    company_code="INDO_42",
+                    base_url="https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api",
+                    details={"portal_url": "https://softdev.indovisionservices.in/ihrms84/"},
+                )
+                self.assertEqual(service.get_resolved_portal_url(), "https://softdev.indovisionservices.in/ihrms84/")
+                win._update_portal_tooltip()
+                self.assertIn("https://softdev.indovisionservices.in/ihrms84/", win.hrms_button.toolTip())
+                self.assertNotIn("alphabridge.tech", win.hrms_button.toolTip())
+            finally:
+                win.close()
+                win.deleteLater()
+
+    @patch("services.hrms_portal_service.QDesktopServices.openUrl")
+    def test_missing_url_no_incorrect_portal_opens(self, mock_open_url):
+        """Missing URL -> No incorrect portal opens and action returns False."""
+        ApiConfig().reset()
+        ApiConfig().set_cached_configuration(
+            company_code="UNKNOWN_CO",
+            base_url="",
+            details={},
+        )
+        service = HrmsPortalService()
+        self.assertIsNone(service.get_resolved_portal_url())
+        result = service.open_portal_with_autologin()
+        self.assertFalse(result)
+        mock_open_url.assert_not_called()
+
+    def test_logout_clears_portal_url(self):
+        """Logout -> Previous company URL is cleared."""
+        ApiConfig().set_cached_configuration(
+            company_code="ALPHA12C1R112021",
+            base_url="https://www.alphabridge.tech/ihrms/hrms_api/ci4/api/",
+            details={},
+        )
+        service = HrmsPortalService()
+        self.assertIsNotNone(service.get_resolved_portal_url())
+
+        # Simulate logout / company context reset
+        ApiConfig().reset()
+        SessionService().clear()
+        self.assertIsNone(service.get_resolved_portal_url())
 
 
 if __name__ == "__main__":

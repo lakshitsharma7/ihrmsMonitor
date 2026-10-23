@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from urllib.parse import urlparse
 
 import requests
 
@@ -188,7 +189,7 @@ class ApiConfig:
                 )
 
             # Already verified this exact company; nothing to redo.
-            if self._company_code == cc and self._base_url and not force:
+            if self._company_code and self._company_code.strip().upper() == cc.upper() and self._base_url and not force:
                 return
 
             # Discard the previous company before contacting the service, so
@@ -196,8 +197,11 @@ class ApiConfig:
             # request to use.
             self._clear_state()
 
+            parsed_ac = urlparse(APP_CONTROLLER_URL)
             logger.info(
-                "Verifying company code %s",
+                "App Controller request [START]: host=%s path=%s company_code=%s",
+                parsed_ac.netloc,
+                parsed_ac.path,
                 cc,
             )
 
@@ -207,7 +211,18 @@ class ApiConfig:
                     data={
                         "controller_id": cc,
                     },
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "User-Agent": "iHRMS-Monitor/1.0",
+                    },
                     timeout=APP_CONTROLLER_TIMEOUT_SECONDS,
+                )
+
+                logger.info(
+                    "App Controller response: host=%s path=%s status_code=%s",
+                    parsed_ac.netloc,
+                    parsed_ac.path,
+                    response.status_code,
                 )
 
                 response.raise_for_status()
@@ -291,9 +306,15 @@ class ApiConfig:
             # what decides whether this company is verified.
             if not base_url:
                 self._clear_state()
+                reason = _service_message(payload)
+                logger.warning(
+                    "Company verification failed: code=%s, validation_failure_reason=%s",
+                    cc,
+                    reason,
+                )
 
                 raise ApiConfigError(
-                    _service_message(payload)
+                    reason
                 )
 
             self._base_url = base_url.rstrip("/")
@@ -334,10 +355,12 @@ class ApiConfig:
                 logger.debug("Could not cache company configuration: %s", cache_save_err)
 
             logger.info(
-                "Company verified: code=%s company_id=%s base_url=%s",
+                "Company verification SUCCESS: code=%s company_id=%s base_url=%s logo_url=%s portal_url=%s",
                 self._company_code,
                 self._company_id,
                 self._base_url,
+                self._logo_url,
+                self._details.get("portal_url"),
             )
 
     def set_cached_configuration(
@@ -375,25 +398,36 @@ class ApiConfig:
         default backend to fall back to.
         """
 
-        if not self._base_url:
+        if not self._base_url and self._company_code:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and getattr(u, "base_url", None):
+                    if u.company_code and str(u.company_code).strip().upper() == self._company_code.strip().upper():
+                        self._base_url = str(u.base_url).rstrip("/")
+            except Exception:
+                pass
+
+        if not self._base_url and self._company_code:
             try:
                 from services.secure_session import SessionStore
                 sess = SessionStore().load_session()
                 if sess and sess.get("base_url"):
-                    self._base_url = str(sess.get("base_url")).rstrip("/")
+                    sess_cc = sess.get("company_code")
+                    if sess_cc and str(sess_cc).strip().upper() == self._company_code.strip().upper():
+                        self._base_url = str(sess.get("base_url")).rstrip("/")
             except Exception:
                 pass
 
-        if not self._base_url:
+        if not self._base_url and self._company_code:
             try:
                 from PySide6.QtCore import QSettings
                 st = QSettings("Indovision", "iHRMSMonitor")
-                b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
-                if not b:
-                    st_leg = QSettings("Indovision", "iHRMS")
-                    b = st_leg.value("ApiConfig/last_base_url") or st_leg.value("session/base_url")
-                if b:
-                    self._base_url = str(b).rstrip("/")
+                cached_cc = st.value("ApiConfig/last_verified_code")
+                if cached_cc and str(cached_cc).strip().upper() == self._company_code.strip().upper():
+                    b = st.value("ApiConfig/last_base_url") or st.value("session/base_url")
+                    if b:
+                        self._base_url = str(b).rstrip("/")
             except Exception:
                 pass
 
@@ -410,11 +444,29 @@ class ApiConfig:
         """
         Company id of the verified company, or None.
 
-        Deliberately does not resolve anything: falling back to the default
-        company here would report one company's id while another code is
-        entered.
+        Deliberately does not resolve to an arbitrary default company: falling
+        back to the default company here would report one company's id while another
+        code is entered.
         """
-
+        if not self._company_id and self._company_code:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and getattr(u, "company_id", None):
+                    if u.company_code and str(u.company_code).strip().upper() == self._company_code.strip().upper():
+                        self._company_id = str(u.company_id)
+            except Exception:
+                pass
+        if not self._company_id and self._company_code:
+            try:
+                from services.secure_session import SessionStore
+                sess = SessionStore().load_session()
+                if sess and sess.get("company_id"):
+                    sess_cc = sess.get("company_code")
+                    if sess_cc and str(sess_cc).strip().upper() == self._company_code.strip().upper():
+                        self._company_id = str(sess.get("company_id"))
+            except Exception:
+                pass
         return self._company_id
 
     @property
@@ -432,14 +484,41 @@ class ApiConfig:
     @property
     def is_verified(self) -> bool:
         """True when a company has been successfully verified."""
-
+        if not self._base_url and self._company_code:
+            try:
+                _ = self.base_url
+            except Exception:
+                pass
         return bool(self._base_url and self._company_code)
 
     @property
     def logo_url(self) -> str | None:
-        """Logo URL of the verified company, or None. Does not resolve."""
-
+        """Logo URL of the verified company, or None."""
+        if not self._logo_url and self._company_code:
+            try:
+                from services.session_service import SessionService
+                u = SessionService().current_user
+                if u and getattr(u, "logo_url", None):
+                    if u.company_code and str(u.company_code).strip().upper() == self._company_code.strip().upper():
+                        self._logo_url = str(u.logo_url)
+            except Exception:
+                pass
+        if not self._logo_url and self._company_code:
+            try:
+                from services.secure_session import SessionStore
+                sess = SessionStore().load_session()
+                if sess and sess.get("logo_url"):
+                    sess_cc = sess.get("company_code")
+                    if sess_cc and str(sess_cc).strip().upper() == self._company_code.strip().upper():
+                        self._logo_url = str(sess.get("logo_url"))
+            except Exception:
+                pass
         return self._logo_url
+
+    @property
+    def portal_url(self) -> str | None:
+        """Web portal URL configured for this company."""
+        return self._details.get("portal_url")
 
     @property
     def activity_tracker_version(self) -> str | None:

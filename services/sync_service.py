@@ -611,19 +611,16 @@ class SyncService:
                 except Exception:
                     pass
 
-            if not username:
+            if company_code:
                 try:
                     from PySide6.QtCore import QSettings
                     st = QSettings("Indovision", "iHRMSMonitor")
-                    username = st.value("last_username") or st.value("session/username")
-                except Exception:
-                    pass
-
-            if not employee_id:
-                try:
-                    from PySide6.QtCore import QSettings
-                    st = QSettings("Indovision", "iHRMSMonitor")
-                    employee_id = st.value("last_employee_id") or st.value("session/employee_id")
+                    last_co = st.value("last_company_code") or st.value("session/company_code")
+                    if last_co and str(last_co).strip().upper() == str(company_code).strip().upper():
+                        if not username:
+                            username = st.value("last_username") or st.value("session/username")
+                        if not employee_id:
+                            employee_id = st.value("last_employee_id") or st.value("session/employee_id")
                 except Exception:
                     pass
 
@@ -710,7 +707,11 @@ class SyncService:
                 hostname,
                 platform_str,
             )
-            resp = requests.post(enroll_url, data=enroll_data, timeout=15)
+            api_headers = {
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "iHRMS-Monitor/1.0",
+            }
+            resp = requests.post(enroll_url, data=enroll_data, headers=api_headers, timeout=15)
             logger.info("Device re-enrollment HTTP response: %d", resp.status_code)
             if resp.status_code != 200:
                 logger.error("Device re-enrollment request failed: HTTP %d %s", resp.status_code, resp.text)

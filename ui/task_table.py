@@ -909,12 +909,16 @@ class AssignedTasksTable(QTableWidget):
             except Exception as e:
                 logger.debug("AssignedTasksTable: error checking SessionStore: %s", e)
 
-        # 5. Check QSettings
+        # 5. Check QSettings (only if company matches)
         if not emp_code:
             try:
                 from PySide6.QtCore import QSettings
+                from config.api_config import ApiConfig
                 st = QSettings("Indovision", "iHRMSMonitor")
-                emp_code = str(st.value("last_employee_id") or "").strip()
+                last_co = st.value("last_company_code") or st.value("login/company_code")
+                curr_co = ApiConfig().company_code
+                if not curr_co or (last_co and curr_co.strip().upper() == str(last_co).strip().upper()):
+                    emp_code = str(st.value("last_employee_id") or "").strip()
             except Exception:
                 pass
 

@@ -27,6 +27,19 @@ logger = get_logger(__name__)
 DEFAULT_PORTAL_URL = "https://ihrms.indovisionservices.in"
 
 
+def is_valid_https_url(url: str | None) -> bool:
+    """Validate that a URL is a valid, permitted HTTPS web address."""
+    if not url or not isinstance(url, str):
+        return False
+    url = url.strip()
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return parsed.scheme.lower() == "https" and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
 def _schedule_file_cleanup(file_path: str, delay_seconds: float = 6.0) -> None:
     """Delete a temporary file after a short delay in a daemon background thread."""
     def _cleanup():
@@ -52,25 +65,102 @@ class HrmsPortalService:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def get_resolved_portal_url(self) -> str:
-        """Dynamically resolve the verified company's HRMS portal URL."""
-        api_cfg = ApiConfig()
-        details = api_cfg.details or {}
+    def get_resolved_portal_url(self) -> str | None:
+        """Dynamically resolve the verified company's HRMS portal URL.
 
-        # 1. AppController portal_url
-        portal_url = str(details.get("portal_url") or "").strip()
-        if portal_url:
-            return portal_url.rstrip("/") + "/"
+        Returns:
+            The verified company's HTTPS portal URL ending with '/',
+            or None if no valid portal URL is configured.
+        """
+        # 1. Active user session
+        try:
+            from services.session_service import SessionService
+            u = SessionService().current_user
+            if u and getattr(u, "portal_url", None):
+                p = str(u.portal_url).strip()
+                if is_valid_https_url(p):
+                    return p.rstrip("/") + "/"
+        except Exception:
+            pass
 
-        # 2. Derive from verified base_url if available
-        if api_cfg.is_verified:
-            base_url = api_cfg.base_url
+        # 2. AppController portal_url via ApiConfig
+        try:
+            api_cfg = ApiConfig()
+            details = api_cfg.details or {}
+            raw_portal = details.get("portal_url")
+            if raw_portal and isinstance(raw_portal, str):
+                portal_url = raw_portal.strip()
+                if is_valid_https_url(portal_url):
+                    return portal_url.rstrip("/") + "/"
+        except Exception:
+            pass
+
+        # 3. Persistent SessionStore
+        try:
+            from services.secure_session import SessionStore
+            s = SessionStore().load_session()
+            if s and s.get("portal_url"):
+                p = str(s.get("portal_url")).strip()
+                if is_valid_https_url(p):
+                    return p.rstrip("/") + "/"
+        except Exception:
+            pass
+
+        # 4. Derive from base_url (SessionService, ApiConfig, or SessionStore)
+        base_url = None
+        try:
+            from services.session_service import SessionService
+            u = SessionService().current_user
+            if u and getattr(u, "base_url", None):
+                base_url = str(u.base_url).strip()
+        except Exception:
+            pass
+        if not base_url:
+            try:
+                api_cfg = ApiConfig()
+                try:
+                    base_url = api_cfg.base_url
+                except Exception:
+                    base_url = getattr(api_cfg, "_base_url", None)
+            except Exception:
+                pass
+        if not base_url:
+            try:
+                from services.secure_session import SessionStore
+                s = SessionStore().load_session()
+                if s and s.get("base_url"):
+                    base_url = str(s.get("base_url")).strip()
+            except Exception:
+                pass
+
+        if base_url:
             # e.g., 'https://softdev.indovisionservices.in/ihrms84/hrms_api/ci4/api' -> 'https://softdev.indovisionservices.in/ihrms84/'
+            derived = None
             if "/hrms_api" in base_url:
                 derived = base_url.split("/hrms_api")[0].rstrip("/") + "/"
+            elif "/ci4" in base_url:
+                derived = base_url.split("/ci4")[0].rstrip("/") + "/"
+            elif "/api" in base_url:
+                derived = base_url.split("/api")[0].rstrip("/") + "/"
+            else:
+                from urllib.parse import urlparse
+                parsed = urlparse(base_url)
+                if parsed.scheme and parsed.netloc:
+                    derived = f"{parsed.scheme}://{parsed.netloc}/"
+            if derived and is_valid_https_url(derived):
                 return derived
 
-        return DEFAULT_PORTAL_URL.rstrip("/") + "/"
+        # 5. Fall back to Indovision default only if verified company is specifically Indovision
+        try:
+            api_cfg = ApiConfig()
+            curr_code = str(api_cfg.company_code or "").upper()
+            curr_base = str(getattr(api_cfg, "_base_url", "") or "").lower()
+            if "INDO" in curr_code or "indovision" in curr_base:
+                return DEFAULT_PORTAL_URL.rstrip("/") + "/"
+        except Exception:
+            pass
+
+        return None
 
     def generate_autologin_html(
         self,
@@ -248,6 +338,10 @@ class HrmsPortalService:
             bool: True if the portal URL or bridge was successfully launched.
         """
         portal_url = self.get_resolved_portal_url()
+        if not portal_url or not is_valid_https_url(portal_url):
+            logger.warning("open_portal_with_autologin aborted: No valid HTTPS portal URL configured for active company.")
+            return False
+
         creds = SessionService().get_portal_credentials()
 
         if creds and (creds.get("user_name") or creds.get("username") or creds.get("employee_id") or creds.get("indo_code")):

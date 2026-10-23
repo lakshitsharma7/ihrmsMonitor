@@ -246,6 +246,19 @@ def spawn_detached_process(
     env: dict | None = None,
 ) -> tuple[int | None, subprocess.Popen | None]:
     """Launch a process completely detached from the current process tree and job object."""
+    if cwd is None and cmd:
+        try:
+            exe_candidate = Path(cmd[0])
+            if exe_candidate.is_file():
+                cwd = str(exe_candidate.parent)
+        except Exception:
+            pass
+
+    if env is not None:
+        # Strip conflicting global python environment variables
+        env.pop("PYTHONHOME", None)
+        env.pop("PYTHONPATH", None)
+
     # On Windows, use WMI Win32_Process.Create for session-level independence (unless in unit test)
     if sys.platform.startswith("win") and "unittest" not in sys.modules:
         try:
@@ -266,7 +279,7 @@ def spawn_detached_process(
 
             res = proc_mgr.ExecMethod_("Create", params)
             if res.ReturnValue == 0 and res.ProcessId:
-                logger.info("Spawned independent process via WMI: PID %d (%s)", res.ProcessId, cmd[0])
+                logger.info("Spawned independent process via WMI: PID %d (%s) cwd=%s", res.ProcessId, cmd[0], cwd)
                 return res.ProcessId, None
         except Exception as wmi_err:
             logger.debug("WMI process creation fallback: %s", wmi_err)

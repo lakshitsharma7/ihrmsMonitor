@@ -253,7 +253,7 @@ a_sup = Analysis(
     ],
     hookspath=['hooks'],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hooks/rthook-pyside6-fix.py'],
     excludes=a.excludes,
     noarchive=False,
     optimize=2,

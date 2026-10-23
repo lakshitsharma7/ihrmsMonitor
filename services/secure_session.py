@@ -152,6 +152,9 @@ class SessionStore:
     _KEY_COMPANY_CODE = "session/company_code"
     _KEY_BASE_URL = "session/base_url"
     _KEY_COMPANY_ID = "session/company_id"
+    _KEY_PORTAL_URL = "session/portal_url"
+    _KEY_LOGO_URL = "session/logo_url"
+    _KEY_EMAIL = "session/email"
     _KEY_INDO_CODE = "session/indo_code"
     _KEY_API_KEY = "session/api_key"
     _KEY_DEVICE_TOKEN = "session/device_token"
@@ -242,6 +245,9 @@ class SessionStore:
         workpulse_permitted: bool,
         base_url: str | None = None,
         company_id: str | None = None,
+        portal_url: str | None = None,
+        logo_url: str | None = None,
+        email: str | None = None,
         allow_user_device: bool = True,
         allow_logout: bool = True,
         workpulse_manually_stopped: bool | None = None,
@@ -262,6 +268,9 @@ class SessionStore:
             workpulse_permitted: Whether user can be tracked
             base_url: Resolved API backend URL
             company_id: Resolved company ID
+            portal_url: Resolved web portal URL
+            logo_url: Resolved company logo URL
+            email: Employee email
             allow_user_device: Whether User/Device control is enabled
             allow_logout: Whether Logout control is enabled
             workpulse_manually_stopped: Whether user manually stopped workpulse
@@ -285,6 +294,9 @@ class SessionStore:
                 "workpulse_permitted": bool(workpulse_permitted),
                 "base_url": base_url or "",
                 "company_id": str(company_id or ""),
+                "portal_url": str(portal_url or ""),
+                "logo_url": str(logo_url or ""),
+                "email": str(email or ""),
                 "allow_user_device": bool(allow_user_device),
                 "allow_logout": bool(allow_logout),
                 "session_credential": session_credential or "",
@@ -299,6 +311,12 @@ class SessionStore:
                 self.settings.setValue(self._KEY_BASE_URL, base_url)
             if company_id:
                 self.settings.setValue(self._KEY_COMPANY_ID, str(company_id))
+            if portal_url:
+                self.settings.setValue(self._KEY_PORTAL_URL, str(portal_url))
+            if logo_url:
+                self.settings.setValue(self._KEY_LOGO_URL, str(logo_url))
+            if email:
+                self.settings.setValue(self._KEY_EMAIL, str(email))
 
             self.settings.setValue(self._KEY_USERNAME, username)
             self.settings.setValue(self._KEY_FULL_NAME, full_name or "")
@@ -412,6 +430,9 @@ class SessionStore:
 
             base_url = self.settings.value(self._KEY_BASE_URL) or None
             company_id = self.settings.value(self._KEY_COMPANY_ID) or None
+            portal_url = self.settings.value(self._KEY_PORTAL_URL) or None
+            logo_url = self.settings.value(self._KEY_LOGO_URL) or None
+            email = self.settings.value(self._KEY_EMAIL) or None
             full_name = self.settings.value(self._KEY_FULL_NAME) or None
             user_type = self.settings.value(self._KEY_USER_TYPE) or "User"
             employee_id = self.settings.value(self._KEY_EMPLOYEE_ID) or None
@@ -438,6 +459,9 @@ class SessionStore:
                 "company_code": company_code,
                 "base_url": base_url,
                 "company_id": company_id,
+                "portal_url": portal_url,
+                "logo_url": logo_url,
+                "email": email,
                 "indo_code": indo_code,
                 "api_key": api_key,
                 "device_token": device_token,
@@ -494,7 +518,6 @@ class SessionStore:
             self.settings.remove("last_company_code")
             self.settings.remove("last_username")
             self.settings.remove("last_employee_id")
-            self.settings.remove("ApiConfig/last_verified_code")
 
             logger.info("Session data cleared from Credential Manager and QSettings")
         except Exception:
