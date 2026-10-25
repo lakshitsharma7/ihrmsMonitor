@@ -20,7 +20,7 @@ VSVersionInfo(
           '040904B0',
           [
             StringStruct('CompanyName', 'Indovision Services'),
-            StringStruct('FileDescription', 'iHRMS Desktop Desktop Client'),
+            StringStruct('FileDescription', 'iHRMS Desktop'),
             StringStruct('FileVersion', '1.0.0.0'),
             StringStruct('InternalName', 'iHRMS-Desktop'),
             StringStruct('LegalCopyright', 'Copyright (C) Indovision Services'),

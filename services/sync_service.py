@@ -29,7 +29,10 @@ def _mask_token(token: Any) -> str:
         return "<None>"
     if len(s) <= 8:
         return "***"
-    return f"{s[:4]}...{s[-4:]} (len={len(s)})"
+DEFAULT_API_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": "iHRMS-Monitor/1.0",
+}
 
 
 class SyncService:
@@ -250,6 +253,7 @@ class SyncService:
                 response = requests.post(
                     self.get_settings_url,
                     data={"device_token": device_token},
+                    headers=DEFAULT_API_HEADERS,
                     timeout=5,
                 )
                 try:
@@ -268,6 +272,7 @@ class SyncService:
                         response = requests.post(
                             self.get_settings_url,
                             data={"device_token": new_token},
+                            headers=DEFAULT_API_HEADERS,
                             timeout=5,
                         )
                 response.raise_for_status()
@@ -288,6 +293,7 @@ class SyncService:
                             response = requests.post(
                                 self.get_settings_url,
                                 data={"device_token": new_token},
+                                headers=DEFAULT_API_HEADERS,
                                 timeout=5,
                             )
                             response.raise_for_status()
@@ -817,6 +823,8 @@ class SyncService:
         self,
         exclude_session_ids: list[int] | set[int] | None = None,
         timeout: float | None = 10.0,
+        device_token: str | None = None,
+        employee_id: str | None = None,
     ) -> bool:
         """
         Immediately send activity data for the last 5 minutes.
@@ -835,12 +843,12 @@ class SyncService:
             logger.info("Activity sync already in progress; skipping duplicate trigger.")
             return False
 
-        current_emp_id = "unknown"
+        current_emp_id = employee_id or "unknown"
         try:
             # Call workpulse/get_settings at the start of every sync cycle
-            device_token = self._require_device_token()
+            active_device_token = device_token or self._require_device_token()
 
-            if not device_token:
+            if not active_device_token:
                 SyncService.last_sync_status = "Failed (Auth Failed)"
                 SyncService.last_sync_error = "Device is not enrolled - no device token available."
                 SyncService.records_currently_sending = 0
@@ -870,14 +878,23 @@ class SyncService:
 
             from services.session_service import SessionService
             curr_user = SessionService().current_user
-            current_emp_id = curr_user.employee_id if curr_user else "unknown"
+            if not employee_id and curr_user and curr_user.employee_id:
+                current_emp_id = curr_user.employee_id
+            elif not employee_id:
+                try:
+                    from services.secure_session import SessionStore
+                    s = SessionStore().load_session()
+                    if s:
+                        current_emp_id = s.get("employee_id") or s.get("indo_code") or s.get("username") or "unknown"
+                except Exception:
+                    pass
 
             # Retrieve all closed sessions that have not been synced yet for this user
             db_session = get_session()
             try:
                 repository = ActivityRepository(db_session)
                 unsynced_sessions = repository.get_unsynced_closed_sessions(
-                    employee_id=curr_user.employee_id if curr_user else None,
+                    employee_id=current_emp_id if current_emp_id != "unknown" else (curr_user.employee_id if curr_user else None),
                     exclude_session_ids=exclude_session_ids,
                 )
                 db_session.expunge_all()
@@ -922,7 +939,7 @@ class SyncService:
                             page_size=PAGE_SIZE
                         )
 
-                        current_device_token = self._require_device_token() or device_token
+                        current_device_token = active_device_token
                         import json
                         sys_health = payload.get("system_health")
                         if not sys_health:
@@ -1053,7 +1070,9 @@ class SyncService:
             db_session = get_session()
             try:
                 repository = ActivityRepository(db_session)
-                unuploaded = repository.get_sessions_with_unuploaded_screenshots(employee_id=curr_user.employee_id if curr_user else None)
+                unuploaded = repository.get_sessions_with_unuploaded_screenshots(
+                    employee_id=current_emp_id if current_emp_id != "unknown" else (curr_user.employee_id if curr_user else None)
+                )
                 for session in unuploaded:
                     screenshot_jobs.append({
                         "id": session.id,
@@ -1075,7 +1094,8 @@ class SyncService:
                         application_name=job["application_name"],
                         process_id=job["process_id"],
                         captured_at=job["started_at"],
-                        local_session_id=job["id"]
+                        local_session_id=job["id"],
+                        device_token=active_device_token,
                     )
                     if success:
                         logger.info("Successfully uploaded and confirmed screenshot for local session ID %d", job["id"])
@@ -1169,6 +1189,7 @@ class SyncService:
                 response = requests.post(
                     self.save_activity_batch_url,
                     data=payload,
+                    headers=DEFAULT_API_HEADERS,
                     timeout=15,
                 )
                 logger.info(
@@ -1911,6 +1932,7 @@ class SyncService:
         process_id: int | None,
         captured_at: datetime | None = None,
         local_session_id: int | None = None,
+        device_token: str | None = None,
     ) -> bool:
         """
         Immediately upload a screenshot to:
@@ -1989,7 +2011,7 @@ class SyncService:
             import base64
             base64_encoded_str = base64.b64encode(raw_bytes).decode("utf-8")
 
-            device_token = self._require_device_token()
+            device_token = device_token or self._require_device_token()
             if not device_token:
                 logger.error("Cannot upload screenshot: device token is missing.")
                 return False
@@ -2046,6 +2068,7 @@ class SyncService:
                 self.upload_screenshot_url,
                 files=files,
                 data=data,
+                headers=DEFAULT_API_HEADERS,
                 timeout=60,
             )
             try:
@@ -2077,6 +2100,7 @@ class SyncService:
                         self.upload_screenshot_url,
                         files=files,
                         data=data,
+                        headers=DEFAULT_API_HEADERS,
                         timeout=60,
                     )
                     logger.info(

@@ -39,7 +39,7 @@ _CA_BUNDLE_PATH = init_ca_bundle()
 # Identifies this process to the Windows shell. Any stable, unique string
 # works; it must not change between releases or Windows treats each build as
 # a different application when pinning to the taskbar.
-WINDOWS_APP_ID = "IndovisionServices.iHRMSMonitor.Desktop"
+WINDOWS_APP_ID = "IndovisionServices.iHRMSDesktop"
 
 
 def _set_windows_app_identity() -> None:
@@ -228,6 +228,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
 
     from ui.keyboard_navigation import KeyboardNavigationEventFilter

@@ -232,7 +232,7 @@ def _set_supervisor_process_identity() -> None:
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "IndovisionServices.iHRMSMonitor.Supervisor"
+                "IndovisionServices.iHRMSDesktop.Supervisor"
             )
             if ctypes.windll.kernel32.GetConsoleWindow():
                 ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Supervisor")

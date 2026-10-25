@@ -769,6 +769,27 @@ class ActivityTracker:
 
         self._last_screenshot_time = self._clock()
 
+        # If current session already has a screenshot associated, checkpoint the session
+        # so this periodic screenshot belongs to a new contiguous segment and does not overwrite.
+        has_existing_screenshot = False
+        db_session = self._session_factory()
+        try:
+            from database.models import ActivitySession
+            rec = db_session.get(ActivitySession, self._current.db_id)
+            if rec and rec.screenshot_path:
+                has_existing_screenshot = True
+        except Exception:
+            pass
+        finally:
+            db_session.close()
+
+        if has_existing_screenshot:
+            now = self._clock()
+            active_app = ActiveApplication(self._current.application_name, self._current.process_id)
+            title = self._current.window_title
+            self._close_current_session_at(now)
+            self._open_new_session(active_app, title)
+
         session_id = self._current.db_id
 
         try:

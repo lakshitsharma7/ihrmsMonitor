@@ -1671,19 +1671,40 @@ class MainWindow(QMainWindow):
             login_win = LoginWindow()
             login_win.show()
 
-        # Flush pending activities and screenshots asynchronously in a background thread so UI never freezes
-        def _flush_sync_on_logout():
+        # Capture session credentials snapshot BEFORE starting background logout flush
+        from services.session_service import SessionService
+        from services.secure_session import SessionStore
+        curr = SessionService().current_user
+        stored_sess = SessionStore().load_session() or {}
+        flush_token = (
+            (curr.device_token if curr and curr.device_token else None)
+            or SessionService().device_token
+            or stored_sess.get("device_token")
+        )
+        flush_emp_id = (
+            (curr.employee_id if curr and curr.employee_id else None)
+            or stored_sess.get("employee_id")
+            or stored_sess.get("indo_code")
+            or stored_sess.get("username")
+        )
+
+        # Flush pending activities and screenshots asynchronously in a background thread with captured auth context
+        def _flush_sync_on_logout(token: str | None, emp_id: str | None):
             try:
                 from services.sync_service import SyncService
-                logger.info("Flushing pending activity and screenshots for user before logout...")
-                SyncService().sync_activity_now()
+                logger.info("Flushing pending activity and screenshots for user %s before logout...", emp_id or "unknown")
+                SyncService().sync_activity_now(device_token=token, employee_id=emp_id)
                 SyncService.reset_sync_state()
             except Exception as flush_err:
                 logger.warning("Could not flush sync on logout: %s", flush_err)
 
-        threading.Thread(target=_flush_sync_on_logout, name="LogoutFlushWorker", daemon=True).start()
+        threading.Thread(
+            target=_flush_sync_on_logout,
+            args=(flush_token, flush_emp_id),
+            name="LogoutFlushWorker",
+            daemon=True,
+        ).start()
 
-        from services.session_service import SessionService
         SessionService().logout()
 
         # Clear saved session for auto-login
@@ -1946,6 +1967,14 @@ class MainWindow(QMainWindow):
                     logger.warning("Tracker thread did not exit cleanly within timeout, terminating.")
                     self._thread.terminate()
                     self._thread.wait(1000)
+
+        # 3. Flush any pending closed sessions and screenshots to backend before process exit
+        try:
+            from services.sync_service import SyncService
+            logger.info("Executing final pre-shutdown sync flush...")
+            SyncService().sync_activity_now(timeout=5.0)
+        except Exception as flush_err:
+            logger.debug("Pre-shutdown sync flush deferred: %s", flush_err)
 
     # ==========================================================
     # AUTOMATIC UPDATES
