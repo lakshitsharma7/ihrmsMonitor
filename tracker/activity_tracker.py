@@ -89,6 +89,7 @@ class ActivityTracker:
         screenshot_interval_type: str = "3_min",
         screenshot_custom_interval_seconds: int = 180,
         capture_on_switch: bool = True,
+        screenshot_config=None,
     ) -> None:
 
         self._provider = provider
@@ -115,6 +116,9 @@ class ActivityTracker:
 
         self._last_idle_seconds = 0.0
 
+        from config.screenshot_config import ScreenshotConfig, get_screenshot_config
+        self._screenshot_config: ScreenshotConfig = screenshot_config or get_screenshot_config()
+
         self._screenshot_interval_type = screenshot_interval_type
 
         self._screenshot_custom_interval_seconds = screenshot_custom_interval_seconds
@@ -122,6 +126,13 @@ class ActivityTracker:
         self._capture_on_switch = capture_on_switch
 
         self._last_screenshot_time = None
+        self._window_last_screenshot_time = None
+        self._last_captured_window_identity: tuple | None = None
+        self._last_screenshot_attempt_time = None
+        self._pending_switch_capture = False
+        self._rapid_switch_debounce_seconds = 1.0
+        self._default_same_window_interval_seconds = 1800.0  # 30 minutes
+        self._window_last_capture_times: dict[tuple, datetime] = {}
 
         # Drives the periodic activity sync dynamically from API (sync_interval_seconds)
         self._last_sync_time = None
@@ -198,6 +209,48 @@ class ActivityTracker:
         self._screenshot_interval_type = interval_type
         self._screenshot_custom_interval_seconds = custom_interval_seconds
         self._capture_on_switch = capture_on_switch
+        if interval_type == "custom" and custom_interval_seconds > 0:
+            self._screenshot_config.screenshot_interval_minutes = float(custom_interval_seconds) / 60.0
+        self._screenshot_config.capture_on_window_change = capture_on_switch
+
+    def set_screenshot_config(self, config) -> None:
+        """Update the active screenshot configuration."""
+        self._screenshot_config = config
+
+    @property
+    def screenshot_config(self):
+        """Return the active screenshot configuration."""
+        return self._screenshot_config
+
+    def _get_window_identity(
+        self,
+        application_name: str | None,
+        process_id: int | None,
+        window_title: str | None,
+        window_handle: int | None = None,
+    ) -> tuple:
+        """Construct the strongest reliable window identity available.
+
+        Uses native window handle + process ID + app name when window handle is available.
+        Falls back to (application_name, process_id, title).
+        """
+        if window_handle is not None and window_handle != 0:
+            return (window_handle, process_id, application_name or "")
+        title = window_title if self._track_window_titles else None
+        return (application_name or "", process_id, title)
+
+    def _get_same_window_interval_seconds(self) -> float:
+        """Return the same-window screenshot interval in seconds.
+
+        Defaults to the configured screenshot_interval_minutes (30 minutes / 1800.0s).
+        If legacy custom interval is configured and positive, respects that.
+        """
+        if (
+            self._screenshot_interval_type == "custom"
+            and self._screenshot_custom_interval_seconds > 0
+        ):
+            return float(self._screenshot_custom_interval_seconds)
+        return self._screenshot_config.interval_seconds
 
     @property
     def is_workpulse(self) -> bool:
@@ -249,6 +302,10 @@ class ActivityTracker:
             self._last_persisted_idle_seconds = None
 
             self._last_screenshot_time = self._clock()
+            self._window_last_screenshot_time = None
+            self._last_captured_window_identity = None
+            self._last_screenshot_attempt_time = None
+            self._pending_switch_capture = False
 
             # Record system and workpulse start time
             try:
@@ -335,6 +392,10 @@ class ActivityTracker:
             self._current_idle_session_id = None
             self._last_active_session_id = None
             self._idle_start_time = None
+            self._window_last_screenshot_time = None
+            self._last_captured_window_identity = None
+            self._last_screenshot_attempt_time = None
+            self._pending_switch_capture = False
 
             logger.info(
                 "Activity tracker stopped"
@@ -472,22 +533,54 @@ class ActivityTracker:
 
                 # Check screenshot interval scheduler
                 now = self._clock()
-                interval_seconds = 180
-                if self._screenshot_interval_type == "3_min":
-                    interval_seconds = 3 * 60
-                elif self._screenshot_interval_type == "5_min":
-                    interval_seconds = 5 * 60
-                elif self._screenshot_interval_type == "10_min":
-                    interval_seconds = 10 * 60
-                elif self._screenshot_interval_type == "custom":
-                    interval_seconds = self._screenshot_custom_interval_seconds
 
-                if self._last_screenshot_time is None:
-                    self._last_screenshot_time = now
-                else:
-                    elapsed = (now - self._last_screenshot_time).total_seconds()
-                    if elapsed >= interval_seconds:
+                # Handle pending debounced screenshot capture if focus has settled
+                if (
+                    self._pending_switch_capture
+                    and self._current is not None
+                    and self._capture_on_switch
+                    and self._screenshot_config.should_capture_on_window_change()
+                ):
+                    time_since_last = (
+                        (now - self._last_screenshot_attempt_time).total_seconds()
+                        if self._last_screenshot_attempt_time is not None
+                        else 999999.0
+                    )
+                    if time_since_last >= self._rapid_switch_debounce_seconds:
                         self._capture_screenshot_for_current_session()
+                        self._window_last_screenshot_time = now
+                        self._last_screenshot_attempt_time = now
+                        self._pending_switch_capture = False
+
+                # Same-window interval scheduler (active in 'interval' or 'both' mode):
+                if self._screenshot_config.should_capture_on_interval() and self._current is not None:
+                    interval_seconds = self._get_same_window_interval_seconds()
+                    current_window_id = self._get_window_identity(
+                        self._current.application_name,
+                        self._current.process_id,
+                        self._current.window_title,
+                        window_handle=getattr(self._current, "window_handle", None),
+                    )
+
+                    last_capture = self._window_last_capture_times.get(
+                        current_window_id, self._window_last_screenshot_time
+                    )
+                    if last_capture is None:
+                        self._window_last_capture_times[current_window_id] = now
+                        self._window_last_screenshot_time = now
+                    else:
+                        elapsed = (now - last_capture).total_seconds()
+                        if elapsed >= interval_seconds:
+                            logger.info(
+                                "Same window active for %.1f min (interval=%.1f min). Capturing periodic screenshot.",
+                                elapsed / 60.0,
+                                interval_seconds / 60.0,
+                            )
+                            saved = self._capture_screenshot_for_current_session()
+                            if saved:
+                                self._window_last_capture_times[current_window_id] = now
+                            self._window_last_screenshot_time = now
+                            self._last_screenshot_attempt_time = now
 
             # --------------------------------------------------
             # Periodic activity sync.
@@ -612,6 +705,13 @@ class ActivityTracker:
         # - previous session closed
         # ------------------------------------------------------
 
+        current_window_id = self._get_window_identity(
+            active.application_name,
+            active.process_id,
+            title,
+            window_handle=getattr(active, "window_handle", None),
+        )
+
         if self._current is None:
 
             self._open_new_session(
@@ -619,8 +719,24 @@ class ActivityTracker:
                 title,
             )
 
-            if self._capture_on_switch:
-                self._capture_screenshot_for_current_session()
+            if (
+                self._capture_on_switch
+                and self._screenshot_config.should_capture_on_window_change()
+            ):
+                saved = self._capture_screenshot_for_current_session()
+                if saved:
+                    self._window_last_capture_times[current_window_id] = now
+                self._window_last_screenshot_time = now
+                self._last_captured_window_identity = current_window_id
+                self._last_screenshot_attempt_time = now
+                self._pending_switch_capture = False
+            else:
+                self._window_last_screenshot_time = now
+                if current_window_id not in self._window_last_capture_times:
+                    self._window_last_capture_times[current_window_id] = now
+                self._last_captured_window_identity = current_window_id
+                self._last_screenshot_attempt_time = None
+                self._pending_switch_capture = False
 
             return
 
@@ -628,6 +744,8 @@ class ActivityTracker:
         # Same application + same process + same window title.
         # ------------------------------------------------------
 
+        active_hwnd = getattr(active, "window_handle", None)
+        curr_hwnd = getattr(self._current, "window_handle", None)
         is_same_window = (
             self._current.matches_application(
                 active.application_name,
@@ -636,6 +754,11 @@ class ActivityTracker:
             and (
                 not self._track_window_titles
                 or title == self._current.window_title
+            )
+            and (
+                active_hwnd is None
+                or curr_hwnd is None
+                or active_hwnd == curr_hwnd
             )
         )
 
@@ -686,17 +809,54 @@ class ActivityTracker:
 
         # ------------------------------------------------------
         # STEP 3:
-        # Capture screenshot for NEW session.
-        #
-        # IMPORTANT:
-        # self._current.db_id now belongs to the NEW app.
+        # Capture screenshot for NEW session if window-change mode is active.
         # ------------------------------------------------------
 
         screenshot_path = None
-        if self._capture_on_switch:
-            screenshot_path = (
-                self._capture_screenshot_for_current_session()
+        if (
+            self._capture_on_switch
+            and self._screenshot_config.should_capture_on_window_change()
+        ):
+            time_since_last_attempt = (
+                (now - self._last_screenshot_attempt_time).total_seconds()
+                if self._last_screenshot_attempt_time is not None
+                else 999999.0
             )
+
+            # Avoid duplicate screenshots on rapid focus bounce back to recently captured window
+            if (
+                self._last_captured_window_identity == current_window_id
+                and time_since_last_attempt < self._get_same_window_interval_seconds()
+            ):
+                logger.debug(
+                    "Rapid focus switch back to recently captured window %s ignored",
+                    current_window_id,
+                )
+                self._pending_switch_capture = False
+            elif time_since_last_attempt < self._rapid_switch_debounce_seconds:
+                logger.debug(
+                    "Rapid focus switch detected (%.2fs < %.2fs); deferring capture until focus settles",
+                    time_since_last_attempt,
+                    self._rapid_switch_debounce_seconds,
+                )
+                self._pending_switch_capture = True
+            else:
+                screenshot_path = (
+                    self._capture_screenshot_for_current_session()
+                )
+                if screenshot_path:
+                    self._window_last_capture_times[current_window_id] = now
+                self._window_last_screenshot_time = now
+                self._last_captured_window_identity = current_window_id
+                self._last_screenshot_attempt_time = now
+                self._pending_switch_capture = False
+        else:
+            # Window-change capture is disabled (e.g. interval-only mode)
+            self._window_last_screenshot_time = now
+            if current_window_id not in self._window_last_capture_times:
+                self._window_last_capture_times[current_window_id] = now
+            self._last_captured_window_identity = current_window_id
+            self._pending_switch_capture = False
 
         # ------------------------------------------------------
         # STEP 4:
@@ -758,6 +918,10 @@ class ActivityTracker:
             session_42_2026-08-24_07-35-12-123456.png
         """
 
+        if not self._screenshot_config.screenshot_enabled:
+            logger.debug("Screenshot capture is disabled in configuration.")
+            return None
+
         if self._current is None:
 
             logger.warning(
@@ -767,7 +931,19 @@ class ActivityTracker:
 
             return None
 
-        self._last_screenshot_time = self._clock()
+        now = self._clock()
+        self._last_screenshot_time = now
+        self._window_last_screenshot_time = now
+        self._last_screenshot_attempt_time = now
+        if self._current is not None:
+            current_id = self._get_window_identity(
+                self._current.application_name,
+                self._current.process_id,
+                self._current.window_title,
+                window_handle=getattr(self._current, "window_handle", None),
+            )
+            self._last_captured_window_identity = current_id
+            self._window_last_capture_times[current_id] = now
 
         # If current session already has a screenshot associated, checkpoint the session
         # so this periodic screenshot belongs to a new contiguous segment and does not overwrite.
@@ -917,6 +1093,7 @@ class ActivityTracker:
                 window_title=title,
                 started_at=now,
                 idle_seconds=0,
+                window_handle=getattr(active, "window_handle", None),
             )
             self._session_idle_base_seconds = 0
 

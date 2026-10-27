@@ -103,6 +103,7 @@ def get_active_application() -> ActiveApplication | None:
             application_name=application_name,
             process_id=pid,
             window_title=window_title,
+            window_handle=hwnd,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error detecting active window on Windows")

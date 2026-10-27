@@ -375,6 +375,13 @@ class SyncService:
 
                     if update_kwargs:
                         repo.update(**update_kwargs)
+
+                    # ---------------------------------------------------------
+                    # FUTURE BACKEND INTEGRATION HOOK FOR SCREENSHOT CONFIG
+                    # When backend provides screenshot configuration fields:
+                    # from config.screenshot_config import apply_api_screenshot_config
+                    # apply_api_screenshot_config(settings_data)
+                    # ---------------------------------------------------------
                 except Exception as db_err:
                     logger.error("Failed to update database settings from get_settings response: %s", db_err)
                 finally:
@@ -1998,6 +2005,81 @@ class SyncService:
 
             return False
 
+        # Strict screenshot size validation and compression check
+        from config.screenshot_config import get_screenshot_config
+        from services.screenshot import compress_image_file
+
+        cfg = get_screenshot_config()
+        max_bytes = cfg.max_screenshot_bytes
+        min_bytes = cfg.min_screenshot_bytes
+
+        try:
+            file_size = screenshot_path.stat().st_size
+        except OSError as stat_err:
+            logger.error("Could not stat screenshot file %s: %s", screenshot_path, stat_err)
+            return False
+
+        if file_size > max_bytes and cfg.compression_enabled:
+            logger.info(
+                "Screenshot %s size (%d bytes) exceeds %d KB ceiling; attempting compression...",
+                screenshot_path.name,
+                file_size,
+                cfg.max_screenshot_size_kb,
+            )
+            comp_res = compress_image_file(screenshot_path, max_bytes=max_bytes, min_bytes=min_bytes)
+            if comp_res is not None:
+                comp_bytes, ext = comp_res
+                if len(comp_bytes) <= max_bytes:
+                    if screenshot_path.suffix.lower() == ext.lower():
+                        screenshot_path.write_bytes(comp_bytes)
+                    else:
+                        new_path = screenshot_path.with_suffix(ext)
+                        new_path.write_bytes(comp_bytes)
+                        try:
+                            screenshot_path.unlink()
+                        except Exception:
+                            pass
+                        screenshot_path = new_path
+                        if local_session_id is not None:
+                            db_session = get_session()
+                            try:
+                                ActivityRepository(db_session).update_session_screenshot_path(
+                                    local_session_id,
+                                    str(screenshot_path),
+                                )
+                            except Exception:
+                                pass
+                            finally:
+                                db_session.close()
+                    file_size = screenshot_path.stat().st_size
+
+        if file_size > max_bytes:
+            logger.warning(
+                "Screenshot %s size (%d bytes) exceeds %d KB limit. Discarding from upload queue.",
+                screenshot_path,
+                file_size,
+                cfg.max_screenshot_size_kb,
+            )
+            if cfg.delete_if_compression_fails and screenshot_path.exists():
+                try:
+                    screenshot_path.unlink()
+                except Exception as del_err:
+                    logger.error("Failed to delete oversized screenshot %s: %s", screenshot_path, del_err)
+
+            if local_session_id is not None:
+                db_session = get_session()
+                try:
+                    ActivityRepository(db_session).update_session_screenshot_path(
+                        local_session_id,
+                        None,
+                    )
+                except Exception as db_err:
+                    logger.error("Failed to clear oversized screenshot reference from DB: %s", db_err)
+                finally:
+                    db_session.close()
+
+            return False
+
         if captured_at is None:
 
             captured_at = datetime.now(
@@ -2007,6 +2089,28 @@ class SyncService:
         try:
             with screenshot_path.open("rb") as screenshot_file:
                 raw_bytes = screenshot_file.read()
+
+            if len(raw_bytes) > max_bytes:
+                logger.error(
+                    "Screenshot %s raw bytes (%d) exceed %d KB limit; refusing upload.",
+                    screenshot_path.name,
+                    len(raw_bytes),
+                    cfg.max_screenshot_size_kb,
+                )
+                if cfg.delete_if_compression_fails and screenshot_path.exists():
+                    try:
+                        screenshot_path.unlink()
+                    except Exception:
+                        pass
+                if local_session_id is not None:
+                    db_session = get_session()
+                    try:
+                        ActivityRepository(db_session).update_session_screenshot_path(local_session_id, None)
+                    except Exception:
+                        pass
+                    finally:
+                        db_session.close()
+                return False
 
             import base64
             base64_encoded_str = base64.b64encode(raw_bytes).decode("utf-8")

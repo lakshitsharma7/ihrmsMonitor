@@ -55,9 +55,120 @@ def get_destination_directory() -> Path:
 SCREENSHOT_DIR = get_destination_directory()
 
 
-# Captures smaller than this are stored exactly as grabbed; larger ones are
-# colour-reduced first.
-COMPRESS_ABOVE_BYTES = 102400
+# Configurable size constraints (default 100 KB)
+DEFAULT_MAX_SCREENSHOT_BYTES = 100 * 1024  # 102,400 bytes (100 KB default ceiling)
+MAX_SCREENSHOT_BYTES = DEFAULT_MAX_SCREENSHOT_BYTES
+MIN_TARGET_BYTES = 0
+
+
+def compress_image(
+    image: Image.Image,
+    max_bytes: int | None = None,
+    min_bytes: int = 0,
+) -> tuple[bytes, str] | None:
+    """Compress a PIL image to meet the configured maximum size.
+
+    Requirements:
+    1. Check the image size. If naturally <= max_bytes, return lossless PNG
+       without artificial enlargement.
+    2. If it exceeds max_bytes, attempt compression by adjusting image quality
+       and dimensions using PIL.
+    3. Verify final size <= max_bytes.
+    4. If compression cannot meet the limit, return None (discard).
+    """
+    if max_bytes is None:
+        try:
+            from config.screenshot_config import get_screenshot_config
+            max_bytes = get_screenshot_config().max_size_bytes
+        except Exception:
+            max_bytes = DEFAULT_MAX_SCREENSHOT_BYTES
+
+    try:
+        rgb_img = image.convert("RGB")
+
+        # 1. Check lossless PNG size first
+        buf = io.BytesIO()
+        rgb_img.save(buf, format="PNG", optimize=True)
+        png_data = buf.getvalue()
+        if len(png_data) <= max_bytes:
+            # Preserves quality and avoids artificial enlargement
+            return png_data, ".png"
+
+        # 2. Try quantized PNG (256 colors)
+        try:
+            q_img = rgb_img.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+            buf = io.BytesIO()
+            q_img.save(buf, format="PNG", optimize=True)
+            q_data = buf.getvalue()
+            if len(q_data) <= max_bytes:
+                return q_data, ".png"
+        except Exception:
+            pass
+
+        # 3. Adaptive JPEG search: adjust quality and scale to land <= max_bytes
+        best_candidate = None
+        best_size = 0
+
+        # Scales to test (preserving aspect ratio and text sharpness)
+        for scale in (1.0, 0.85, 0.75, 0.67, 0.5):
+            if scale < 1.0:
+                w = max(1, int(rgb_img.width * scale))
+                h = max(1, int(rgb_img.height * scale))
+                scaled_img = rgb_img.resize((w, h), Image.Resampling.LANCZOS)
+            else:
+                scaled_img = rgb_img
+
+            # Binary search quality in [20, 95]
+            low_q, high_q = 20, 95
+            scale_best = None
+
+            while low_q <= high_q:
+                mid_q = (low_q + high_q) // 2
+                b = io.BytesIO()
+                scaled_img.save(b, format="JPEG", quality=mid_q, optimize=True)
+                data = b.getvalue()
+                sz = len(data)
+
+                if sz <= max_bytes:
+                    scale_best = (data, mid_q, sz)
+                    low_q = mid_q + 1  # Seek highest quality setting <= max_bytes
+                else:
+                    high_q = mid_q - 1
+
+            if scale_best:
+                data, q, sz = scale_best
+                if sz > best_size:
+                    best_candidate = data
+                    best_size = sz
+
+        if best_candidate and len(best_candidate) <= max_bytes:
+            return best_candidate, ".jpg"
+
+        return None
+    except Exception as err:
+        logger.error("Error during screenshot compression: %s", err)
+        return None
+
+
+def compress_image_file(
+    file_path: Path,
+    max_bytes: int | None = None,
+    min_bytes: int = 0,
+) -> tuple[bytes, str] | None:
+    """Load an image file from disk and compress it to meet the configured maximum size."""
+    if max_bytes is None:
+        try:
+            from config.screenshot_config import get_screenshot_config
+            max_bytes = get_screenshot_config().max_size_bytes
+        except Exception:
+            max_bytes = DEFAULT_MAX_SCREENSHOT_BYTES
+
+    try:
+        with Image.open(file_path) as img:
+            return compress_image(img, max_bytes=max_bytes, min_bytes=min_bytes)
+    except Exception as err:
+        logger.error("Failed to open image file for compression %s: %s", file_path, err)
+        return None
 
 
 _dpi_awareness_applied = False
@@ -175,7 +286,8 @@ def _grab_screen_image() -> Image.Image | None:
     # Tier 3: mss
     try:
         import mss
-        with mss.mss() as sct:
+        mss_factory = getattr(mss, "MSS", mss.mss)
+        with mss_factory() as sct:
             mon = sct.monitors[0]  # Full virtual desktop monitor
             sct_img = sct.grab(mon)
             if sct_img:
@@ -212,6 +324,16 @@ def capture_screenshot(
     """
     global _mac_permission_logged  # noqa: PLW0603
 
+    from config.screenshot_config import get_screenshot_config
+    cfg = get_screenshot_config()
+
+    if not cfg.screenshot_enabled:
+        logger.debug(
+            "Screenshot capture is disabled in configuration; skipping for session=%s",
+            activity_session_id,
+        )
+        return None
+
     # ----------------------------------------------------------
     # macOS Screen Recording TCC permission check
     # ----------------------------------------------------------
@@ -234,48 +356,6 @@ def capture_screenshot(
                     _mac_permission_logged = False
         except Exception as _perm_err:
             logger.debug("mac_permission_service unavailable: %s", _perm_err)
-
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d_%H-%M-%S-%f"
-    )
-
-    if activity_session_id is not None:
-
-        filename = (
-            f"session_{activity_session_id}_"
-            f"{timestamp}.png"
-        )
-
-    else:
-
-        filename = (
-            f"screenshot_{timestamp}.png"
-        )
-
-    target_dir = get_destination_directory()
-    filepath = (
-        target_dir / filename
-    )
-
-    # ----------------------------------------------------------
-    # Destination
-    # ----------------------------------------------------------
-
-    try:
-        target_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-    except OSError:
-        logger.exception(
-            "Screenshot directory is not writable, cannot capture "
-            "screenshot for session=%s: %s",
-            activity_session_id,
-            target_dir,
-        )
-
-        return None
 
     # ----------------------------------------------------------
     # Grab the screen using multi-tiered fallback chain
@@ -300,52 +380,107 @@ def capture_screenshot(
         return None
 
     # ----------------------------------------------------------
-    # Write the file (synchronously - the caller uploads this path)
+    # Compress the screenshot according to configuration
+    # ----------------------------------------------------------
+
+    max_bytes = cfg.max_screenshot_bytes
+    min_bytes = cfg.min_screenshot_bytes
+
+    if cfg.compression_enabled:
+        compression_res = compress_image(image, max_bytes=max_bytes, min_bytes=min_bytes)
+    else:
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="PNG", optimize=True)
+        raw_png = buf.getvalue()
+        if len(raw_png) <= max_bytes:
+            compression_res = (raw_png, ".png")
+        else:
+            compression_res = None
+
+    if compression_res is None:
+        logger.warning(
+            "Screenshot for session=%s cannot be compressed to <= %d KB limit. Discarding capture.",
+            activity_session_id,
+            cfg.max_screenshot_size_kb,
+        )
+        return None
+
+    compressed_bytes, ext = compression_res
+
+    # Strict in-memory verification
+    if len(compressed_bytes) > max_bytes:
+        logger.error(
+            "Compressed screenshot size (%d bytes) exceeds %d KB limit for session=%s. Discarding capture.",
+            len(compressed_bytes),
+            cfg.max_screenshot_size_kb,
+            activity_session_id,
+        )
+        return None
+
+    timestamp = datetime.now().strftime(
+        "%Y-%m-%d_%H-%M-%S-%f"
+    )
+
+    if activity_session_id is not None:
+        filename = (
+            f"session_{activity_session_id}_"
+            f"{timestamp}{ext}"
+        )
+    else:
+        filename = (
+            f"screenshot_{timestamp}{ext}"
+        )
+
+    target_dir = get_destination_directory()
+    filepath = (
+        target_dir / filename
+    )
+
+    # ----------------------------------------------------------
+    # Destination & write
     # ----------------------------------------------------------
 
     try:
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        raw_size = buffer.tell()
+        target_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+    except OSError:
+        logger.exception(
+            "Screenshot directory is not writable, cannot capture "
+            "screenshot for session=%s: %s",
+            activity_session_id,
+            target_dir,
+        )
+        return None
 
-        if raw_size < COMPRESS_ABOVE_BYTES:
-            image.save(filepath, "PNG")
-
-        else:
-            compressed = image.quantize(
-                colors=256,
-                method=Image.Quantize.FASTOCTREE,
-            )
-
-            compressed.save(
-                filepath,
-                "PNG",
-                optimize=True,
-            )
-
+    try:
+        filepath.write_bytes(compressed_bytes)
     except Exception:  # noqa: BLE001
         logger.exception(
             "Could not write screenshot for session=%s to %s",
             activity_session_id,
             filepath,
         )
-
+        if filepath.exists():
+            try:
+                filepath.unlink()
+            except Exception:
+                pass
         return None
 
     # ----------------------------------------------------------
-    # Confirm it actually landed on disk before reporting success
+    # Confirm it actually landed on disk and verify file size <= 150 KB
     # ----------------------------------------------------------
 
     try:
         written_size = filepath.stat().st_size
-
     except OSError:
         logger.exception(
             "Screenshot file is missing after saving for session=%s: %s",
             activity_session_id,
             filepath,
         )
-
         return None
 
     if written_size <= 0:
@@ -354,14 +489,32 @@ def capture_screenshot(
             activity_session_id,
             filepath,
         )
+        if filepath.exists():
+            try:
+                filepath.unlink()
+            except Exception:
+                pass
+        return None
 
+    if written_size > max_bytes:
+        logger.error(
+            "Screenshot file size on disk (%d bytes) exceeds %d KB limit for session=%s.",
+            written_size,
+            cfg.max_screenshot_size_kb,
+            activity_session_id,
+        )
+        if cfg.delete_if_compression_fails and filepath.exists():
+            try:
+                filepath.unlink()
+            except Exception:
+                pass
         return None
 
     logger.info(
-        "Screenshot captured: session=%s raw=%dB saved=%dB path=%s",
+        "Screenshot captured & compressed: session=%s size=%dB (%.1f KB) path=%s",
         activity_session_id,
-        raw_size,
         written_size,
+        written_size / 1024,
         filepath,
     )
 

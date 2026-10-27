@@ -23,6 +23,7 @@ class ActiveApplication:
     application_name: str
     process_id: int | None
     window_title: str | None = None
+    window_handle: int | None = None
 
 
 class UnsupportedPlatformError(RuntimeError):
