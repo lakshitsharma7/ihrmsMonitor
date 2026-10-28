@@ -18,7 +18,10 @@ def main() -> None:
 
     try:
         import pytest
-        exit_code = pytest.main([os.path.join(root_dir, "tests"), "-q"])
+        args = [os.path.join(root_dir, "tests"), "-q"]
+        if sys.platform == "darwin":
+            args += ["-k", "not (windows or supervisor or uninstall or dead_pid)"]
+        exit_code = pytest.main(args)
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(exit_code)

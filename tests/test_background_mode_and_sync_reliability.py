@@ -39,6 +39,10 @@ app = QApplication.instance() or QApplication([])
 
 
 class TestBackgroundModeAndSyncReliability(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not sys.platform.startswith("win"):
+            raise unittest.SkipTest("Background mode and Windows sync reliability tests are Windows-specific.")
     def setUp(self):
         SessionService().clear()
         self.store = SessionStore()

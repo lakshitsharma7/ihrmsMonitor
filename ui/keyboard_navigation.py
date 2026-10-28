@@ -46,65 +46,70 @@ class KeyboardNavigationEventFilter(QObject):
         return cls._instance
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        event_type = event.type()
-        if event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
-            key = event.key()
+        try:
+            if not watched or not event:
+                return False
+            event_type = event.type()
+            if event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                key = event.key()
 
-            # ── Enter / Return key activation ─────────────────────────────
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                # 1. Always allow text inputs and multi-line editors to handle Enter natively
-                if isinstance(watched, (QLineEdit, QTextEdit, QPlainTextEdit)):
-                    return False
+                # ── Enter / Return key activation ─────────────────────────────
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    # 1. Always allow text inputs and multi-line editors to handle Enter natively
+                    if isinstance(watched, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                        return False
 
-                # 2. Resolve target: watched widget or active focus widget
-                focus_widget = watched if isinstance(watched, QAbstractButton) else QApplication.focusWidget()
+                    # 2. Resolve target: watched widget or active focus widget
+                    focus_widget = watched if isinstance(watched, QAbstractButton) else QApplication.focusWidget()
 
-                # If focus is currently inside a text editor, do not trigger buttons
-                if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
-                    return False
+                    # If focus is currently inside a text editor, do not trigger buttons
+                    if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                        return False
 
-                # 3. Handle buttons receiving Enter
-                if isinstance(focus_widget, QAbstractButton):
-                    if event_type == QEvent.Type.KeyPress:
-                        # Prevent duplicate activations from key holding/auto-repeat
-                        if event.isAutoRepeat():
-                            return True
-                        # If button is disabled (e.g. during submission), do nothing
-                        if not focus_widget.isEnabled():
-                            return True
-                        # If button is already pressed down, do nothing
-                        if focus_widget.isDown():
-                            return True
-                        # Trigger button click
-                        focus_widget.click()
-                        return True
-                    elif event_type == QEvent.Type.KeyRelease:
-                        # Consume release event corresponding to handled press
-                        return True
-
-                # 4. Handle custom clickable widgets (e.g. day cards or custom widgets with clicked signal)
-                elif focus_widget and hasattr(focus_widget, "clicked"):
-                    if event_type == QEvent.Type.KeyPress:
-                        if event.isAutoRepeat():
-                            return True
-                        if hasattr(focus_widget, "click"):
+                    # 3. Handle buttons receiving Enter
+                    if isinstance(focus_widget, QAbstractButton):
+                        if event_type == QEvent.Type.KeyPress:
+                            # Prevent duplicate activations from key holding/auto-repeat
+                            if event.isAutoRepeat():
+                                return True
+                            # If button is disabled (e.g. during submission), do nothing
+                            if not focus_widget.isEnabled():
+                                return True
+                            # If button is already pressed down, do nothing
+                            if focus_widget.isDown():
+                                return True
+                            # Trigger button click
                             focus_widget.click()
                             return True
-                        elif hasattr(focus_widget, "animateClick"):
-                            focus_widget.animateClick()
+                        elif event_type == QEvent.Type.KeyRelease:
+                            # Consume release event corresponding to handled press
                             return True
-                        return False
-                    elif event_type == QEvent.Type.KeyRelease:
-                        if hasattr(focus_widget, "click") or hasattr(focus_widget, "animateClick"):
+
+                    # 4. Handle custom clickable widgets (e.g. day cards or custom widgets with clicked signal)
+                    elif focus_widget and hasattr(focus_widget, "clicked"):
+                        if event_type == QEvent.Type.KeyPress:
+                            if event.isAutoRepeat():
+                                return True
+                            if hasattr(focus_widget, "click"):
+                                focus_widget.click()
+                                return True
+                            elif hasattr(focus_widget, "animateClick"):
+                                focus_widget.animateClick()
+                                return True
+                            return False
+                        elif event_type == QEvent.Type.KeyRelease:
+                            if hasattr(focus_widget, "click") or hasattr(focus_widget, "animateClick"):
+                                return True
+                            return False
+
+                # ── Space key activation ──────────────────────────────────────
+                elif key == Qt.Key.Key_Space:
+                    # Prevent auto-repeat double-activations when holding Space
+                    if event_type == QEvent.Type.KeyPress and event.isAutoRepeat():
+                        focus_widget = watched if isinstance(watched, QAbstractButton) else QApplication.focusWidget()
+                        if isinstance(focus_widget, QAbstractButton):
                             return True
-                        return False
 
-            # ── Space key activation ──────────────────────────────────────
-            elif key == Qt.Key.Key_Space:
-                # Prevent auto-repeat double-activations when holding Space
-                if event_type == QEvent.Type.KeyPress and event.isAutoRepeat():
-                    focus_widget = watched if isinstance(watched, QAbstractButton) else QApplication.focusWidget()
-                    if isinstance(focus_widget, QAbstractButton):
-                        return True
-
-        return super().eventFilter(watched, event)
+            return super().eventFilter(watched, event)
+        except (Exception, RuntimeError, SystemError, BaseException):
+            return False

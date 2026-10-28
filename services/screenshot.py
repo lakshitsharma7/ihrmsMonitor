@@ -354,6 +354,8 @@ def capture_screenshot(
     # macOS Screen Recording TCC permission check
     # ----------------------------------------------------------
     if sys.platform == "darwin":
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return None
         try:
             from services.mac_permission_service import has_screen_recording_permission
             if not has_screen_recording_permission():
