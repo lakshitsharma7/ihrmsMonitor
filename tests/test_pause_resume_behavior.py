@@ -51,17 +51,17 @@ class TestPauseResumeBehavior(unittest.TestCase):
         dashboard.set_workpulse_active(True)
 
         self.assertFalse(dashboard.is_paused())
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Active")
 
-        # 1. Click "Paused" -> state becomes paused, button becomes "Resume"
+        # 1. Setting paused -> state becomes paused, button becomes "Start Tracking"
         pause_signals = []
         dashboard.pause_state_changed.connect(lambda p: pause_signals.append(p))
 
-        dashboard.workpulse_toggle_button.click()
+        dashboard.set_paused(True)
 
         self.assertTrue(dashboard.is_paused())
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Resume")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Start Tracking")
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Paused")
         self.assertEqual(pause_signals, [True])
         self.assertTrue(self.store.is_workpulse_paused())
@@ -76,19 +76,19 @@ class TestPauseResumeBehavior(unittest.TestCase):
         )
         dashboard.update_tracker_state(state)
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Paused")
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Resume")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Start Tracking")
 
-        # 3. Click "Resume" -> state returns to active, button becomes "Paused"
+        # 3. Click "Start Tracking" -> resumes active tracking, button becomes "Stop Tracking"
         dashboard.workpulse_toggle_button.click()
 
         self.assertFalse(dashboard.is_paused())
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Active")
         self.assertEqual(pause_signals, [True, False])
         self.assertFalse(self.store.is_workpulse_paused())
 
     def test_main_window_pause_resume_keeps_workers_running(self):
-        """MainWindow keeps activity workpulse and workers running when Paused is clicked."""
+        """MainWindow keeps activity workpulse and workers running when paused."""
         SessionService().login(
             username="emp_pause_test",
             role="User",
@@ -109,12 +109,12 @@ class TestPauseResumeBehavior(unittest.TestCase):
                 self.assertTrue(win._tracker.is_workpulse)
                 self.assertFalse(win.dashboard_page.is_paused())
                 self.assertEqual(win.status_badge.text(), "Online")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
 
                 tracker_instance = win._tracker
 
-                # User clicks "Paused"
-                win.dashboard_page.workpulse_toggle_button.click()
+                # Tracking is paused
+                win.dashboard_page.set_paused(True)
                 QApplication.processEvents()
 
                 # Activity workpulse must NOT stop
@@ -122,8 +122,7 @@ class TestPauseResumeBehavior(unittest.TestCase):
                 self.assertIs(win._tracker, tracker_instance, "Must use existing tracker instance")
                 self.assertTrue(win.dashboard_page.is_paused())
                 self.assertTrue(self.store.is_workpulse_paused())
-                self.assertEqual(win.status_badge.text(), "Online")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Resume")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Start Tracking")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Paused")
 
                 # Tracker state updates while paused preserve Online network status badge
@@ -137,7 +136,7 @@ class TestPauseResumeBehavior(unittest.TestCase):
                 win._on_tracker_state_changed(active_state)
                 self.assertEqual(win.status_badge.text(), "Online")
 
-                # User clicks "Resume"
+                # User clicks "Start Tracking" to resume
                 win.dashboard_page.workpulse_toggle_button.click()
                 QApplication.processEvents()
 
@@ -147,7 +146,7 @@ class TestPauseResumeBehavior(unittest.TestCase):
                 self.assertFalse(win.dashboard_page.is_paused())
                 self.assertFalse(self.store.is_workpulse_paused())
                 self.assertEqual(win.status_badge.text(), "Online")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Active")
             finally:
                 win._shutdown()

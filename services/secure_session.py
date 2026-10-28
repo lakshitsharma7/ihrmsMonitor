@@ -168,6 +168,7 @@ class SessionStore:
     _KEY_TRACKING_PERMITTED = "session/workpulse_permitted"
     _KEY_ALLOW_USER_DEVICE = "session/allow_user_device"
     _KEY_ALLOW_LOGOUT = "session/allow_logout"
+    _KEY_ALLOW_START_STOP_ACTIVITY_TRACKING = "session/allow_start_stop_activity_tracking"
     _KEY_ENCRYPTED_CHECKSUM = "session/checksum"
     _KEY_TRACKING_MANUALLY_STOPPED = "session/workpulse_manually_stopped"
     _KEY_TRACKING_ACTIVE = "session/workpulse_active"
@@ -250,6 +251,7 @@ class SessionStore:
         email: str | None = None,
         allow_user_device: bool = True,
         allow_logout: bool = True,
+        allow_start_stop_activity_tracking: bool = True,
         workpulse_manually_stopped: bool | None = None,
         session_credential: str | None = None,
     ) -> bool:
@@ -273,6 +275,7 @@ class SessionStore:
             email: Employee email
             allow_user_device: Whether User/Device control is enabled
             allow_logout: Whether Logout control is enabled
+            allow_start_stop_activity_tracking: Whether Start/Stop Activity Tracking is enabled
             workpulse_manually_stopped: Whether user manually stopped workpulse
             session_credential: Optional runtime credential for portal SSO
             
@@ -299,6 +302,7 @@ class SessionStore:
                 "email": str(email or ""),
                 "allow_user_device": bool(allow_user_device),
                 "allow_logout": bool(allow_logout),
+                "allow_start_stop_activity_tracking": bool(allow_start_stop_activity_tracking),
                 "session_credential": session_credential or "",
                 "timestamp": int(time.time()),
             }
@@ -325,6 +329,7 @@ class SessionStore:
             self.settings.setValue(self._KEY_TRACKING_PERMITTED, workpulse_permitted)
             self.settings.setValue(self._KEY_ALLOW_USER_DEVICE, allow_user_device)
             self.settings.setValue(self._KEY_ALLOW_LOGOUT, allow_logout)
+            self.settings.setValue(self._KEY_ALLOW_START_STOP_ACTIVITY_TRACKING, allow_start_stop_activity_tracking)
 
             if workpulse_manually_stopped is not None:
                 self.set_workpulse_manually_stopped(workpulse_manually_stopped)
@@ -390,6 +395,10 @@ class SessionStore:
                     cred_store_name = "Windows Credential Manager" if sys.platform.startswith("win") else "macOS Keychain"
                     logger.info("Loaded valid session from %s: user=%s company=%s", cred_store_name, username, company_code)
                     session = dict(cred_dict)
+                    session.setdefault(
+                        "allow_start_stop_activity_tracking",
+                        cred_dict.get("allow_start_stop_activity_workpulse", True)
+                    )
                     session["workpulse_manually_stopped"] = self.is_workpulse_manually_stopped()
                     session["workpulse_active"] = self.is_workpulse_active()
                     return session
@@ -449,6 +458,9 @@ class SessionStore:
             allow_logout_raw = self.settings.value(self._KEY_ALLOW_LOGOUT, True)
             allow_logout = allow_logout_raw is True or str(allow_logout_raw).lower() in ("true", "1")
 
+            allow_start_stop_raw = self.settings.value(self._KEY_ALLOW_START_STOP_ACTIVITY_TRACKING, True)
+            allow_start_stop_activity_tracking = allow_start_stop_raw is True or str(allow_start_stop_raw).lower() in ("true", "1")
+
             device_info_json = self.settings.value(self._KEY_DEVICE_INFO, "{}")
             try:
                 device_info = json.loads(device_info_json)
@@ -473,6 +485,7 @@ class SessionStore:
                 "workpulse_permitted": workpulse_permitted,
                 "allow_user_device": allow_user_device,
                 "allow_logout": allow_logout,
+                "allow_start_stop_activity_tracking": allow_start_stop_activity_tracking,
                 "session_credential": session_credential,
                 "workpulse_manually_stopped": self.is_workpulse_manually_stopped(),
                 "workpulse_active": self.is_workpulse_active(),

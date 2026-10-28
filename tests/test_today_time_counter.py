@@ -262,35 +262,35 @@ class TestTodayTimeCounter(unittest.TestCase):
         """Single button toggles Paused/Resume status without stopping workpulse, and network status is independent."""
         dashboard = DashboardPage(self.mock_service)
 
-        # Initial active state -> button shows "Paused", network status shows "● Online"
+        # Initial active state -> button shows "Stop Tracking", network status shows "● Online"
         dashboard.set_workpulse_active(True)
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
         self.assertFalse(dashboard.is_paused())
 
-        # Clicking "Paused" while active toggles to paused state, button changes to "Resume"
+        # When paused, button changes to "Start Tracking"
         pause_mock = MagicMock()
         dashboard.pause_state_changed.connect(pause_mock)
-        dashboard.workpulse_toggle_button.click()
+        dashboard.set_paused(True)
         pause_mock.assert_called_once_with(True)
         self.assertTrue(dashboard.is_paused())
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Resume")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Start Tracking")
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Paused")
 
-        # Clicking "Resume" while paused toggles back to active state, button changes to "Paused"
+        # Clicking "Start Tracking" while paused resumes tracking, button changes to "Stop Tracking"
         dashboard.workpulse_toggle_button.click()
         self.assertFalse(dashboard.is_paused())
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
         self.assertEqual(dashboard.workpulse_status_label.text(), "Online: Active")
 
         # Network status is completely independent from workpulse state
         dashboard.set_network_status(False)
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
 
         dashboard.set_network_status(True)
         self.assertEqual(dashboard.network_status_label.text(), "● Online")
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
 
     def test_11_cross_midnight_stale_fetch_is_discarded(self):
         """A background refresh result tagged with yesterday's date must NOT update today's counter.

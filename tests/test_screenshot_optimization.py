@@ -44,6 +44,7 @@ from services.screenshot import (
     compress_image_file,
 )
 from services.sync_service import SyncService
+from services.secure_session import SessionStore
 from tracker.activity_tracker import ActivityTracker
 
 
@@ -1046,5 +1047,216 @@ def test_19_local_config_file_loading(tmp_path: Path):
         assert cfg.interval_minutes == 15
         assert cfg.max_size_kb == 80
         assert cfg.max_size_bytes == 80 * 1024
+
+
+def test_20_exact_postman_api_enroll_device_response_parsing():
+    """Verify parsing of the exact Postman enroll_device API response schema."""
+    postman_response = {
+        "workpulse_enabled": True,
+        "device_token": "5264178cde488e1cccdbdbd875eabe16e63047915554853a0515e82bc53928e8",
+        "capture_mode": "activity_with_screenshots",
+        "sync_interval_seconds": 3600,
+        "idle_threshold_seconds": 300,
+        "allow_start_stop_activity_tracking": True,
+        "allow_logout": True,
+        "screenshot_settings": {
+            "enabled": True,
+            "capture_mode": "window_change",
+            "allowed_types": [
+                "png",
+                "jpg",
+                "jpeg",
+            ],
+            "capture_on_window_change": True,
+            "interval_minutes": 30,
+            "max_kb": 100,
+        },
+    }
+
+    cfg = apply_api_screenshot_config(postman_response)
+    assert cfg.enabled is True
+    assert cfg.capture_mode == "window_change"
+    assert cfg.allowed_types == ["png", "jpg", "jpeg"]
+    assert cfg.capture_on_window_change is True
+    assert cfg.interval_minutes == 30.0
+    assert cfg.max_size_kb == 100
+    assert cfg.max_size_bytes == 100 * 1024
+    assert cfg.should_capture_on_window_change() is True
+    assert cfg.should_capture_on_interval() is False
+
+
+def test_21_dynamic_settings_update_during_sync_cycle():
+    """Verify that sync_service.fetch_settings adopts dynamic screenshot settings from API."""
+    sync_svc = SyncService()
+
+    dynamic_api_response = {
+        "response": "Success",
+        "data": {
+            "workpulse_enabled": True,
+            "capture_mode": "activity_with_screenshots",
+            "sync_interval_seconds": 60,
+            "idle_threshold_seconds": 120,
+            "screenshot_settings": {
+                "enabled": True,
+                "capture_mode": "interval",
+                "allowed_types": ["jpg", "jpeg"],
+                "capture_on_window_change": False,
+                "interval_minutes": 10,
+                "max_kb": 75,
+            },
+        },
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = dynamic_api_response
+    mock_resp.text = "{}"
+
+    with patch.object(sync_svc, "_require_device_token", return_value="valid_test_token"), \
+         patch("requests.post", return_value=mock_resp):
+        settings = sync_svc.fetch_settings()
+        assert settings != {}
+
+        cfg = get_screenshot_config()
+        assert cfg.capture_mode == "interval"
+        assert cfg.interval_minutes == 10.0
+        assert cfg.max_size_kb == 75
+        assert cfg.max_size_bytes == 75 * 1024
+        assert cfg.allowed_types == ["jpg", "jpeg"]
+        assert cfg.capture_on_window_change is False
+        assert cfg.should_capture_on_window_change() is False
+        assert cfg.should_capture_on_interval() is True
+
+
+def test_22_api_failure_preserves_last_valid_settings():
+    """Verify that network errors or API failures preserve the last valid configuration."""
+    # Establish valid configuration
+    apply_api_screenshot_config({
+        "screenshot_settings": {
+            "enabled": True,
+            "capture_mode": "both",
+            "capture_on_window_change": True,
+            "interval_minutes": 15,
+            "max_kb": 80,
+        }
+    })
+    initial_cfg = get_screenshot_config()
+    assert initial_cfg.max_size_kb == 80
+    assert initial_cfg.interval_minutes == 15.0
+
+    # Simulate empty or invalid dictionary update
+    apply_api_screenshot_config({})
+    apply_api_screenshot_config(None)  # type: ignore[arg-type]
+    apply_api_screenshot_config({"status": 0, "message": "Server Error"})
+
+    # Configuration must remain untouched
+    current_cfg = get_screenshot_config()
+    assert current_cfg.max_size_kb == 80
+    assert current_cfg.interval_minutes == 15.0
+    assert current_cfg.capture_mode == "both"
+
+    # Simulate network exception in fetch_settings
+    sync_svc = SyncService()
+    import requests
+    with patch.object(sync_svc, "_require_device_token", return_value="valid_test_token"), \
+         patch("requests.post", side_effect=requests.RequestException("Connection timeout")):
+        res = sync_svc.fetch_settings()
+        assert res == {}
+
+    # Valid settings must still be preserved
+    after_err_cfg = get_screenshot_config()
+    assert after_err_cfg.max_size_kb == 80
+    assert after_err_cfg.interval_minutes == 15.0
+    assert after_err_cfg.capture_mode == "both"
+
+
+def test_23_root_level_capture_mode_disables_screenshots():
+    """Verify that root capture_mode='activity_only' or workpulse_enabled=False disables screenshots."""
+    # 1. capture_mode='activity_only' at root
+    apply_api_screenshot_config({
+        "workpulse_enabled": True,
+        "capture_mode": "activity_only",
+        "screenshot_settings": {
+            "enabled": True,
+            "capture_mode": "both",
+            "max_kb": 100,
+        },
+    })
+    assert get_screenshot_config().enabled is False
+
+    # 2. workpulse_enabled=False at root
+    apply_api_screenshot_config({
+        "workpulse_enabled": False,
+        "capture_mode": "activity_with_screenshots",
+        "screenshot_settings": {
+            "enabled": True,
+            "capture_mode": "both",
+            "max_kb": 100,
+        },
+    })
+    assert get_screenshot_config().enabled is False
+
+
+def test_24_allowed_types_filtering_enforcement():
+    """Verify that compress_image respects allowed_types restrictions."""
+    # 1. Only JPG allowed: even tiny image that easily fits in PNG must produce JPG
+    apply_api_screenshot_config({
+        "screenshot_settings": {
+            "allowed_types": ["jpg"],
+            "max_kb": 100,
+        }
+    })
+    small_img = Image.new("RGB", (100, 100), (40, 80, 120))
+    res = compress_image(small_img, max_bytes=100 * 1024)
+    assert res is not None
+    data, ext = res
+    assert ext == ".jpg", "When only JPG is allowed, PNG must not be produced"
+
+    # 2. Only PNG allowed: if an image is large and cannot fit without JPEG, return None
+    apply_api_screenshot_config({
+        "screenshot_settings": {
+            "allowed_types": ["png"],
+            "max_kb": 5,  # 5 KB limit: high entropy screen cannot fit in 5KB PNG
+        }
+    })
+    high_entropy = _create_high_entropy_screen(1920, 1080)
+    res_png_only = compress_image(high_entropy, max_bytes=5 * 1024)
+    assert res_png_only is None, "When only PNG is allowed and image exceeds max_bytes, must discard"
+
+
+def test_25_re_enroll_device_applies_screenshot_settings():
+    """Verify that re_enroll_device dynamically applies screenshot_settings from server."""
+    sync_svc = SyncService()
+    enroll_payload = {
+        "workpulse_enabled": True,
+        "device_token": "refreshed_device_token_xyz_123",
+        "capture_mode": "activity_with_screenshots",
+        "screenshot_settings": {
+            "enabled": True,
+            "capture_mode": "window_change",
+            "allowed_types": ["png", "jpg"],
+            "capture_on_window_change": True,
+            "interval_minutes": 45,
+            "max_kb": 90,
+        },
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = enroll_payload
+    mock_resp.text = "{}"
+
+    with patch("requests.post", return_value=mock_resp), \
+         patch.object(SessionStore, "load_session", return_value={"username": "test_user", "indo_code": "INDO1", "api_key": "k", "base_url": "https://test.api"}), \
+         patch.object(SessionStore, "update_device_token"):
+        new_token = sync_svc.re_enroll_device()
+        assert new_token == "refreshed_device_token_xyz_123"
+
+        cfg = get_screenshot_config()
+        assert cfg.max_size_kb == 90
+        assert cfg.interval_minutes == 45.0
+        assert cfg.capture_mode == "window_change"
+        assert cfg.allowed_types == ["png", "jpg"]
+
 
 

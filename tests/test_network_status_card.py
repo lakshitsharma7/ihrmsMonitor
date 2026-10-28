@@ -97,7 +97,7 @@ class TestNetworkStatusCard(unittest.TestCase):
         # Confirm workpulse remains active
         self.assertEqual(dashboard.network_status_label.text(), "● Offline")
         self.assertTrue(dashboard._is_workpulse)
-        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Paused")
+        self.assertEqual(dashboard.workpulse_toggle_button.text(), "Stop Tracking")
 
         # Update tracker state with active application while offline
         state = TrackerState(
@@ -131,7 +131,7 @@ class TestNetworkStatusCard(unittest.TestCase):
         dashboard.set_workpulse_active(True)
         dashboard.set_network_status(True)
 
-        dashboard.workpulse_toggle_button.click()
+        dashboard.set_paused(True)
         self.assertTrue(dashboard.is_paused())
 
         self.assertEqual(dashboard.network_status_label.text(), "● Online")

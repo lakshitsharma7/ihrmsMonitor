@@ -1114,6 +1114,12 @@ class LoginWindow(QMainWindow):
                     return
 
                 SessionService().device_token = device_token
+                try:
+                    from config.screenshot_config import apply_api_screenshot_config
+                    if isinstance(enroll_json, dict):
+                        apply_api_screenshot_config(enroll_json)
+                except Exception as cfg_err:
+                    logger.debug("Could not apply screenshot config from device enrollment: %s", cfg_err)
 
                 login_data = res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {}
                 full_name = (
@@ -1225,6 +1231,19 @@ class LoginWindow(QMainWindow):
                         workpulse_permitted = perm
                         break
 
+                # Dynamic Start/Stop Activity Tracking permission from backend candidates
+                allow_start_stop_activity_tracking = True
+                for c in candidates:
+                    perm = _extract_permission(c, [
+                        "allow_start_stop_activity_tracking",
+                        "allow_start_stop_activity_workpulse",
+                        "allow_start_stop_tracking",
+                        "allow_start_stop",
+                    ])
+                    if perm is not None:
+                        allow_start_stop_activity_tracking = perm
+                        break
+
                 employee_id = emp_code
                 email_val = (
                     res_json.get("email")
@@ -1244,6 +1263,7 @@ class LoginWindow(QMainWindow):
                     workpulse_permitted=workpulse_permitted,
                     allow_user_device=allow_user_device,
                     allow_logout=allow_logout,
+                    allow_start_stop_activity_tracking=allow_start_stop_activity_tracking,
                     indo_code=indo_code,
                     api_key=api_key,
                     employee_id=(
@@ -1283,6 +1303,7 @@ class LoginWindow(QMainWindow):
                         company_id=api_config.company_id,
                         allow_user_device=allow_user_device,
                         allow_logout=allow_logout,
+                        allow_start_stop_activity_tracking=allow_start_stop_activity_tracking,
                         workpulse_manually_stopped=False,
                     )
                 except Exception as save_err:

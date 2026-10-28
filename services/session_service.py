@@ -16,6 +16,7 @@ class UserSession:
     workpulse_permitted: bool = True    # from enroll_device / get_settings
     allow_user_device: bool = True     # dynamic from server / DB (User/Device modal)
     allow_logout: bool = True          # dynamic from server / DB (Logout control)
+    allow_start_stop_activity_tracking: bool = True  # dynamic from server / DB (Start/Stop activity tracking)
     # ── Auth data returned dynamically by the login API ───────
     indo_code: str | None = None       # employee code from login
     api_key: str | None = None         # auth token from login
@@ -88,6 +89,7 @@ class SessionService:
         workpulse_permitted: bool = True,
         allow_user_device: bool = True,
         allow_logout: bool = True,
+        allow_start_stop_activity_tracking: bool = True,
         indo_code: str | None = None,
         api_key: str | None = None,
         employee_id: str | None = None,
@@ -112,6 +114,7 @@ class SessionService:
             workpulse_permitted=workpulse_permitted,
             allow_user_device=allow_user_device,
             allow_logout=allow_logout,
+            allow_start_stop_activity_tracking=allow_start_stop_activity_tracking,
             indo_code=indo_code,
             api_key=api_key,
             employee_id=employee_id,
@@ -147,6 +150,7 @@ class SessionService:
         workpulse_permitted: bool = True,
         allow_user_device: bool = True,
         allow_logout: bool = True,
+        allow_start_stop_activity_tracking: bool = True,
         indo_code: str | None = None,
         api_key: str | None = None,
         employee_id: str | None = None,
@@ -171,6 +175,7 @@ class SessionService:
             workpulse_permitted=workpulse_permitted,
             allow_user_device=allow_user_device,
             allow_logout=allow_logout,
+            allow_start_stop_activity_tracking=allow_start_stop_activity_tracking,
             indo_code=indo_code,
             api_key=api_key,
             employee_id=employee_id,
@@ -312,6 +317,7 @@ class SessionService:
         workpulse_permitted: bool | None = None,
         allow_user_device: bool | None = None,
         allow_logout: bool | None = None,
+        allow_start_stop_activity_tracking: bool | None = None,
     ) -> None:
         """Update permission flags dynamically (called when server pushes new settings)."""
         changed = False
@@ -324,6 +330,12 @@ class SessionService:
                 changed = True
             if allow_logout is not None and self._current_user.allow_logout != allow_logout:
                 self._current_user.allow_logout = allow_logout
+                changed = True
+            if (
+                allow_start_stop_activity_tracking is not None
+                and self._current_user.allow_start_stop_activity_tracking != allow_start_stop_activity_tracking
+            ):
+                self._current_user.allow_start_stop_activity_tracking = allow_start_stop_activity_tracking
                 changed = True
         if changed:
             self.notify_permission_listeners()

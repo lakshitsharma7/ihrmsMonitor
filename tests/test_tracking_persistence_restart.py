@@ -77,7 +77,7 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
                 self.assertTrue(win._tracker.is_workpulse, "Tracker must be actively running")
                 self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
                 # Header buttons are hidden
                 self.assertFalse(win.stop_button.isVisible(), "Stop WorkPulse button must NOT be visible")
                 self.assertFalse(win.start_button.isVisible(), "Start WorkPulse button must NOT be visible")
@@ -121,19 +121,19 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
             try:
                 self.assertTrue(win._tracker.is_workpulse)
                 self.assertFalse(self.store.is_workpulse_manually_stopped())
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
 
-                # User clicks "Paused" button on dashboard -> toggles to Paused state, tracker stays active
-                win.dashboard_page.workpulse_toggle_button.click()
+                # Tracking is paused -> button shows Start Tracking to resume, tracker stays active
+                win.dashboard_page.set_paused(True)
                 QApplication.processEvents()
 
                 self.assertTrue(win._tracker.is_workpulse)
                 self.assertTrue(self.store.is_workpulse_paused())
                 self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Paused")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Resume")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Start Tracking")
 
-                # User clicks "Resume" button on dashboard -> toggles back to Online/Active state
+                # User clicks "Start Tracking" button on dashboard -> toggles back to Online/Active state
                 win.dashboard_page.workpulse_toggle_button.click()
                 QApplication.processEvents()
 
@@ -141,7 +141,7 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
                 self.assertFalse(self.store.is_workpulse_paused())
                 self.assertEqual(win.status_badge.text(), "Online")
                 self.assertEqual(win.dashboard_page.workpulse_status_label.text(), "Online: Active")
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
             finally:
                 win._shutdown()
                 win.close()
@@ -178,7 +178,7 @@ class TestWorkPulsePersistenceRestart(unittest.TestCase):
                 self.assertTrue(win2._tracker.is_workpulse, "WorkPulse must resume after update restart")
                 self.assertEqual(win2.status_badge.text(), "Online")
                 self.assertEqual(win2.dashboard_page.network_status_label.text(), "● Online")
-                self.assertEqual(win2.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win2.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
             finally:
                 win2._shutdown()
                 win2.close()

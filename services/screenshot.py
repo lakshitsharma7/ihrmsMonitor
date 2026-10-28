@@ -76,36 +76,52 @@ def compress_image(
     3. Verify final size <= max_bytes.
     4. If compression cannot meet the limit, return None (discard).
     """
+    allowed = ["png", "jpg", "jpeg"]
     if max_bytes is None:
         try:
             from config.screenshot_config import get_screenshot_config
-            max_bytes = get_screenshot_config().max_size_bytes
+            cfg = get_screenshot_config()
+            max_bytes = cfg.max_size_bytes
+            allowed = getattr(cfg, "allowed_types", ["png", "jpg", "jpeg"])
         except Exception:
             max_bytes = DEFAULT_MAX_SCREENSHOT_BYTES
+    else:
+        try:
+            from config.screenshot_config import get_screenshot_config
+            allowed = getattr(get_screenshot_config(), "allowed_types", ["png", "jpg", "jpeg"])
+        except Exception:
+            pass
+
+    norm_allowed = {str(t).lower().lstrip(".") for t in allowed}
+    allow_png = "png" in norm_allowed
+    allow_jpeg = bool({"jpg", "jpeg"}.intersection(norm_allowed))
 
     try:
         rgb_img = image.convert("RGB")
 
-        # 1. Check lossless PNG size first
-        buf = io.BytesIO()
-        rgb_img.save(buf, format="PNG", optimize=True)
-        png_data = buf.getvalue()
-        if len(png_data) <= max_bytes:
-            # Preserves quality and avoids artificial enlargement
-            return png_data, ".png"
-
-        # 2. Try quantized PNG (256 colors)
-        try:
-            q_img = rgb_img.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+        # 1. Check lossless PNG size first (if PNG is allowed)
+        if allow_png:
             buf = io.BytesIO()
-            q_img.save(buf, format="PNG", optimize=True)
-            q_data = buf.getvalue()
-            if len(q_data) <= max_bytes:
-                return q_data, ".png"
-        except Exception:
-            pass
+            rgb_img.save(buf, format="PNG", optimize=True)
+            png_data = buf.getvalue()
+            if len(png_data) <= max_bytes:
+                # Preserves quality and avoids artificial enlargement
+                return png_data, ".png"
 
-        # 3. Adaptive JPEG search: adjust quality and scale to land <= max_bytes
+            # 2. Try quantized PNG (256 colors)
+            try:
+                q_img = rgb_img.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+                buf = io.BytesIO()
+                q_img.save(buf, format="PNG", optimize=True)
+                q_data = buf.getvalue()
+                if len(q_data) <= max_bytes:
+                    return q_data, ".png"
+            except Exception:
+                pass
+
+        # 3. Adaptive JPEG search (if JPEG is allowed)
+        if not allow_jpeg:
+            return None
         best_candidate = None
         best_size = 0
 
@@ -389,11 +405,15 @@ def capture_screenshot(
     if cfg.compression_enabled:
         compression_res = compress_image(image, max_bytes=max_bytes, min_bytes=min_bytes)
     else:
-        buf = io.BytesIO()
-        image.convert("RGB").save(buf, format="PNG", optimize=True)
-        raw_png = buf.getvalue()
-        if len(raw_png) <= max_bytes:
-            compression_res = (raw_png, ".png")
+        norm_allowed = {str(t).lower().lstrip(".") for t in getattr(cfg, "allowed_types", ["png"])}
+        if "png" in norm_allowed:
+            buf = io.BytesIO()
+            image.convert("RGB").save(buf, format="PNG", optimize=True)
+            raw_png = buf.getvalue()
+            if len(raw_png) <= max_bytes:
+                compression_res = (raw_png, ".png")
+            else:
+                compression_res = None
         else:
             compression_res = None
 

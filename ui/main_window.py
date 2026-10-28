@@ -1293,6 +1293,12 @@ class MainWindow(QMainWindow):
             self.logout_button.setVisible(allow_logout)
             self.logout_button.setEnabled(allow_logout)
 
+        # Dynamic Start/Stop Activity Tracking permission on Dashboard
+        allow_start_stop = getattr(session, "allow_start_stop_activity_tracking", True) if session else True
+        if hasattr(self, "dashboard_page") and self.dashboard_page:
+            if hasattr(self.dashboard_page, "set_allow_start_stop_tracking"):
+                self.dashboard_page.set_allow_start_stop_tracking(allow_start_stop)
+
         display_name = session.display_name if session else "User"
         if hasattr(self, "user_label") and self.user_label:
             self.user_label.setText(f"Welcome, {display_name}")

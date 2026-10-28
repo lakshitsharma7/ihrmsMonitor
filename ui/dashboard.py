@@ -124,6 +124,7 @@ class DashboardPage(QWidget):
 
         self._is_workpulse = False
         self._is_paused = False
+        self._allow_start_stop_tracking = True
         try:
             from services.secure_session import SessionStore
             store = SessionStore()
@@ -166,6 +167,16 @@ class DashboardPage(QWidget):
             self._is_network_online = True
 
         self._build_ui()
+
+        # Dynamic Start/Stop Activity Tracking permission
+        try:
+            from services.session_service import SessionService
+            curr_user = SessionService().current_user
+            if curr_user is not None:
+                self.set_allow_start_stop_tracking(getattr(curr_user, "allow_start_stop_activity_tracking", True))
+            SessionService().register_permission_listener(self._on_permission_updated)
+        except Exception:
+            pass
 
         # Autonomous timer to detect midnight/calendar date rollover even if workpulse is stopped
         self._date_timer = QTimer(self)
@@ -319,14 +330,45 @@ class DashboardPage(QWidget):
         self.pause_state_changed.emit(self._is_paused)
 
     def _on_workpulse_toggle_clicked(self) -> None:
-        """Handle user clicking Paused / Resume button on Dashboard.
+        """Handle user clicking Start Tracking / Stop Tracking button on Dashboard."""
+        if not getattr(self, "_allow_start_stop_tracking", True):
+            logger.info("Activity tracking manual start/stop blocked by policy (allow_start_stop_activity_tracking=False)")
+            return
 
-        Clicking Paused does NOT stop workpulse, log collection, screenshots,
-        or backend sync. It only changes the displayed workpulse status to Paused
-        and toggles the button text to Resume.
-        """
         self.workpulse_toggle_requested.emit()
-        self.set_paused(not self._is_paused)
+
+        is_running = getattr(self, "_is_workpulse", False) and not getattr(self, "_is_paused", False)
+        if is_running:
+            self.workpulse_stop_requested.emit()
+        else:
+            if getattr(self, "_is_paused", False):
+                self.set_paused(False)
+            self.workpulse_start_requested.emit()
+
+    def set_allow_start_stop_tracking(self, allowed: bool) -> None:
+        """Update permission to start/stop activity tracking on Dashboard."""
+        self._allow_start_stop_tracking = bool(allowed)
+        if hasattr(self, "workpulse_toggle_button") and self.workpulse_toggle_button:
+            self.workpulse_toggle_button.setEnabled(self._allow_start_stop_tracking)
+            self.workpulse_toggle_button.setVisible(True)
+            if not self._allow_start_stop_tracking:
+                self.workpulse_toggle_button.setToolTip(
+                    "Activity tracking start/stop is managed by your administrator."
+                )
+            else:
+                self.workpulse_toggle_button.setToolTip("")
+
+    set_allow_start_stop = set_allow_start_stop_tracking
+
+    def _on_permission_updated(self) -> None:
+        """Slot invoked whenever SessionService notifies permission changes."""
+        try:
+            from services.session_service import SessionService
+            user = SessionService().current_user
+            allowed = getattr(user, "allow_start_stop_activity_tracking", True) if user else True
+            self.set_allow_start_stop_tracking(allowed)
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         """Build the dashboard interface."""
@@ -606,8 +648,9 @@ class DashboardPage(QWidget):
 
         status_layout.addSpacing(2)
 
-        # 5. Single WorkPulse / Tracking button: [ Paused ] when running, [ Resume ] when paused
-        initial_btn_text = "Paused" if is_initially_active else "Resume"
+        # 5. Activity Tracking Start/Stop button
+        is_initially_paused = getattr(self, "_is_paused", False)
+        initial_btn_text = "Stop Tracking" if (is_initially_active and not is_initially_paused) else "Start Tracking"
         self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
         self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
         self.workpulse_toggle_button.setFixedHeight(28)
@@ -698,24 +741,13 @@ class DashboardPage(QWidget):
         self.timeline_table.hide()
 
     def _apply_toggle_button_style(self, is_active: bool) -> None:
-        """Apply dynamic color and styling to single Paused/Resume workpulse button."""
-        if self._is_paused:
-            self.workpulse_toggle_button.setText("Resume")
-            self.workpulse_toggle_button.setStyleSheet(
-                "QPushButton#WorkPulseToggleButton {"
-                "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
-                "    background-color: #0284c7; color: #ffffff; border: 1.5px solid transparent;"
-                "}"
-                "QPushButton#WorkPulseToggleButton:hover {"
-                "    background-color: #0369a1;"
-                "}"
-                "QPushButton#WorkPulseToggleButton:focus {"
-                "    border: 2px solid #93c5fd;"
-                "    outline: none;"
-                "}"
-            )
-        elif is_active:
-            self.workpulse_toggle_button.setText("Paused")
+        """Apply dynamic color and styling to Start/Stop tracking button."""
+        if not hasattr(self, "workpulse_toggle_button") or not self.workpulse_toggle_button:
+            return
+
+        is_running = bool(is_active) and not getattr(self, "_is_paused", False)
+        if is_running:
+            self.workpulse_toggle_button.setText("Stop Tracking")
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
@@ -728,9 +760,12 @@ class DashboardPage(QWidget):
                 "    border: 2px solid #fca5a5;"
                 "    outline: none;"
                 "}"
+                "QPushButton#WorkPulseToggleButton:disabled {"
+                "    background-color: #94a3b8; color: #f1f5f9; border: 1px solid #cbd5e1;"
+                "}"
             )
         else:
-            self.workpulse_toggle_button.setText("Resume")
+            self.workpulse_toggle_button.setText("Start Tracking")
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
@@ -742,6 +777,9 @@ class DashboardPage(QWidget):
                 "QPushButton#WorkPulseToggleButton:focus {"
                 "    border: 2px solid #93c5fd;"
                 "    outline: none;"
+                "}"
+                "QPushButton#WorkPulseToggleButton:disabled {"
+                "    background-color: #94a3b8; color: #f1f5f9; border: 1px solid #cbd5e1;"
                 "}"
             )
 
@@ -793,6 +831,11 @@ class DashboardPage(QWidget):
 
     def _shutdown(self) -> None:
         """Clean up background timers and persist active state on widget disposal."""
+        try:
+            from services.session_service import SessionService
+            SessionService().unregister_permission_listener(self._on_permission_updated)
+        except Exception:
+            pass
         try:
             from services.network_monitor import NetworkReachabilityMonitor
             NetworkReachabilityMonitor().unregister_listener(self._on_reachability_changed)

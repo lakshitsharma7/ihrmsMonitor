@@ -29,6 +29,9 @@ def _mask_token(token: Any) -> str:
         return "<None>"
     if len(s) <= 8:
         return "***"
+    return f"{s[:4]}...{s[-4:]}"
+
+
 DEFAULT_API_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "User-Agent": "iHRMS-Monitor/1.0",
@@ -376,12 +379,17 @@ class SyncService:
                     if update_kwargs:
                         repo.update(**update_kwargs)
 
-                    # ---------------------------------------------------------
-                    # FUTURE BACKEND INTEGRATION HOOK FOR SCREENSHOT CONFIG
-                    # When backend provides screenshot configuration fields:
-                    # from config.screenshot_config import apply_api_screenshot_config
-                    # apply_api_screenshot_config(settings_data)
-                    # ---------------------------------------------------------
+                    # Apply dynamic screenshot configuration from backend response
+                    try:
+                        from config.screenshot_config import apply_api_screenshot_config
+                        payload = {}
+                        if isinstance(res_data, dict):
+                            payload.update(res_data)
+                        if isinstance(settings_data, dict):
+                            payload.update(settings_data)
+                        apply_api_screenshot_config(payload)
+                    except Exception as cfg_err:
+                        logger.debug("Could not apply dynamic screenshot config: %s", cfg_err)
                 except Exception as db_err:
                     logger.error("Failed to update database settings from get_settings response: %s", db_err)
                 finally:
@@ -451,6 +459,19 @@ class SyncService:
                 if server_allow_workpulse is not None:
                     self._save_cached_setting("workpulse_permitted", server_allow_workpulse)
 
+                # Activity Tracking Start/Stop manual control permission
+                server_allow_start_stop = _extract_permission(
+                    settings_data,
+                    [
+                        "allow_start_stop_activity_tracking",
+                        "allow_start_stop_activity_workpulse",
+                        "allow_start_stop_tracking",
+                        "allow_start_stop",
+                    ]
+                )
+                if server_allow_start_stop is not None:
+                    self._save_cached_setting("allow_start_stop_activity_tracking", server_allow_start_stop)
+
                 # Update session permissions dynamically
                 perm_kwargs = {}
                 if server_allow_logout is not None:
@@ -459,6 +480,8 @@ class SyncService:
                     perm_kwargs["allow_user_device"] = server_allow_user_device
                 if server_allow_workpulse is not None:
                     perm_kwargs["workpulse_permitted"] = server_allow_workpulse
+                if server_allow_start_stop is not None:
+                    perm_kwargs["allow_start_stop_activity_tracking"] = server_allow_start_stop
 
                 if perm_kwargs:
                     session_svc.update_permissions(**perm_kwargs)
@@ -485,6 +508,7 @@ class SyncService:
                             company_id=saved.get("company_id"),
                             allow_user_device=curr.allow_user_device,
                             allow_logout=curr.allow_logout,
+                            allow_start_stop_activity_tracking=getattr(curr, "allow_start_stop_activity_tracking", True),
                         )
                 except Exception as perm_save_err:
                     logger.debug("Could not persist updated session permissions: %s", perm_save_err)
@@ -737,6 +761,13 @@ class SyncService:
             if not new_device_token:
                 logger.error("Device re-enrollment response contained no device_token: %s", resp.text)
                 return None
+
+            # Apply dynamic screenshot configuration from re-enrollment response
+            try:
+                from config.screenshot_config import apply_api_screenshot_config
+                apply_api_screenshot_config(enroll_json)
+            except Exception as cfg_err:
+                logger.debug("Could not apply screenshot config from re-enrollment: %s", cfg_err)
 
             # Persist in SessionService (both service level and user level)
             session_svc.update_device_token(new_device_token)

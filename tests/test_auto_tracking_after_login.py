@@ -121,10 +121,10 @@ class TestAutoWorkPulseAfterLogin(unittest.TestCase):
              patch.object(MainWindow, "_sync_permissions_from_backend"):
             win = MainWindow()
             try:
-                # Dashboard labels should be Active, button Paused, and network Online
+                # Dashboard labels should be Active, button Stop Tracking, and network Online
                 self.assertEqual(win.status_badge.text(), "Online")
                 self.assertIn("Active", win.dashboard_page.workpulse_status_label.text())
-                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Paused")
+                self.assertEqual(win.dashboard_page.workpulse_toggle_button.text(), "Stop Tracking")
                 self.assertEqual(win.dashboard_page.network_status_label.text(), "● Online")
             finally:
                 win._shutdown()
