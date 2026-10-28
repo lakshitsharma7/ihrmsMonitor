@@ -21,7 +21,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 import pytest
 from PIL import Image
 
@@ -95,14 +98,23 @@ class FakeActivityProvider(PlatformActivityProvider):
 
 def _create_high_entropy_screen(width: int = 1920, height: int = 1080) -> Image.Image:
     """Generate a realistic desktop screen with smooth 2D gradients and rich content."""
-    x = np.linspace(0, 1, width)
-    y = np.linspace(0, 1, height)
-    xx, yy = np.meshgrid(x, y)
-    r = (np.sin(xx * 50) * 127 + 128).astype(np.uint8)
-    g = (np.cos(yy * 50) * 127 + 128).astype(np.uint8)
-    b = (np.sin((xx + yy) * 30) * 127 + 128).astype(np.uint8)
-    arr = np.stack([r, g, b], axis=-1)
-    return Image.fromarray(arr)
+    if np is not None:
+        x = np.linspace(0, 1, width)
+        y = np.linspace(0, 1, height)
+        xx, yy = np.meshgrid(x, y)
+        r = (np.sin(xx * 50) * 127 + 128).astype(np.uint8)
+        g = (np.cos(yy * 50) * 127 + 128).astype(np.uint8)
+        b = (np.sin((xx + yy) * 30) * 127 + 128).astype(np.uint8)
+        arr = np.stack([r, g, b], axis=-1)
+        return Image.fromarray(arr)
+    # Pure PIL fallback for runners without numpy
+    data = bytearray(width * height * 3)
+    for i in range(width * height):
+        idx = i * 3
+        data[idx] = (i * 7) % 256
+        data[idx + 1] = (i * 13) % 256
+        data[idx + 2] = (i * 29) % 256
+    return Image.frombytes("RGB", (width, height), bytes(data))
 
 
 def advance_tracker(tracker: ActivityTracker, clock: DeterministicClock, total_seconds: float, step: float = 5.0) -> None:
