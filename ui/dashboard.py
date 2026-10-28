@@ -330,7 +330,7 @@ class DashboardPage(QWidget):
         self.pause_state_changed.emit(self._is_paused)
 
     def _on_workpulse_toggle_clicked(self) -> None:
-        """Handle user clicking Start Tracking / Stop Tracking button on Dashboard."""
+        """Handle user clicking Pause / Resume button on Dashboard."""
         if not getattr(self, "_allow_start_stop_tracking", True):
             logger.info("Activity tracking manual start/stop blocked by policy (allow_start_stop_activity_tracking=False)")
             return
@@ -339,11 +339,11 @@ class DashboardPage(QWidget):
 
         is_running = getattr(self, "_is_workpulse", False) and not getattr(self, "_is_paused", False)
         if is_running:
-            self.workpulse_stop_requested.emit()
+            self.set_paused(True)
         else:
-            if getattr(self, "_is_paused", False):
-                self.set_paused(False)
-            self.workpulse_start_requested.emit()
+            self.set_paused(False)
+            if not getattr(self, "_is_workpulse", False):
+                self.workpulse_start_requested.emit()
 
     def set_allow_start_stop_tracking(self, allowed: bool) -> None:
         """Update permission to start/stop activity tracking on Dashboard."""
@@ -648,14 +648,16 @@ class DashboardPage(QWidget):
 
         status_layout.addSpacing(2)
 
-        # 5. Activity Tracking Start/Stop button
+        # 5. Activity Tracking Pause / Resume button
         is_initially_paused = getattr(self, "_is_paused", False)
-        initial_btn_text = "Stop Tracking" if (is_initially_active and not is_initially_paused) else "Start Tracking"
+        initial_btn_text = "Pause" if (is_initially_active and not is_initially_paused) else "Resume"
         self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
         self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
         self.workpulse_toggle_button.setFixedHeight(28)
         self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.workpulse_toggle_button.clicked.connect(self._on_workpulse_toggle_clicked)
+        self.pause_button = self.workpulse_toggle_button
+        self.resume_button = self.workpulse_toggle_button
         self.start_workpulse_button = self.workpulse_toggle_button
         self.stop_workpulse_button = self.workpulse_toggle_button
         self.tracking_toggle_button = self.workpulse_toggle_button
@@ -741,13 +743,13 @@ class DashboardPage(QWidget):
         self.timeline_table.hide()
 
     def _apply_toggle_button_style(self, is_active: bool) -> None:
-        """Apply dynamic color and styling to Start/Stop tracking button."""
+        """Apply dynamic color and styling to Pause / Resume button."""
         if not hasattr(self, "workpulse_toggle_button") or not self.workpulse_toggle_button:
             return
 
         is_running = bool(is_active) and not getattr(self, "_is_paused", False)
         if is_running:
-            self.workpulse_toggle_button.setText("Stop Tracking")
+            self.workpulse_toggle_button.setText("Pause")
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"
@@ -765,7 +767,7 @@ class DashboardPage(QWidget):
                 "}"
             )
         else:
-            self.workpulse_toggle_button.setText("Start Tracking")
+            self.workpulse_toggle_button.setText("Resume")
             self.workpulse_toggle_button.setStyleSheet(
                 "QPushButton#WorkPulseToggleButton {"
                 "    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 6px;"

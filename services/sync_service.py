@@ -77,6 +77,7 @@ class SyncService:
     current_idle_threshold_seconds: int = 300  # Default 300 seconds until first API settings load
     _sync_lock: threading.Lock = threading.Lock()
     _fetching_settings_lock: threading.Lock = threading.Lock()
+    _re_enroll_lock: threading.Lock = threading.Lock()
     _sync_failure_reported: bool = False
     _offline_sync_failure_reported: bool = False
 
@@ -233,6 +234,246 @@ class SyncService:
             pass
         return f"{self.api_url}/workpulse/enroll_device"
 
+    def apply_settings_payload(self, res_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Safely parse, map, and persist configuration and permissions returned by the backend API.
+
+        Supports responses from:
+        - POST /workpulse/enroll_device (e.g. sync_interval_minutes, idle_threshold_minutes, screenshot_settings)
+        - POST /workpulse/get_settings
+        - Nested under "data" or "settings", or flat dictionary
+        """
+        if not isinstance(res_data, dict) or not res_data:
+            return {}
+
+        settings_data: dict[str, Any] = {}
+        if res_data.get("response") == "Success" and "data" in res_data and isinstance(res_data["data"], dict):
+            settings_data = res_data["data"]
+        elif res_data.get("status") in (1, 2) and "data" in res_data and isinstance(res_data["data"], dict):
+            settings_data = res_data["data"]
+        elif res_data.get("status") in (1, 2) and "settings" in res_data and isinstance(res_data["settings"], dict):
+            settings_data = res_data["settings"]
+        elif "data" in res_data and isinstance(res_data["data"], dict):
+            settings_data = res_data["data"]
+        elif "settings" in res_data and isinstance(res_data["settings"], dict):
+            settings_data = res_data["settings"]
+        else:
+            settings_data = res_data
+
+        if not settings_data:
+            return {}
+
+        logger.info("Applying configuration from API payload: %s", settings_data)
+
+        # 1. sync_interval: support sync_interval_seconds, sync_interval, and sync_interval_minutes (from enroll_device schema)
+        server_sync = settings_data.get("sync_interval_seconds")
+        if server_sync is None:
+            server_sync = settings_data.get("sync_interval")
+        if server_sync is not None:
+            try:
+                sync_val = int(server_sync)
+                if sync_val > 0:
+                    self.current_sync_interval_seconds = sync_val
+                    SyncService.current_sync_interval_seconds = sync_val
+                    self._save_cached_setting("sync_interval_seconds", sync_val)
+            except (ValueError, TypeError):
+                pass
+        elif "sync_interval_minutes" in settings_data and settings_data.get("sync_interval_minutes") is not None:
+            try:
+                sync_min = float(settings_data["sync_interval_minutes"])
+                if sync_min > 0:
+                    sync_val = int(sync_min * 60)
+                    self.current_sync_interval_seconds = sync_val
+                    SyncService.current_sync_interval_seconds = sync_val
+                    self._save_cached_setting("sync_interval_seconds", sync_val)
+            except (ValueError, TypeError):
+                pass
+
+        # 2. idle_threshold: support idle_threshold_seconds, idle_threshold, and idle_threshold_minutes (from enroll_device schema)
+        server_idle = settings_data.get("idle_threshold_seconds")
+        if server_idle is None:
+            server_idle = settings_data.get("idle_threshold")
+        if server_idle is not None:
+            try:
+                idle_val = int(server_idle)
+                if idle_val > 0:
+                    self.current_idle_threshold_seconds = idle_val
+                    SyncService.current_idle_threshold_seconds = idle_val
+                    self._save_cached_setting("idle_threshold_seconds", idle_val)
+            except (ValueError, TypeError):
+                pass
+        elif "idle_threshold_minutes" in settings_data and settings_data.get("idle_threshold_minutes") is not None:
+            try:
+                idle_min = float(settings_data["idle_threshold_minutes"])
+                if idle_min > 0:
+                    idle_val = int(idle_min * 60)
+                    self.current_idle_threshold_seconds = idle_val
+                    SyncService.current_idle_threshold_seconds = idle_val
+                    self._save_cached_setting("idle_threshold_seconds", idle_val)
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Update local database settings
+        db_session = get_session()
+        try:
+            from database.repository import SettingsRepository
+            repo = SettingsRepository(db_session)
+            update_kwargs = {}
+            if self.current_idle_threshold_seconds:
+                update_kwargs["idle_threshold"] = self.current_idle_threshold_seconds
+
+            capture_interval = settings_data.get("capture_interval")
+            if capture_interval is not None:
+                update_kwargs["screenshot_custom_interval"] = int(capture_interval)
+                update_kwargs["screenshot_interval_type"] = "custom"
+
+            capture_mode = settings_data.get("capture_mode")
+            if capture_mode is not None:
+                update_kwargs["capture_on_switch"] = True if capture_mode != "disabled" else False
+
+            workpulse_enabled = settings_data.get("workpulse_enabled")
+            if workpulse_enabled is not None:
+                update_kwargs["workpulse_enabled"] = bool(workpulse_enabled)
+
+            if update_kwargs:
+                repo.update(**update_kwargs)
+
+            # Apply dynamic screenshot configuration from backend response
+            try:
+                from config.screenshot_config import apply_api_screenshot_config
+                payload = {}
+                if isinstance(res_data, dict):
+                    payload.update(res_data)
+                if isinstance(settings_data, dict):
+                    payload.update(settings_data)
+                apply_api_screenshot_config(payload)
+            except Exception as cfg_err:
+                logger.debug("Could not apply dynamic screenshot config: %s", cfg_err)
+        except Exception as db_err:
+            logger.error("Failed to update database settings from API response: %s", db_err)
+        finally:
+            db_session.close()
+
+        # 4. Extract and apply dynamic permissions from server
+        from services.session_service import SessionService
+        session_svc = SessionService()
+
+        def _parse_bool_permission(val: Any) -> bool | None:
+            if val is None:
+                return None
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, (int, float)):
+                return bool(val)
+            if isinstance(val, str):
+                s = val.strip().lower()
+                if s in ("true", "1", "yes", "t", "y", "enable", "enabled"):
+                    return True
+                if s in ("false", "0", "no", "f", "n", "disable", "disabled"):
+                    return False
+            return None
+
+        def _extract_permission(data: dict, keys: list[str]) -> bool | None:
+            for k in keys:
+                if k in data and data[k] is not None:
+                    res = _parse_bool_permission(data[k])
+                    if res is not None:
+                        return res
+            return None
+
+        # Logout control permission
+        server_allow_logout = _extract_permission(
+            settings_data,
+            ["allow_logout", "logout_permitted", "can_logout", "allow_user_logout", "enable_logout"]
+        )
+        if server_allow_logout is not None:
+            self._save_cached_setting("allow_logout", server_allow_logout)
+
+        # User / Device control permission
+        server_allow_user_device = _extract_permission(
+            settings_data,
+            [
+                "allow_user_device",
+                "allow_user_device_info",
+                "allow_device_info",
+                "allow_device",
+                "allow_user_device_modal",
+                "allow_user_info",
+                "show_user_device",
+                "user_device_allowed",
+                "user_device_permitted",
+                "user_device_enabled",
+                "device_info_enabled",
+                "can_view_user_device",
+            ]
+        )
+        if server_allow_user_device is not None:
+            self._save_cached_setting("allow_user_device", server_allow_user_device)
+
+        # WorkPulse permitted (checks if activity workpulse is enabled by backend)
+        server_allow_workpulse = _extract_permission(
+            settings_data,
+            ["workpulse_enabled", "workpulse_permitted", "allow_workpulse", "is_workpulse_enabled", "enable_workpulse"]
+        )
+        if server_allow_workpulse is not None:
+            self._save_cached_setting("workpulse_permitted", server_allow_workpulse)
+
+        # Activity Tracking Start/Stop manual control permission
+        server_allow_start_stop = _extract_permission(
+            settings_data,
+            [
+                "allow_start_stop_activity_tracking",
+                "allow_start_stop_activity_workpulse",
+                "allow_start_stop_tracking",
+                "allow_start_stop",
+            ]
+        )
+        if server_allow_start_stop is not None:
+            self._save_cached_setting("allow_start_stop_activity_tracking", server_allow_start_stop)
+
+        # Update session permissions dynamically
+        perm_kwargs = {}
+        if server_allow_logout is not None:
+            perm_kwargs["allow_logout"] = server_allow_logout
+        if server_allow_user_device is not None:
+            perm_kwargs["allow_user_device"] = server_allow_user_device
+        if server_allow_workpulse is not None:
+            perm_kwargs["workpulse_permitted"] = server_allow_workpulse
+        if server_allow_start_stop is not None:
+            perm_kwargs["allow_start_stop_activity_tracking"] = server_allow_start_stop
+
+        if perm_kwargs:
+            session_svc.update_permissions(**perm_kwargs)
+
+        # Persist updated permissions to SessionStore if active session exists
+        try:
+            from services.secure_session import SessionStore
+            store = SessionStore()
+            saved = store.load_session()
+            if saved and session_svc.current_user:
+                curr = session_svc.current_user
+                store.save_session(
+                    company_code=saved.get("company_code") or curr.company_code or "",
+                    indo_code=saved.get("indo_code") or curr.indo_code or "",
+                    api_key=saved.get("api_key") or curr.api_key or "",
+                    device_token=saved.get("device_token") or curr.device_token or "",
+                    username=saved.get("username") or curr.username,
+                    full_name=saved.get("full_name") or curr.full_name,
+                    user_type=saved.get("user_type") or curr.user_type,
+                    employee_id=saved.get("employee_id") or curr.employee_id,
+                    device_info=saved.get("device_info") or curr.device_info or {},
+                    workpulse_permitted=curr.workpulse_permitted,
+                    base_url=saved.get("base_url"),
+                    company_id=saved.get("company_id"),
+                    allow_user_device=curr.allow_user_device,
+                    allow_logout=curr.allow_logout,
+                    allow_start_stop_activity_tracking=getattr(curr, "allow_start_stop_activity_tracking", True),
+                )
+        except Exception as perm_save_err:
+            logger.debug("Could not persist updated session permissions: %s", perm_save_err)
+
+        return settings_data
+
     def fetch_settings(self) -> dict:
         """
         Fetch latest configuration from workpulse/get_settings at the beginning of each sync cycle
@@ -319,201 +560,7 @@ class SyncService:
                 logger.warning("Failed to parse get_settings JSON: %s", json_err)
                 return {}
 
-            settings_data = {}
-            if res_data.get("response") == "Success" and "data" in res_data:
-                settings_data = res_data.get("data", {})
-            elif res_data.get("status") == 1:
-                settings_data = res_data.get("settings", {}) or res_data.get("data", {})
-
-            if settings_data:
-                logger.info("Fetched configuration from Sync API (get_settings): %s", settings_data)
-
-                # 1. sync_interval_seconds: use exact API-returned value
-                server_sync = settings_data.get("sync_interval_seconds")
-                if server_sync is None:
-                    server_sync = settings_data.get("sync_interval")
-                if server_sync is not None:
-                    try:
-                        sync_val = int(server_sync)
-                        if sync_val > 0:
-                            self.current_sync_interval_seconds = sync_val
-                            self._save_cached_setting("sync_interval_seconds", sync_val)
-                    except (ValueError, TypeError):
-                        pass
-
-                # 2. idle_threshold_seconds: use exact API-returned value
-                server_idle = settings_data.get("idle_threshold_seconds")
-                if server_idle is None:
-                    server_idle = settings_data.get("idle_threshold")
-                if server_idle is not None:
-                    try:
-                        idle_val = int(server_idle)
-                        if idle_val > 0:
-                            self.current_idle_threshold_seconds = idle_val
-                            self._save_cached_setting("idle_threshold_seconds", idle_val)
-                    except (ValueError, TypeError):
-                        pass
-
-                # 3. Update local database settings
-                db_session = get_session()
-                try:
-                    from database.repository import SettingsRepository
-                    repo = SettingsRepository(db_session)
-                    update_kwargs = {}
-                    if self.current_idle_threshold_seconds:
-                        update_kwargs["idle_threshold"] = self.current_idle_threshold_seconds
-
-                    capture_interval = settings_data.get("capture_interval")
-                    if capture_interval is not None:
-                        update_kwargs["screenshot_custom_interval"] = int(capture_interval)
-                        update_kwargs["screenshot_interval_type"] = "custom"
-
-                    capture_mode = settings_data.get("capture_mode")
-                    if capture_mode is not None:
-                        update_kwargs["capture_on_switch"] = True if capture_mode != "disabled" else False
-
-                    workpulse_enabled = settings_data.get("workpulse_enabled")
-                    if workpulse_enabled is not None:
-                        update_kwargs["workpulse_enabled"] = bool(workpulse_enabled)
-
-                    if update_kwargs:
-                        repo.update(**update_kwargs)
-
-                    # Apply dynamic screenshot configuration from backend response
-                    try:
-                        from config.screenshot_config import apply_api_screenshot_config
-                        payload = {}
-                        if isinstance(res_data, dict):
-                            payload.update(res_data)
-                        if isinstance(settings_data, dict):
-                            payload.update(settings_data)
-                        apply_api_screenshot_config(payload)
-                    except Exception as cfg_err:
-                        logger.debug("Could not apply dynamic screenshot config: %s", cfg_err)
-                except Exception as db_err:
-                    logger.error("Failed to update database settings from get_settings response: %s", db_err)
-                finally:
-                    db_session.close()
-
-                # 4. Extract and apply dynamic permissions from server
-                from services.session_service import SessionService
-                session_svc = SessionService()
-
-                def _parse_bool_permission(val: Any) -> bool | None:
-                    if val is None:
-                        return None
-                    if isinstance(val, bool):
-                        return val
-                    if isinstance(val, (int, float)):
-                        return bool(val)
-                    if isinstance(val, str):
-                        s = val.strip().lower()
-                        if s in ("true", "1", "yes", "t", "y", "enable", "enabled"):
-                            return True
-                        if s in ("false", "0", "no", "f", "n", "disable", "disabled"):
-                            return False
-                    return None
-
-                def _extract_permission(data: dict, keys: list[str]) -> bool | None:
-                    for k in keys:
-                        if k in data and data[k] is not None:
-                            res = _parse_bool_permission(data[k])
-                            if res is not None:
-                                return res
-                    return None
-
-                # Logout control permission
-                server_allow_logout = _extract_permission(
-                    settings_data,
-                    ["allow_logout", "logout_permitted", "can_logout", "allow_user_logout", "enable_logout"]
-                )
-                if server_allow_logout is not None:
-                    self._save_cached_setting("allow_logout", server_allow_logout)
-
-                # User / Device control permission
-                server_allow_user_device = _extract_permission(
-                    settings_data,
-                    [
-                        "allow_user_device",
-                        "allow_user_device_info",
-                        "allow_device_info",
-                        "allow_device",
-                        "allow_user_device_modal",
-                        "allow_user_info",
-                        "show_user_device",
-                        "user_device_allowed",
-                        "user_device_permitted",
-                        "user_device_enabled",
-                        "device_info_enabled",
-                        "can_view_user_device",
-                    ]
-                )
-                if server_allow_user_device is not None:
-                    self._save_cached_setting("allow_user_device", server_allow_user_device)
-
-                # WorkPulse permitted (checks if activity workpulse is enabled by backend)
-                server_allow_workpulse = _extract_permission(
-                    settings_data,
-                    ["workpulse_enabled", "workpulse_permitted", "allow_workpulse", "is_workpulse_enabled", "enable_workpulse"]
-                )
-                if server_allow_workpulse is not None:
-                    self._save_cached_setting("workpulse_permitted", server_allow_workpulse)
-
-                # Activity Tracking Start/Stop manual control permission
-                server_allow_start_stop = _extract_permission(
-                    settings_data,
-                    [
-                        "allow_start_stop_activity_tracking",
-                        "allow_start_stop_activity_workpulse",
-                        "allow_start_stop_tracking",
-                        "allow_start_stop",
-                    ]
-                )
-                if server_allow_start_stop is not None:
-                    self._save_cached_setting("allow_start_stop_activity_tracking", server_allow_start_stop)
-
-                # Update session permissions dynamically
-                perm_kwargs = {}
-                if server_allow_logout is not None:
-                    perm_kwargs["allow_logout"] = server_allow_logout
-                if server_allow_user_device is not None:
-                    perm_kwargs["allow_user_device"] = server_allow_user_device
-                if server_allow_workpulse is not None:
-                    perm_kwargs["workpulse_permitted"] = server_allow_workpulse
-                if server_allow_start_stop is not None:
-                    perm_kwargs["allow_start_stop_activity_tracking"] = server_allow_start_stop
-
-                if perm_kwargs:
-                    session_svc.update_permissions(**perm_kwargs)
-
-                # Persist updated permissions to SessionStore if active session exists
-                try:
-                    from services.secure_session import SessionStore
-                    store = SessionStore()
-                    saved = store.load_session()
-                    if saved and session_svc.current_user:
-                        curr = session_svc.current_user
-                        store.save_session(
-                            company_code=saved.get("company_code") or curr.company_code or "",
-                            indo_code=saved.get("indo_code") or curr.indo_code or "",
-                            api_key=saved.get("api_key") or curr.api_key or "",
-                            device_token=saved.get("device_token") or curr.device_token or "",
-                            username=saved.get("username") or curr.username,
-                            full_name=saved.get("full_name") or curr.full_name,
-                            user_type=saved.get("user_type") or curr.user_type,
-                            employee_id=saved.get("employee_id") or curr.employee_id,
-                            device_info=saved.get("device_info") or curr.device_info or {},
-                            workpulse_permitted=curr.workpulse_permitted,
-                            base_url=saved.get("base_url"),
-                            company_id=saved.get("company_id"),
-                            allow_user_device=curr.allow_user_device,
-                            allow_logout=curr.allow_logout,
-                            allow_start_stop_activity_tracking=getattr(curr, "allow_start_stop_activity_tracking", True),
-                        )
-                except Exception as perm_save_err:
-                    logger.debug("Could not persist updated session permissions: %s", perm_save_err)
-
-                return settings_data
+            return self.apply_settings_payload(res_data)
         except Exception as err:
             logger.warning(
                 "Could not reach Sync API (workpulse/get_settings); preserving last successfully received settings "
@@ -613,7 +660,11 @@ class SyncService:
 
     def re_enroll_device(self) -> str | None:
         """Instance method entry point for device re-enrollment."""
-        return self._do_re_enroll()
+        token = self._do_re_enroll()
+        if token:
+            self.current_sync_interval_seconds = SyncService.current_sync_interval_seconds
+            self.current_idle_threshold_seconds = SyncService.current_idle_threshold_seconds
+        return token
 
     @classmethod
     def _do_re_enroll(cls) -> str | None:
@@ -623,6 +674,10 @@ class SyncService:
         Persists the newly returned device_token to SessionStore, SessionService,
         and DeviceRegistryService.
         """
+        if not cls._re_enroll_lock.acquire(timeout=10.0):
+            logger.debug("_do_re_enroll already in progress; waiting/skipping concurrent re-enroll.")
+            return cls._require_device_token()
+
         try:
             from services.secure_session import SessionStore
             from services.session_service import SessionService
@@ -762,12 +817,11 @@ class SyncService:
                 logger.error("Device re-enrollment response contained no device_token: %s", resp.text)
                 return None
 
-            # Apply dynamic screenshot configuration from re-enrollment response
+            # Apply dynamic settings and screenshot configuration from re-enrollment response
             try:
-                from config.screenshot_config import apply_api_screenshot_config
-                apply_api_screenshot_config(enroll_json)
+                cls().apply_settings_payload(enroll_json)
             except Exception as cfg_err:
-                logger.debug("Could not apply screenshot config from re-enrollment: %s", cfg_err)
+                logger.debug("Could not apply settings from re-enrollment: %s", cfg_err)
 
             # Persist in SessionService (both service level and user level)
             session_svc.update_device_token(new_device_token)
@@ -794,6 +848,8 @@ class SyncService:
         except Exception as exc:
             logger.exception("Unexpected error during device re-enrollment: %s", exc)
             return None
+        finally:
+            cls._re_enroll_lock.release()
 
     @classmethod
     def _require_device_token(cls) -> str | None:

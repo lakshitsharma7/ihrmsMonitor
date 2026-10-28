@@ -1121,6 +1121,13 @@ class LoginWindow(QMainWindow):
                 except Exception as cfg_err:
                     logger.debug("Could not apply screenshot config from device enrollment: %s", cfg_err)
 
+                try:
+                    from services.sync_service import SyncService
+                    if isinstance(enroll_json, dict):
+                        SyncService().apply_settings_payload(enroll_json)
+                except Exception as sync_cfg_err:
+                    logger.debug("Could not apply sync settings from device enrollment: %s", sync_cfg_err)
+
                 login_data = res_json.get("data", {}) if isinstance(res_json.get("data"), dict) else {}
                 full_name = (
                     res_json.get("fullName")
