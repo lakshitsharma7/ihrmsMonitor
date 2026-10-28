@@ -79,8 +79,23 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
         self.assertIsNotNone(user)
         self.assertFalse(user.allow_start_stop_activity_tracking)
 
-    def test_session_store_persistence(self):
+    @patch("services.secure_session._cred_write", return_value=True)
+    @patch("services.secure_session._cred_read")
+    def test_session_store_persistence(self, mock_cred_read, mock_cred_write):
         """SessionStore persists and restores allow_start_stop_activity_tracking."""
+        mock_cred_read.return_value = {
+            "company_code": "TEST_CO",
+            "indo_code": "EMP_001",
+            "api_key": "API_KEY_001",
+            "device_token": "DEV_TOK_001",
+            "username": "emp_persist",
+            "full_name": "Persisted User",
+            "user_type": "User",
+            "employee_id": "E001",
+            "device_info": {"hostname": "Laptop1"},
+            "workpulse_permitted": True,
+            "allow_start_stop_activity_tracking": False,
+        }
         saved = self.store.save_session(
             company_code="TEST_CO",
             indo_code="EMP_001",
@@ -204,25 +219,29 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
         self.assertTrue(btn.isEnabled(), "Button must be enabled when setting is True")
         self.assertFalse(btn.isHidden(), "Button must not be hidden when setting is True")
         self.assertTrue(btn.isVisible(), "Button must be visible when setting is True")
+        self.assertTrue(dashboard.last_update_label.isVisible(), "Last update label must be visible when setting is True")
+        self.assertTrue(dashboard.start_stop_section.isVisible(), "Section must be visible when setting is True")
         self.assertFalse(dashboard.is_paused())
-        self.assertEqual(btn.text(), "Stop Tracking")
+        self.assertEqual(btn.text(), "Pause")
 
-        # 1. Clicking "Stop Tracking" when active requests stop
-        stop_signals = []
-        dashboard.workpulse_stop_requested.connect(lambda: stop_signals.append(True))
+        # 1. Clicking "Pause" when active pauses tracking
+        pause_signals = []
+        dashboard.pause_state_changed.connect(lambda p: pause_signals.append(p))
         btn.click()
-        self.assertEqual(len(stop_signals), 1, "Clicking Stop Tracking must emit stop requested signal")
+        self.assertTrue(dashboard.is_paused())
+        self.assertEqual(btn.text(), "Resume")
+        self.assertEqual(pause_signals, [True])
 
-        # 2. When tracking is stopped, button changes to "Start Tracking"
+        # 2. When tracking is inactive, button shows "Resume"
         dashboard.set_workpulse_active(False)
-        self.assertEqual(btn.text(), "Start Tracking")
+        self.assertEqual(btn.text(), "Resume")
         self.assertTrue(btn.isEnabled(), "Button remains available when stopped")
 
-        # 3. Clicking "Start Tracking" requests start
+        # 3. Clicking "Resume" requests start
         start_signals = []
         dashboard.workpulse_start_requested.connect(lambda: start_signals.append(True))
         btn.click()
-        self.assertEqual(len(start_signals), 1, "Clicking Start Tracking must emit start requested signal")
+        self.assertEqual(len(start_signals), 1, "Clicking Resume must emit start requested signal")
 
         dashboard._shutdown()
 
@@ -242,15 +261,15 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
         btn = dashboard.workpulse_toggle_button
         # Controls remain available to start tracking
         self.assertTrue(btn.isEnabled(), "Controls must remain available when tracking is paused")
-        self.assertEqual(btn.text(), "Start Tracking", "Button should show Start Tracking to allow user to start")
+        self.assertEqual(btn.text(), "Resume", "Button should show Resume to allow user to start")
 
-        start_signals = []
-        dashboard.workpulse_start_requested.connect(lambda: start_signals.append(True))
+        pause_signals = []
+        dashboard.pause_state_changed.connect(lambda p: pause_signals.append(p))
 
-        # Clicking Start Tracking starts tracking and clears paused state
+        # Clicking Resume starts tracking and clears paused state
         btn.click()
-        self.assertFalse(dashboard.is_paused(), "Clicking Start Tracking while paused must unpause")
-        self.assertEqual(len(start_signals), 1, "Clicking Start Tracking must emit start requested signal")
+        self.assertFalse(dashboard.is_paused(), "Clicking Resume while paused must unpause")
+        self.assertEqual(pause_signals, [False], "Clicking Resume must unpause tracking")
 
         dashboard._shutdown()
 
@@ -267,6 +286,7 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
         )
 
         dashboard = DashboardPage(self.mock_activity_service)
+        dashboard.show()
         dashboard.set_workpulse_active(True)
 
         btn = dashboard.workpulse_toggle_button
@@ -300,6 +320,7 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
         )
 
         dashboard = DashboardPage(self.mock_activity_service)
+        dashboard.show()
         dashboard.set_workpulse_active(True)
 
         btn = dashboard.workpulse_toggle_button
@@ -311,19 +332,23 @@ class TestAllowStartStopActivityTracking(unittest.TestCase):
 
         self.assertFalse(btn.isEnabled(), "Button must become disabled dynamically")
 
-        # Try to toggle while disabled
-        stop_signals = []
-        dashboard.workpulse_stop_requested.connect(lambda: stop_signals.append(True))
+        # Try to toggle while disabled / hidden
+        toggle_signals = []
+        dashboard.workpulse_toggle_requested.connect(lambda: toggle_signals.append(True))
         btn.click()
-        self.assertEqual(len(stop_signals), 0, "Blocked while disabled")
+        self.assertEqual(len(toggle_signals), 0, "Blocked while disabled")
+        self.assertFalse(btn.isVisible(), "Button must become hidden dynamically")
+        self.assertFalse(dashboard.last_update_label.isVisible(), "Last update label must become hidden dynamically")
 
         # Dynamically push setting = True
         SessionService().update_permissions(allow_start_stop_activity_tracking=True)
         QApplication.processEvents()
 
         self.assertTrue(btn.isEnabled(), "Button must become enabled dynamically")
+        self.assertTrue(btn.isVisible(), "Button must become visible dynamically")
+        self.assertTrue(dashboard.last_update_label.isVisible(), "Last update label must become visible dynamically")
         btn.click()
-        self.assertEqual(len(stop_signals), 1, "Toggling works after re-enabling")
+        self.assertEqual(len(toggle_signals), 1, "Toggling works after re-enabling")
 
         dashboard._shutdown()
 

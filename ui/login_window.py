@@ -1241,6 +1241,27 @@ class LoginWindow(QMainWindow):
                 # Dynamic Start/Stop Activity Tracking permission from backend candidates
                 allow_start_stop_activity_tracking = True
                 for c in candidates:
+                    pair_found = False
+                    for start_k, stop_k in [
+                        ("start", "stop"),
+                        ("allow_start", "allow_stop"),
+                        ("can_start", "can_stop"),
+                        ("start_tracking", "stop_tracking"),
+                        ("allow_start_tracking", "allow_stop_tracking"),
+                    ]:
+                        if start_k in c and stop_k in c and c[start_k] is not None and c[stop_k] is not None:
+                            ps = _parse_bool_permission(c[start_k])
+                            pst = _parse_bool_permission(c[stop_k])
+                            if ps is False and pst is False:
+                                allow_start_stop_activity_tracking = False
+                                pair_found = True
+                                break
+                            elif ps is True or pst is True:
+                                allow_start_stop_activity_tracking = True
+                                pair_found = True
+                                break
+                    if pair_found:
+                        break
                     perm = _extract_permission(c, [
                         "allow_start_stop_activity_tracking",
                         "allow_start_stop_activity_workpulse",

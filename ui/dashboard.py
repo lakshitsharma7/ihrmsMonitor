@@ -130,6 +130,9 @@ class DashboardPage(QWidget):
             store = SessionStore()
             self._is_workpulse = store.is_workpulse_active() and not store.is_workpulse_manually_stopped()
             self._is_paused = store.is_workpulse_paused()
+            saved = store.load_session()
+            if saved and "allow_start_stop_activity_tracking" in saved:
+                self._allow_start_stop_tracking = bool(saved["allow_start_stop_activity_tracking"])
         except Exception:
             pass
 
@@ -346,11 +349,21 @@ class DashboardPage(QWidget):
                 self.workpulse_start_requested.emit()
 
     def set_allow_start_stop_tracking(self, allowed: bool) -> None:
-        """Update permission to start/stop activity tracking on Dashboard."""
+        """Update permission to start/stop activity tracking on Dashboard.
+        
+        When allowed is False (start === false && stop === false), completely hides
+        the Pause button and the related Last Update section without placeholders.
+        """
         self._allow_start_stop_tracking = bool(allowed)
+        if hasattr(self, "start_stop_section") and self.start_stop_section:
+            self.start_stop_section.setVisible(self._allow_start_stop_tracking)
+        if hasattr(self, "last_update_section") and self.last_update_section:
+            self.last_update_section.setVisible(self._allow_start_stop_tracking)
+        if hasattr(self, "last_update_label") and self.last_update_label:
+            self.last_update_label.setVisible(self._allow_start_stop_tracking)
         if hasattr(self, "workpulse_toggle_button") and self.workpulse_toggle_button:
             self.workpulse_toggle_button.setEnabled(self._allow_start_stop_tracking)
-            self.workpulse_toggle_button.setVisible(True)
+            self.workpulse_toggle_button.setVisible(self._allow_start_stop_tracking)
             if not self._allow_start_stop_tracking:
                 self.workpulse_toggle_button.setToolTip(
                     "Activity tracking start/stop is managed by your administrator."
@@ -634,24 +647,28 @@ class DashboardPage(QWidget):
         self.idle_time_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
         status_layout.addWidget(self.idle_time_label)
 
-        # 4. Last Update
+        # 4 & 5. Last Update and Pause / Resume Button section container
+        self.start_stop_section = QWidget(status_group)
+        self.start_stop_section.setObjectName("StartStopSection")
+        section_layout = QVBoxLayout(self.start_stop_section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(2)
+
         from services.sync_service import SyncService
         init_sync_time = (
             SyncService.get_last_successful_sync_time()
             if hasattr(SyncService, "get_last_successful_sync_time")
             else SyncService.last_successful_sync_time
         )
-        self.last_update_label = QLabel(f"Last Update: {_format_last_update_display(init_sync_time)}", status_group)
+        self.last_update_label = QLabel(f"Last Update: {_format_last_update_display(init_sync_time)}", self.start_stop_section)
         self.last_update_label.setObjectName("StatusLastUpdateLabel")
         self.last_update_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500;")
-        status_layout.addWidget(self.last_update_label)
-
-        status_layout.addSpacing(2)
+        section_layout.addWidget(self.last_update_label)
 
         # 5. Activity Tracking Pause / Resume button
         is_initially_paused = getattr(self, "_is_paused", False)
         initial_btn_text = "Pause" if (is_initially_active and not is_initially_paused) else "Resume"
-        self.workpulse_toggle_button = QPushButton(initial_btn_text, status_group)
+        self.workpulse_toggle_button = QPushButton(initial_btn_text, self.start_stop_section)
         self.workpulse_toggle_button.setObjectName("WorkPulseToggleButton")
         self.workpulse_toggle_button.setFixedHeight(28)
         self.workpulse_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -664,7 +681,11 @@ class DashboardPage(QWidget):
         self.start_tracking_button = self.workpulse_toggle_button
         self.stop_tracking_button = self.workpulse_toggle_button
         self._apply_toggle_button_style(is_initially_active)
-        status_layout.addWidget(self.workpulse_toggle_button)
+        section_layout.addWidget(self.workpulse_toggle_button)
+
+        status_layout.addWidget(self.start_stop_section)
+        self.last_update_section = self.start_stop_section
+        self.set_allow_start_stop_tracking(self._allow_start_stop_tracking)
 
         # Retain backward-compatible and background-updated fields
         self.last_sync_label = QLabel(f"Last Successful Sync: {init_sync_time}", self)

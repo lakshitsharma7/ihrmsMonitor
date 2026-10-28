@@ -419,17 +419,42 @@ class SyncService:
             self._save_cached_setting("workpulse_permitted", server_allow_workpulse)
 
         # Activity Tracking Start/Stop manual control permission
-        server_allow_start_stop = _extract_permission(
-            settings_data,
-            [
-                "allow_start_stop_activity_tracking",
-                "allow_start_stop_activity_workpulse",
-                "allow_start_stop_tracking",
-                "allow_start_stop",
-            ]
-        )
+        # 1. Check explicit start & stop pair (e.g. {"start": false, "stop": false})
+        server_allow_start_stop = None
+        for start_k, stop_k in [
+            ("start", "stop"),
+            ("allow_start", "allow_stop"),
+            ("can_start", "can_stop"),
+            ("start_tracking", "stop_tracking"),
+            ("allow_start_tracking", "allow_stop_tracking"),
+        ]:
+            if start_k in settings_data and stop_k in settings_data:
+                raw_start = settings_data[start_k]
+                raw_stop = settings_data[stop_k]
+                if raw_start is not None and raw_stop is not None:
+                    parsed_start = _parse_bool_permission(raw_start)
+                    parsed_stop = _parse_bool_permission(raw_stop)
+                    if parsed_start is False and parsed_stop is False:
+                        server_allow_start_stop = False
+                        break
+                    elif parsed_start is True or parsed_stop is True:
+                        server_allow_start_stop = True
+                        break
+
+        # 2. Check unified single key (e.g. "allow_start_stop_activity_tracking")
+        if server_allow_start_stop is None:
+            server_allow_start_stop = _extract_permission(
+                settings_data,
+                [
+                    "allow_start_stop_activity_tracking",
+                    "allow_start_stop_activity_workpulse",
+                    "allow_start_stop_tracking",
+                    "allow_start_stop",
+                ]
+            )
         if server_allow_start_stop is not None:
             self._save_cached_setting("allow_start_stop_activity_tracking", server_allow_start_stop)
+            settings_data["allow_start_stop_activity_tracking"] = server_allow_start_stop
 
         # Update session permissions dynamically
         perm_kwargs = {}
