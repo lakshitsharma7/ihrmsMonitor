@@ -85,3 +85,15 @@ def cleanup_qt_windows():
                     pass
     except Exception:
         pass
+
+@pytest.fixture(autouse=True)
+def auto_dismiss_message_boxes(monkeypatch):
+    """Automatically dismiss modal QMessageBox dialogs in test runs."""
+    try:
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    except Exception:
+        pass

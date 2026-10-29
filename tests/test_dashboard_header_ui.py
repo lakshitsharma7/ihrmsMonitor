@@ -21,6 +21,7 @@ class TestDashboardHeaderUI(unittest.TestCase):
             username="testuser",
             role="User",
             full_name="John Doe",
+            company_code="IND",
         )
 
     def tearDown(self):
