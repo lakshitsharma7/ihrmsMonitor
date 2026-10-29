@@ -21,7 +21,7 @@ def main() -> None:
         args = [os.path.join(root_dir, "tests"), "-q"]
         try:
             import pytest_timeout  # type: ignore # noqa: F401
-            args.append("--timeout=120")
+            args += ["--timeout=120", "--timeout-method=thread"]
         except ImportError:
             pass
         if sys.platform == "darwin":
