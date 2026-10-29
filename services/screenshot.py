@@ -9,6 +9,7 @@ did not exist yet - the screenshot was then dropped and never uploaded.
 from __future__ import annotations
 
 import io
+import os
 import sys
 import threading
 from datetime import datetime

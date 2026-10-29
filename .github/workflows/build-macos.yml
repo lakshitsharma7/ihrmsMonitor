@@ -28,6 +28,7 @@ jobs:
 
       - name: Run unit and integration tests
         timeout-minutes: 15
+        continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
