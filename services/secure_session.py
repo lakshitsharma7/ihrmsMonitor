@@ -175,6 +175,8 @@ class SessionStore:
     _KEY_TRACKING_PAUSED = "session/workpulse_paused"
     _KEY_CLEAN_SHUTDOWN = "session/clean_shutdown"
 
+    _fallback_cache: dict[str, Any] = {}
+
     def __init__(self, settings: QSettings | None = None, is_test: bool | None = None) -> None:
         """Initialize session store with test isolation support."""
         if is_test is not None:
@@ -504,6 +506,7 @@ class SessionStore:
     def clear_session(self) -> None:
         """Clear all persisted session data from Windows Credential Manager and QSettings."""
         try:
+            self._fallback_cache.clear()
             # Delete from Windows Credential Manager
             _cred_delete(self.cred_target)
 
@@ -552,29 +555,38 @@ class SessionStore:
 
     def is_workpulse_manually_stopped(self) -> bool:
         """Check if user manually stopped workpulse."""
-        raw = self.settings.value(self._KEY_TRACKING_MANUALLY_STOPPED, False)
-        return raw is True or str(raw).lower() in ("true", "1")
+        raw = self.settings.value(self._KEY_TRACKING_MANUALLY_STOPPED, None)
+        if raw is not None:
+            return raw is True or str(raw).lower() in ("true", "1")
+        return bool(self._fallback_cache.get(self._KEY_TRACKING_MANUALLY_STOPPED, False))
 
     def set_workpulse_manually_stopped(self, stopped: bool) -> None:
         """Record whether user manually stopped workpulse."""
+        self._fallback_cache[self._KEY_TRACKING_MANUALLY_STOPPED] = bool(stopped)
         self.settings.setValue(self._KEY_TRACKING_MANUALLY_STOPPED, bool(stopped))
 
     def is_workpulse_active(self) -> bool:
         """Check if workpulse was actively running."""
-        raw = self.settings.value(self._KEY_TRACKING_ACTIVE, False)
-        return raw is True or str(raw).lower() in ("true", "1")
+        raw = self.settings.value(self._KEY_TRACKING_ACTIVE, None)
+        if raw is not None:
+            return raw is True or str(raw).lower() in ("true", "1")
+        return bool(self._fallback_cache.get(self._KEY_TRACKING_ACTIVE, False))
 
     def set_workpulse_active(self, active: bool) -> None:
         """Record whether workpulse is actively running."""
+        self._fallback_cache[self._KEY_TRACKING_ACTIVE] = bool(active)
         self.settings.setValue(self._KEY_TRACKING_ACTIVE, bool(active))
 
     def is_workpulse_paused(self) -> bool:
         """Check if user paused workpulse status."""
-        raw = self.settings.value(self._KEY_TRACKING_PAUSED, False)
-        return raw is True or str(raw).lower() in ("true", "1")
+        raw = self.settings.value(self._KEY_TRACKING_PAUSED, None)
+        if raw is not None:
+            return raw is True or str(raw).lower() in ("true", "1")
+        return bool(self._fallback_cache.get(self._KEY_TRACKING_PAUSED, False))
 
     def set_workpulse_paused(self, paused: bool) -> None:
         """Record whether user paused workpulse status."""
+        self._fallback_cache[self._KEY_TRACKING_PAUSED] = bool(paused)
         self.settings.setValue(self._KEY_TRACKING_PAUSED, bool(paused))
 
     is_tracking_manually_stopped = is_workpulse_manually_stopped
@@ -586,11 +598,16 @@ class SessionStore:
 
     def is_clean_shutdown(self) -> bool:
         """Check if application previously shut down cleanly."""
-        raw = self.settings.value(self._KEY_CLEAN_SHUTDOWN, True)
-        return raw is True or str(raw).lower() in ("true", "1")
+        if self._KEY_CLEAN_SHUTDOWN in self._fallback_cache:
+            return bool(self._fallback_cache[self._KEY_CLEAN_SHUTDOWN])
+        raw = self.settings.value(self._KEY_CLEAN_SHUTDOWN, None)
+        if raw is not None:
+            return raw is True or str(raw).lower() in ("true", "1")
+        return True
 
     def set_clean_shutdown(self, clean: bool) -> None:
         """Record whether application shut down cleanly."""
+        self._fallback_cache[self._KEY_CLEAN_SHUTDOWN] = bool(clean)
         self.settings.setValue(self._KEY_CLEAN_SHUTDOWN, bool(clean))
 
     def validate_session(self) -> bool:

@@ -314,8 +314,9 @@ class SyncService:
                 pass
 
         # 3. Update local database settings
-        db_session = get_session()
+        db_session = None
         try:
+            db_session = get_session()
             from database.repository import SettingsRepository
             repo = SettingsRepository(db_session)
             update_kwargs = {}
@@ -352,7 +353,11 @@ class SyncService:
         except Exception as db_err:
             logger.error("Failed to update database settings from API response: %s", db_err)
         finally:
-            db_session.close()
+            if db_session:
+                try:
+                    db_session.close()
+                except Exception:
+                    pass
 
         # 4. Extract and apply dynamic permissions from server
         from services.session_service import SessionService

@@ -2,4 +2,5 @@
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
 pytest>=7.0
+pytest-timeout>=2.1.0
 

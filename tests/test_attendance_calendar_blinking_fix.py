@@ -68,9 +68,12 @@ class TestAttendanceCalendarBlinkingFix(unittest.TestCase):
                 {"day_num": 2, "status_code": "P", "status_label": "Present", "is_today": False},
                 {"day_num": 3, "status_code": "WO", "status_label": "Week Off", "is_today": False},
             ]
+            # Use the currently selected month on the combo to avoid the stale-data discard guard
+            current_month = page.month_combo.currentText()
+            current_year = int(page.year_combo.currentText())
             payload = {
-                "year": 2026,
-                "month": "September",
+                "year": current_year,
+                "month": current_month,
                 "days": mock_days,
                 "working_days": 2,
                 "present_count": 2,
@@ -102,9 +105,12 @@ class TestAttendanceCalendarBlinkingFix(unittest.TestCase):
         """Ensure changing month updates calendar and preserves selected day if present."""
         page = AttendancePage()
         try:
-            payload_sep = {
-                "year": 2026,
-                "month": "September",
+            # Use current month/year from combos to avoid stale-data discard guard
+            current_month = page.month_combo.currentText()
+            current_year = int(page.year_combo.currentText())
+            payload_current = {
+                "year": current_year,
+                "month": current_month,
                 "days": [
                     {"day_num": 1, "status_code": "P", "status_label": "Present", "is_today": False},
                     {"day_num": 2, "status_code": "P", "status_label": "Present", "is_today": False},
@@ -112,14 +118,23 @@ class TestAttendanceCalendarBlinkingFix(unittest.TestCase):
                 "working_days": 2,
                 "present_count": 2,
             }
-            page._apply_attendance_data(payload_sep)
+            page._apply_attendance_data(payload_current)
+            self.assertGreater(len(page._day_cards), 0, "Calendar must populate on first load")
             day_1_card = next(c for c in page._day_cards if c._day_data.get("day_num") == 1)
             day_1_card.set_selected(True)
             self.assertTrue(day_1_card._is_selected)
 
-            payload_oct = {
-                "year": 2026,
-                "month": "October",
+            # Now switch combo to a different available month and apply new data
+            # Pick the first month that differs from current_month
+            from ui.attendance_page import MONTH_NAMES
+            other_month = next(m for m in MONTH_NAMES if m != current_month and MONTH_NAMES.index(m) < MONTH_NAMES.index(current_month))
+            page.month_combo.blockSignals(True)
+            page.month_combo.setCurrentText(other_month)
+            page.month_combo.blockSignals(False)
+
+            payload_other = {
+                "year": current_year,
+                "month": other_month,
                 "days": [
                     {"day_num": 1, "status_code": "A", "status_label": "Absent", "is_today": False},
                     {"day_num": 2, "status_code": "A", "status_label": "Absent", "is_today": False},
@@ -127,7 +142,7 @@ class TestAttendanceCalendarBlinkingFix(unittest.TestCase):
                 "working_days": 2,
                 "present_count": 0,
             }
-            page._apply_attendance_data(payload_oct)
+            page._apply_attendance_data(payload_other)
 
             # After month change, day 1 should still be selected in the new month
             selected_cards = [c for c in page._day_cards if getattr(c, "_is_selected", False)]

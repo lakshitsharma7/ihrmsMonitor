@@ -19,8 +19,20 @@ def main() -> None:
     try:
         import pytest
         args = [os.path.join(root_dir, "tests"), "-q"]
+        try:
+            import pytest_timeout  # type: ignore # noqa: F401
+            args.append("--timeout=120")
+        except ImportError:
+            pass
         if sys.platform == "darwin":
-            args += ["-k", "not (windows or supervisor or uninstall or dead_pid)"]
+            # Skip Windows-only test files entirely to prevent background threads hanging CI
+            macos_ignore = [
+                "--ignore", os.path.join(root_dir, "tests", "test_background_mode_and_sync_reliability.py"),
+                "--ignore", os.path.join(root_dir, "tests", "test_background_mode_and_visibility.py"),
+                "--ignore", os.path.join(root_dir, "tests", "test_windows_lock_and_display_off.py"),
+                "--ignore", os.path.join(root_dir, "tests", "test_uninstall_detection.py"),
+            ]
+            args += macos_ignore
         exit_code = pytest.main(args)
         sys.stdout.flush()
         sys.stderr.flush()

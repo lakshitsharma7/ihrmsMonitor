@@ -373,8 +373,13 @@ class ProcessSupervisor:
             from PySide6.QtCore import QDir
             lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
             if os.path.isfile(lock_path):
-                os.remove(lock_path)
-                logger.info("%s cleaned up stale lock file: %s", SUPERVISOR_NAME, lock_path)
+                # Verify that no active iHRMS desktop process is currently running before removing
+                active_pid = _find_running_desktop_pid()
+                if not active_pid:
+                    os.remove(lock_path)
+                    logger.info("%s cleaned up stale lock file: %s", SUPERVISOR_NAME, lock_path)
+                else:
+                    logger.info("%s active desktop process detected (PID %d); preserving lock file: %s", SUPERVISOR_NAME, active_pid, lock_path)
         except Exception as lock_err:
             logger.debug("Failed to remove stale lock file: %s", lock_err)
 
@@ -512,8 +517,8 @@ class ProcessSupervisor:
                     return 0
 
                 is_clean = self._is_clean_shutdown()
-                if is_clean:
-                    logger.info("%s clean shutdown confirmed for PID %d (exit_code=%s). Supervisor exiting.", SUPERVISOR_NAME, monitored_pid, exit_code)
+                if is_clean or exit_code == 0:
+                    logger.info("%s normal exit confirmed for PID %d (exit_code=%s, clean_shutdown=%s). Supervisor exiting.", SUPERVISOR_NAME, monitored_pid, exit_code, is_clean)
                     return 0
 
                 # Unexpected termination detected!
@@ -554,35 +559,44 @@ class ProcessSupervisor:
                     )
                     break
 
-                self._cleanup_stale_lock()
-                logger.info("%s launching monitored instance: %s", SUPERVISOR_NAME, " ".join(cmd))
-                env = dict(os.environ)
-                env["IHRMS_SUPERVISED"] = "1"
+                # Safety check: Is an active desktop process ALREADY running?
+                existing_pid = _find_running_desktop_pid()
+                if existing_pid and existing_pid > 0 and existing_pid != os.getpid():
+                    logger.info("%s found existing active %s (PID %d). Attaching instead of spawning duplicate.", SUPERVISOR_NAME, APP_NAME, existing_pid)
+                    self._child_pid = existing_pid
+                    self._child_process = None
+                    exit_code = self._wait_for_pid(existing_pid)
+                    child_pid = existing_pid
+                else:
+                    self._cleanup_stale_lock()
+                    logger.info("%s launching monitored instance: %s", SUPERVISOR_NAME, " ".join(cmd))
+                    env = dict(os.environ)
+                    env["IHRMS_SUPERVISED"] = "1"
 
-                try:
-                    self._child_pid, self._child_process = spawn_detached_process(cmd, env=env)
-                except Exception as launch_err:
-                    logger.exception("%s failed to launch child process: %s", SUPERVISOR_NAME, launch_err)
-                    time.sleep(3)
-                    continue
+                    try:
+                        self._child_pid, self._child_process = spawn_detached_process(cmd, env=env)
+                    except Exception as launch_err:
+                        logger.exception("%s failed to launch child process: %s", SUPERVISOR_NAME, launch_err)
+                        time.sleep(3)
+                        continue
 
-                if not self._child_pid:
-                    logger.error("%s could not determine child PID. Retrying in 3s...", SUPERVISOR_NAME)
-                    time.sleep(3)
-                    continue
+                    if not self._child_pid:
+                        logger.error("%s could not determine child PID. Retrying in 3s...", SUPERVISOR_NAME)
+                        time.sleep(3)
+                        continue
 
-                child_pid = self._child_pid
-                logger.info("Monitored %s started with PID %d", APP_NAME, child_pid)
+                    child_pid = self._child_pid
+                    logger.info("Monitored %s started with PID %d", APP_NAME, child_pid)
 
-                # Wait for child process to terminate
-                try:
-                    if self._child_process:
-                        exit_code = self._child_process.wait()
-                    else:
-                        exit_code = self._wait_for_pid(child_pid)
-                except KeyboardInterrupt:
-                    logger.info("Supervisor interrupted by user.")
-                    break
+                    # Wait for child process to terminate
+                    try:
+                        if self._child_process:
+                            exit_code = self._child_process.wait()
+                        else:
+                            exit_code = self._wait_for_pid(child_pid)
+                    except KeyboardInterrupt:
+                        logger.info("Supervisor interrupted by user.")
+                        break
 
                 logger.info("%s (PID %d) exited with code %s", APP_NAME, child_pid, exit_code)
 
@@ -600,7 +614,17 @@ class ProcessSupervisor:
                     )
                     break
 
-                # Unexpected termination / crash
+                # If child exited with code 0 (normal exit or secondary instance detecting primary):
+                if exit_code == 0:
+                    other_pid = _find_running_desktop_pid(exclude_pid=child_pid)
+                    if other_pid:
+                        logger.info("%s child PID %d exited with 0 while primary instance PID %d is running. Continuing monitoring.", SUPERVISOR_NAME, child_pid, other_pid)
+                        continue
+                    else:
+                        logger.info("%s (PID %d) exited cleanly with code 0. Supervisor stopping.", APP_NAME, child_pid)
+                        break
+
+                # Unexpected termination / crash (exit code != 0, e.g. killed via Task Manager or crashed)
                 now = time.time()
                 self._crash_timestamps.append(now)
                 logger.warning(

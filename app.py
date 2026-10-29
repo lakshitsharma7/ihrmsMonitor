@@ -42,6 +42,120 @@ _CA_BUNDLE_PATH = init_ca_bundle()
 WINDOWS_APP_ID = "IndovisionServices.iHRMSDesktop"
 
 
+APP_MUTEX_NAME = "Local\\iHRMS_Desktop_Application_Mutex"
+_app_mutex_handle = None
+
+
+def _acquire_app_mutex() -> bool:
+    """Acquire single-instance Windows Named Mutex.
+    
+    Managed atomically by the Windows kernel across the user session.
+    Automatically released if the process terminates or is killed.
+    """
+    global _app_mutex_handle
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        import ctypes
+        ERROR_ALREADY_EXISTS = 183
+        kernel32 = ctypes.windll.kernel32
+        h_mutex = kernel32.CreateMutexW(None, True, APP_MUTEX_NAME)
+        last_err = kernel32.GetLastError()
+        if last_err == ERROR_ALREADY_EXISTS:
+            if h_mutex:
+                kernel32.CloseHandle(h_mutex)
+            return False
+        _app_mutex_handle = h_mutex
+        return True
+    except Exception as exc:
+        logger.debug("Windows Named Mutex check error: %s", exc)
+        return True
+
+
+def _release_app_mutex() -> None:
+    """Release single-instance Windows Named Mutex."""
+    global _app_mutex_handle
+    if sys.platform.startswith("win") and _app_mutex_handle:
+        try:
+            import ctypes
+            ctypes.windll.kernel32.ReleaseMutex(_app_mutex_handle)
+            ctypes.windll.kernel32.CloseHandle(_app_mutex_handle)
+        except Exception:
+            pass
+        _app_mutex_handle = None
+
+
+def _activate_existing_window(pid: int | None = None) -> None:
+    """Bring the active iHRMS Desktop window to the foreground."""
+    if sys.platform.startswith("win"):
+        try:
+            import win32gui
+            import win32con
+            import win32process
+            import time
+
+            def _find_genuine_windows():
+                genuine_hwnds = []
+
+                def _enum_windows_cb(hwnd, _):
+                    if not win32gui.IsWindow(hwnd):
+                        return
+                    try:
+                        # 1. Must be a top-level window (no parent)
+                        if win32gui.GetParent(hwnd):
+                            return
+
+                        # 2. Match PID if known
+                        _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
+                        if pid and win_pid != pid:
+                            return
+
+                        # 3. Class name must NOT be internal Qt helper or observer window
+                        cls = (win32gui.GetClassName(hwnd) or "").lower()
+                        if any(k in cls for k in ("observer", "titlebar", "cicloader", "trayicon", "ime", "uac", "indicator", "message")):
+                            return
+
+                        # 4. Title must be non-empty and match application window title
+                        title = (win32gui.GetWindowText(hwnd) or "").strip()
+                        if not title or not any(t in title for t in ("iHRMS Desktop", "Workpulse", "iHRMS Monitor")):
+                            return
+
+                        genuine_hwnds.append(hwnd)
+                    except Exception:
+                        pass
+
+                win32gui.EnumWindows(_enum_windows_cb, None)
+                return genuine_hwnds
+
+            # Wait briefly (up to ~1s) if the primary instance is in the process of creating its window
+            found_hwnds = []
+            for _ in range(5):
+                found_hwnds = _find_genuine_windows()
+                if found_hwnds:
+                    break
+                time.sleep(0.2)
+
+            for hwnd in found_hwnds:
+                try:
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                    win32gui.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+            subprocess.run(
+                ["osascript", "-e", 'tell application id "com.indovision.ihrms-desktop" to activate'],
+                capture_output=True,
+                timeout=3,
+            )
+        except Exception:
+            pass
+
+
 def _set_windows_app_identity() -> None:
     """
     Give Windows an explicit application identity.
@@ -216,24 +330,29 @@ def main() -> int:
     import multiprocessing
     multiprocessing.freeze_support()
 
-    # Stabilize working directory for frozen / auto-started processes
-    if getattr(sys, "frozen", False):
-        try:
-            os.chdir(os.path.dirname(sys.executable))
-        except Exception:
-            pass
+    # 1. Early supervisor dispatch - MUST execute before any GUI or QApplication initialization
+    if any(arg.lower() in ("--supervisor", "/supervisor", "-supervisor") for arg in sys.argv[1:]):
+        from system.supervisor import run_supervisor
+        target_args = []
+        monitor_pid = None
+        args = sys.argv[1:]
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg.lower() in ("--supervisor", "/supervisor", "-supervisor"):
+                i += 1
+            elif arg.lower() in ("--monitor-pid", "-monitor-pid", "/monitor-pid"):
+                if i + 1 < len(args) and args[i + 1].isdigit():
+                    monitor_pid = int(args[i + 1])
+                    i += 2
+                else:
+                    i += 1
+            else:
+                target_args.append(arg)
+                i += 1
+        return run_supervisor(target_args=target_args or ["--startup"], monitor_pid=monitor_pid)
 
-    _setup_exception_hook()
-    _set_windows_app_identity()
-
-    app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
-    app.setApplicationDisplayName(APP_NAME)
-    app.setOrganizationName(ORG_NAME)
-
-    from ui.keyboard_navigation import KeyboardNavigationEventFilter
-    KeyboardNavigationEventFilter.install()
-
+    # 2. Command-line test helpers that do not require full GUI
     if "--test-screenshot" in sys.argv:
         from services.screenshot import capture_screenshot
         path = capture_screenshot()
@@ -252,20 +371,6 @@ def main() -> int:
         )
         print(f"TEST_ERROR_RESULT: {json.dumps(res, default=str)}", flush=True)
         return 0
-
-    # Allow clean exit if LoginWindow is closed without authentication
-    app.setQuitOnLastWindowClosed(True)
-    app.setStyleSheet(APP_STYLESHEET)
-
-    from PySide6.QtGui import QIcon
-    import os
-    if getattr(sys, "frozen", False):
-        base_dir = sys._MEIPASS
-    else:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(base_dir, "assets", "ihrms-logo-icon.ico")
-    if os.path.isfile(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
 
     is_startup = any(
         arg.lower() in (
@@ -294,6 +399,93 @@ def main() -> int:
         )
         for arg in sys.argv[1:]
     )
+
+    # 3. Atomic single-instance check BEFORE creating QApplication or registering Windows App ID
+    if not _acquire_app_mutex():
+        logger.warning(
+            "Another active instance of %s is already running (Windows Named Mutex held). Exiting gracefully.",
+            APP_NAME,
+        )
+        if not is_startup:
+            _activate_existing_window()
+        return 0
+
+    # 4. Secondary lock-file verification (cross-platform for macOS and file tracking)
+    from PySide6.QtCore import QDir, QLockFile
+    lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
+    lock_file = QLockFile(lock_path)
+    lock_file.setStaleLockTime(15000)
+
+    if not lock_file.tryLock(100):
+        pid = None
+        try:
+            pid, _, _ = lock_file.getLockInfo()
+        except Exception:
+            pass
+
+        if not _is_real_ihrms_process_running(pid):
+            logger.info("Lock file was left behind by terminated or inactive PID %s. Clearing stale lock.", pid)
+            try:
+                lock_file.removeStaleLockFile()
+                lock_file.tryLock(200)
+            except Exception as lock_err:
+                logger.debug("Could not remove stale lock via QLockFile: %s", lock_err)
+
+            if not lock_file.isLocked():
+                try:
+                    if os.path.isfile(lock_path):
+                        os.remove(lock_path)
+                    lock_file = QLockFile(lock_path)
+                    lock_file.setStaleLockTime(15000)
+                    lock_file.tryLock(200)
+                except Exception as rem_err:
+                    logger.debug("Could not delete orphaned lock file: %s", rem_err)
+
+    if not lock_file.isLocked():
+        logger.warning(
+            "Another active instance of %s is already running (lock file active). Exiting gracefully.",
+            APP_NAME,
+        )
+        _release_app_mutex()
+        if not is_startup:
+            _activate_existing_window(pid)
+        return 0
+
+    # 5. This process is confirmed to be the unique primary GUI instance.
+    # Stabilize working directory for frozen / auto-started processes
+    if getattr(sys, "frozen", False):
+        try:
+            os.chdir(os.path.dirname(sys.executable))
+        except Exception:
+            pass
+
+    _setup_exception_hook()
+    _set_windows_app_identity()
+
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName(ORG_NAME)
+    app._app_mutex_acquired = True
+    app._instance_lock = lock_file
+    app.aboutToQuit.connect(_release_app_mutex)
+
+    from ui.keyboard_navigation import KeyboardNavigationEventFilter
+    KeyboardNavigationEventFilter.install()
+
+    # Allow clean exit if LoginWindow is closed without authentication
+    app.setQuitOnLastWindowClosed(True)
+    app.setStyleSheet(APP_STYLESHEET)
+
+    from PySide6.QtGui import QIcon
+    if getattr(sys, "frozen", False):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_dir, "assets", "ihrms-logo-icon.ico")
+    if os.path.isfile(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     if is_startup:
         logger.info("iHRMS Desktop launched through Windows startup / background mode (%s)", sys.argv)
     else:
@@ -314,149 +506,6 @@ def main() -> int:
     else:
         logger.warning("TLS CA certificate bundle could not be automatically resolved")
 
-    # Transparent supervisor invocation
-    if any(arg.lower() in ("--supervisor", "/supervisor", "-supervisor") for arg in sys.argv[1:]):
-        from system.supervisor import run_supervisor
-        target_args = []
-        monitor_pid = None
-        args = sys.argv[1:]
-        i = 0
-        while i < len(args):
-            arg = args[i]
-            if arg.lower() in ("--supervisor", "/supervisor", "-supervisor"):
-                i += 1
-            elif arg.lower() in ("--monitor-pid", "-monitor-pid", "/monitor-pid"):
-                if i + 1 < len(args) and args[i + 1].isdigit():
-                    monitor_pid = int(args[i + 1])
-                    i += 2
-                else:
-                    i += 1
-            else:
-                target_args.append(arg)
-                i += 1
-        return run_supervisor(target_args=target_args or ["--startup"], monitor_pid=monitor_pid)
-
-    from PySide6.QtCore import QDir, QLockFile
-
-
-    # Single-instance guard to prevent duplicate background processes from
-    # conflicting on SQLite database locks and system resources.
-    lock_path = os.path.join(QDir.tempPath(), "ihrms_monitor.lock")
-    lock_file = QLockFile(lock_path)
-    lock_file.setStaleLockTime(15000)
-
-    if not lock_file.tryLock(100):
-        # Inspect lock info
-        pid = None
-        try:
-            pid, _, _ = lock_file.getLockInfo()
-        except Exception:
-            pass
-
-        # If previous instance terminated, crashed, or PID was recycled by OS, clear stale lock
-        if not _is_real_ihrms_process_running(pid):
-            logger.info("Lock file was left behind by terminated or inactive PID %s. Clearing stale lock.", pid)
-            try:
-                lock_file.removeStaleLockFile()
-                lock_file.tryLock(200)
-            except Exception as lock_err:
-                logger.debug("Could not remove stale lock via QLockFile: %s", lock_err)
-            
-            # If QLockFile still considers it locked despite dead process, unlink orphaned file
-            if not lock_file.isLocked():
-                try:
-                    if os.path.isfile(lock_path):
-                        os.remove(lock_path)
-                    lock_file = QLockFile(lock_path)
-                    lock_file.setStaleLockTime(15000)
-                    lock_file.tryLock(200)
-                except Exception as rem_err:
-                    logger.debug("Could not delete orphaned lock file: %s", rem_err)
-
-    if not lock_file.isLocked():
-        logger.warning(
-            "Another active instance of %s is already running. Exiting gracefully.",
-            APP_NAME,
-        )
-        if not is_startup:
-            if sys.platform.startswith("win"):
-                try:
-                    import win32gui
-                    import win32con
-                    import win32process
-
-                    import time
-
-                    pid = None
-                    try:
-                        pid, _, _ = lock_file.getLockInfo()
-                    except Exception:
-                        pass
-
-                    def _find_genuine_windows():
-                        genuine_hwnds = []
-
-                        def _enum_windows_cb(hwnd, _):
-                            if not win32gui.IsWindow(hwnd):
-                                return
-                            try:
-                                # 1. Must be a top-level window (no parent)
-                                if win32gui.GetParent(hwnd):
-                                    return
-
-                                # 2. Match PID if known
-                                _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
-                                if pid and win_pid != pid:
-                                    return
-
-                                # 3. Class name must NOT be internal Qt helper or observer window
-                                cls = (win32gui.GetClassName(hwnd) or "").lower()
-                                if any(k in cls for k in ("observer", "titlebar", "cicloader", "trayicon", "ime", "uac", "indicator", "message")):
-                                    return
-
-                                # 4. Title must be non-empty and match application window title
-                                title = (win32gui.GetWindowText(hwnd) or "").strip()
-                                if not title or not any(t in title for t in ("iHRMS Desktop", "Workpulse", "iHRMS Monitor")):
-                                    return
-
-                                genuine_hwnds.append(hwnd)
-                            except Exception:
-                                pass
-
-                        win32gui.EnumWindows(_enum_windows_cb, None)
-                        return genuine_hwnds
-
-                    # Wait briefly (up to ~1s) if the primary instance is in the process of creating its window
-                    found_hwnds = []
-                    for _ in range(5):
-                        found_hwnds = _find_genuine_windows()
-                        if found_hwnds:
-                            break
-                        time.sleep(0.2)
-
-                    for hwnd in found_hwnds:
-                        try:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-                            win32gui.SetForegroundWindow(hwnd)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            elif sys.platform == "darwin":
-                try:
-                    import subprocess
-                    subprocess.run(
-                        ["osascript", "-e", 'tell application id "com.indovision.ihrms-desktop" to activate'],
-                        capture_output=True,
-                        timeout=3,
-                    )
-                except Exception:
-                    pass
-        # Exit immediately - do not create any further Qt objects that would appear as blank taskbar previews.
-        return 0
-
-    app._instance_lock = lock_file
     try:
         from services.secure_session import SessionStore
         SessionStore().set_clean_shutdown(False)
@@ -475,7 +524,7 @@ def main() -> int:
         )
         return 1
 
-    # Auto-start registration check & sync with user preferences
+    # Auto-start registration check & sync with user preferences (run asynchronously to avoid blocking UI)
     try:
         from database.database import get_session
         from services.settings_service import SettingsService
@@ -483,7 +532,14 @@ def main() -> int:
 
         app_settings = SettingsService(get_session).get_settings()
         if app_settings.start_with_system:
-            startup.ensure_startup_registered()
+            import threading
+            threading.Thread(
+                target=startup.ensure_startup_registered,
+                name="StartupRegistrationWorker",
+                daemon=True,
+            ).start()
+    except Exception as auto_reg_err:
+        logger.warning("Error checking auto-start registration on startup: %s", auto_reg_err)
     except Exception as auto_reg_err:
         logger.warning("Error checking auto-start registration on startup: %s", auto_reg_err)
 

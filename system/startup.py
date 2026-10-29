@@ -234,9 +234,8 @@ def _register_windows_scheduled_task(clean_exe: Path) -> bool:
         ps_cmd = (
             f"$action = New-ScheduledTaskAction -Execute '{target_bin}' -Argument '--startup' -WorkingDirectory '{target_dir}'; "
             f"$tLogon = New-ScheduledTaskTrigger -AtLogOn; "
-            f"$tRep = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5); "
             f"$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 0); "
-            f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger @($tLogon, $tRep) -Settings $settings -Force"
+            f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $tLogon -Settings $settings -Force"
         )
         creation_flags = 0
         startupinfo = None
