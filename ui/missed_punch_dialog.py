@@ -98,8 +98,8 @@ class MissedPunchDialog(QDialog):
         self._last_api_result: dict[str, Any] | None = None
 
         self.setWindowTitle("Missed Punch — Attendance Regularization")
-        self.resize(500, 480)
-        self.setMinimumSize(460, 420)
+        self.resize(500, 420)
+        self.setMinimumSize(460, 380)
         self.setWindowFlags(
             (self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
             | Qt.WindowType.WindowCloseButtonHint
@@ -126,24 +126,15 @@ class MissedPunchDialog(QDialog):
         root_layout.setSpacing(10)
 
         # --------------------------------------------------------------
-        # 1. Header Row with Title, Subtitle, and prominent Close (✕) button
+        # 1. Header Row with Title and prominent Close (✕) button
         # --------------------------------------------------------------
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(8)
 
-        title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-
         title = QLabel("⏰ Missed Punch Regularization", self)
         title.setStyleSheet("font-size: 16px; font-weight: 700; color: #0F172A;")
-        title_col.addWidget(title)
-
-        subtitle = QLabel("Submit missing punch timings directly via the official Missed Punch API.", self)
-        subtitle.setStyleSheet("font-size: 11.5px; color: #64748B;")
-        title_col.addWidget(subtitle)
-
-        header_row.addLayout(title_col, 1)
+        header_row.addWidget(title, 1, Qt.AlignmentFlag.AlignVCenter)
 
         self.close_icon_btn = QPushButton("✕", self)
         self.close_icon_btn.setObjectName("HeaderCloseButton")
@@ -178,7 +169,7 @@ class MissedPunchDialog(QDialog):
             """
         )
         self.close_icon_btn.clicked.connect(self.reject)
-        header_row.addWidget(self.close_icon_btn, 0, Qt.AlignmentFlag.AlignTop)
+        header_row.addWidget(self.close_icon_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         root_layout.addLayout(header_row)
 
@@ -193,35 +184,8 @@ class MissedPunchDialog(QDialog):
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setContentsMargins(0, 4, 0, 0)
         scroll_layout.setSpacing(12)
-
-        # Employee & Company Info Card
-        emp_card = QFrame(scroll_content)
-        emp_card.setStyleSheet(
-            "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
-        )
-        emp_layout = QHBoxLayout(emp_card)
-        emp_layout.setContentsMargins(12, 8, 12, 8)
-        emp_layout.setSpacing(8)
-
-        emp_code = self._service._get_active_employee_id() or "Employee"
-        emp_label = QLabel(f"<b>Employee:</b> {emp_code}", emp_card)
-        emp_label.setStyleSheet("font-size: 12px; color: #334155;")
-        emp_layout.addWidget(emp_label)
-
-        emp_layout.addStretch(1)
-
-        api_ep_label = QLabel("<b>API:</b> Punch/mispunch", emp_card)
-        api_ep_label.setStyleSheet("font-size: 11px; color: #64748B;")
-        emp_layout.addWidget(api_ep_label)
-
-        if self._atten_id:
-            atten_label = QLabel(f"<b>Atten ID:</b> {self._atten_id}", emp_card)
-            atten_label.setStyleSheet("font-size: 11px; color: #64748B;")
-            emp_layout.addWidget(atten_label)
-
-        scroll_layout.addWidget(emp_card)
 
         # --------------------------------------------------------------
         # 3. Form Fields Box (compact, clean layout with direct label placement)
