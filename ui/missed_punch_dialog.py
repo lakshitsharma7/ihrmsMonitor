@@ -1,0 +1,418 @@
+"""Modal dialog for applying Missed Punch attendance regularization.
+
+Sends missed punch request to:
+    Endpoint: Punch/mispunch
+    Method: POST
+    Payload: key, indo_code, date, in_time, out_time, comments, atten_id
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from PySide6.QtCore import QDate, QObject, QThread, QTime, Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDateEdit,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTextEdit,
+    QTimeEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from services.attendance_service import AttendanceService
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class _MissedPunchWorker(QObject):
+    """Background worker for asynchronous missed punch API call."""
+
+    finished = Signal(dict)
+
+    def __init__(
+        self,
+        service: AttendanceService,
+        date_str: str,
+        in_time_str: str,
+        out_time_str: str,
+        comments: str,
+        atten_id: str,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._date_str = date_str
+        self._in_time_str = in_time_str
+        self._out_time_str = out_time_str
+        self._comments = comments
+        self._atten_id = atten_id
+
+    def run(self) -> None:
+        try:
+            result = self._service.submit_missed_punch(
+                date=self._date_str,
+                in_time=self._in_time_str,
+                out_time=self._out_time_str,
+                comments=self._comments,
+                atten_id=self._atten_id,
+            )
+            self.finished.emit(result)
+        except Exception as exc:
+            logger.error("Exception in missed punch worker: %s", exc)
+            self.finished.emit({
+                "success": False,
+                "status": 500,
+                "message": f"Unexpected error: {str(exc)}",
+                "error": str(exc),
+            })
+
+
+class MissedPunchDialog(QDialog):
+    """Dialog allowing employees to submit a missed punch regularization request."""
+
+    punch_submitted = Signal(dict)
+
+    def __init__(
+        self,
+        service: AttendanceService | None = None,
+        parent: QWidget | None = None,
+        prefill_date: str | datetime | QDate | None = None,
+        atten_id: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self._service = service or AttendanceService()
+        self._atten_id = str(atten_id or "").strip()
+        self._worker_thread: QThread | None = None
+
+        self.setWindowTitle("Apply Missed Punch")
+        self.setFixedSize(480, 560)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+
+        self._init_ui(prefill_date)
+
+    def _init_ui(self, prefill_date: str | datetime | QDate | None) -> None:
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #FFFFFF;
+                color: #0F172A;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+            QLabel {
+                color: #334155;
+            }
+            """
+        )
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(24, 20, 24, 20)
+        main_layout.setSpacing(14)
+
+        # Header Section
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(4)
+
+        title = QLabel("Apply Missed Punch", self)
+        title.setStyleSheet("font-size: 17px; font-weight: 700; color: #0F172A;")
+        header_layout.addWidget(title)
+
+        subtitle = QLabel("Submit missing punch timings for manager regularization.", self)
+        subtitle.setStyleSheet("font-size: 12px; color: #64748B;")
+        header_layout.addWidget(subtitle)
+
+        main_layout.addLayout(header_layout)
+
+        # Employee Info Card
+        emp_card = QFrame(self)
+        emp_card.setStyleSheet(
+            "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
+        )
+        emp_layout = QHBoxLayout(emp_card)
+        emp_layout.setContentsMargins(12, 10, 12, 10)
+
+        emp_code = self._service._get_active_employee_id() or "Employee"
+        emp_label = QLabel(f"<b>Employee:</b> {emp_code}", emp_card)
+        emp_label.setStyleSheet("font-size: 12px; color: #334155;")
+        emp_layout.addWidget(emp_label)
+
+        if self._atten_id:
+            atten_label = QLabel(f"<b>Attendance ID:</b> {self._atten_id}", emp_card)
+            atten_label.setStyleSheet("font-size: 11px; color: #64748B;")
+            emp_layout.addStretch(1)
+            emp_layout.addWidget(atten_label)
+
+        main_layout.addWidget(emp_card)
+
+        # Form Fields Container
+        form_frame = QFrame(self)
+        form_frame.setStyleSheet("QFrame { background: transparent; }")
+        form_layout = QVBoxLayout(form_frame)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(10)
+
+        # 1. Date Field
+        date_lbl = QLabel("Date *", self)
+        date_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
+        form_layout.addWidget(date_lbl)
+
+        self.date_edit = QDateEdit(self)
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("dd-MM-yyyy")
+        self.date_edit.setMaximumDate(QDate.currentDate())
+        self.date_edit.setStyleSheet(
+            """
+            QDateEdit {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+            }
+            QDateEdit:focus {
+                border-color: #4F46E5;
+            }
+            """
+        )
+
+        # Set initial date
+        if prefill_date:
+            if isinstance(prefill_date, QDate):
+                self.date_edit.setDate(prefill_date)
+            elif isinstance(prefill_date, datetime):
+                self.date_edit.setDate(QDate(prefill_date.year, prefill_date.month, prefill_date.day))
+            else:
+                s = str(prefill_date).strip()
+                parsed = None
+                for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+                    try:
+                        dt = datetime.strptime(s, fmt)
+                        parsed = QDate(dt.year, dt.month, dt.day)
+                        break
+                    except Exception:
+                        pass
+                if parsed:
+                    self.date_edit.setDate(parsed)
+                else:
+                    self.date_edit.setDate(QDate.currentDate())
+        else:
+            self.date_edit.setDate(QDate.currentDate())
+
+        form_layout.addWidget(self.date_edit)
+
+        # 2. Timing Fields (In-Time & Out-Time)
+        time_row = QHBoxLayout()
+        time_row.setSpacing(12)
+
+        # In-Time column
+        in_col = QVBoxLayout()
+        in_col.setSpacing(4)
+        self.in_time_cb = QCheckBox("Punch In Time", self)
+        self.in_time_cb.setChecked(True)
+        self.in_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
+        in_col.addWidget(self.in_time_cb)
+
+        self.in_time_edit = QTimeEdit(self)
+        self.in_time_edit.setDisplayFormat("HH:mm:ss")
+        self.in_time_edit.setTime(QTime(9, 30, 0))
+        self.in_time_edit.setStyleSheet(
+            """
+            QTimeEdit {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+            }
+            QTimeEdit:disabled {
+                background: #F1F5F9; color: #94A3B8;
+            }
+            """
+        )
+        self.in_time_cb.toggled.connect(self.in_time_edit.setEnabled)
+        in_col.addWidget(self.in_time_edit)
+        time_row.addLayout(in_col)
+
+        # Out-Time column
+        out_col = QVBoxLayout()
+        out_col.setSpacing(4)
+        self.out_time_cb = QCheckBox("Punch Out Time", self)
+        self.out_time_cb.setChecked(True)
+        self.out_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
+        out_col.addWidget(self.out_time_cb)
+
+        self.out_time_edit = QTimeEdit(self)
+        self.out_time_edit.setDisplayFormat("HH:mm:ss")
+        self.out_time_edit.setTime(QTime(18, 30, 0))
+        self.out_time_edit.setStyleSheet(
+            """
+            QTimeEdit {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+            }
+            QTimeEdit:disabled {
+                background: #F1F5F9; color: #94A3B8;
+            }
+            """
+        )
+        self.out_time_cb.toggled.connect(self.out_time_edit.setEnabled)
+        out_col.addWidget(self.out_time_edit)
+        time_row.addLayout(out_col)
+
+        form_layout.addLayout(time_row)
+
+        # 3. Comments / Reason Field
+        comments_lbl = QLabel("Reason / Comments *", self)
+        comments_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
+        form_layout.addWidget(comments_lbl)
+
+        self.comments_edit = QTextEdit(self)
+        self.comments_edit.setPlaceholderText("Please explain why punch was missed (e.g. biometric reader offline, client meeting, forgotten badge)...")
+        self.comments_edit.setMaximumHeight(85)
+        self.comments_edit.setStyleSheet(
+            """
+            QTextEdit {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                padding: 8px 10px; font-size: 12px; color: #0F172A; background: #FFFFFF;
+            }
+            QTextEdit:focus {
+                border-color: #4F46E5;
+            }
+            """
+        )
+        form_layout.addWidget(self.comments_edit)
+
+        main_layout.addWidget(form_frame)
+
+        # Feedback / Status Message Box
+        self.feedback_label = QLabel("", self)
+        self.feedback_label.setWordWrap(True)
+        self.feedback_label.setVisible(False)
+        main_layout.addWidget(self.feedback_label)
+
+        main_layout.addStretch(1)
+
+        # Button Row
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        self.cancel_btn = QPushButton("Cancel", self)
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.setFixedSize(90, 34)
+        self.cancel_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #F1F5F9; border: 1px solid #E2E8F0;
+                color: #334155; border-radius: 6px;
+                font-weight: 600; font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #E2E8F0; color: #0F172A;
+            }
+            """
+        )
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+
+        btn_layout.addStretch(1)
+
+        self.submit_btn = QPushButton("Submit Request", self)
+        self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.submit_btn.setMinimumWidth(130)
+        self.submit_btn.setFixedHeight(34)
+        self.submit_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #4F46E5; border: 1px solid #4338CA;
+                color: #FFFFFF; border-radius: 6px;
+                padding: 6px 16px; font-weight: 600; font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #4338CA;
+            }
+            QPushButton:disabled {
+                background: #A5B4FC; border-color: #A5B4FC; color: #EEF2FF;
+            }
+            """
+        )
+        self.submit_btn.clicked.connect(self._handle_submit)
+        btn_layout.addWidget(self.submit_btn)
+
+        main_layout.addLayout(btn_layout)
+
+    def _show_message(self, message: str, is_error: bool = True) -> None:
+        """Display error or success banner."""
+        if is_error:
+            self.feedback_label.setStyleSheet(
+                "QLabel { background-color: #FEF2F2; color: #B91C1C; "
+                "border: 1px solid #FECACA; border-radius: 6px; "
+                "padding: 8px 12px; font-size: 12px; font-weight: 500; }"
+            )
+        else:
+            self.feedback_label.setStyleSheet(
+                "QLabel { background-color: #F0FDF4; color: #15803D; "
+                "border: 1px solid #BBF7D0; border-radius: 6px; "
+                "padding: 8px 12px; font-size: 12px; font-weight: 600; }"
+            )
+        self.feedback_label.setText(message)
+        self.feedback_label.setVisible(True)
+
+    def _handle_submit(self) -> None:
+        """Validate inputs and launch background worker."""
+        # 1. Validation
+        date_val = self.date_edit.date()
+        date_str = date_val.toString("dd-MM-yyyy")
+
+        in_time_str = self.in_time_edit.time().toString("HH:mm:ss") if self.in_time_cb.isChecked() else ""
+        out_time_str = self.out_time_edit.time().toString("HH:mm:ss") if self.out_time_cb.isChecked() else ""
+
+        if not in_time_str and not out_time_str:
+            self._show_message("Please enable at least one punch timing (In Time or Out Time).", is_error=True)
+            return
+
+        comments = self.comments_edit.toPlainText().strip()
+        if not comments:
+            self._show_message("Please enter a reason/comment for the missed punch.", is_error=True)
+            self.comments_edit.setFocus()
+            return
+
+        # 2. UI Loading State
+        self.feedback_label.setVisible(False)
+        self.submit_btn.setEnabled(False)
+        self.submit_btn.setText("Submitting...")
+        self.cancel_btn.setEnabled(False)
+
+        # 3. Launch Worker
+        self._worker_thread = QThread(self)
+        self._worker = _MissedPunchWorker(
+            service=self._service,
+            date_str=date_str,
+            in_time_str=in_time_str,
+            out_time_str=out_time_str,
+            comments=comments,
+            atten_id=self._atten_id,
+        )
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_submit_finished)
+        self._worker_thread.start()
+
+    def _on_submit_finished(self, result: dict) -> None:
+        """Handle response from background worker."""
+        if self._worker_thread and self._worker_thread.isRunning():
+            self._worker_thread.quit()
+            self._worker_thread.wait()
+
+        self.submit_btn.setEnabled(True)
+        self.submit_btn.setText("Submit Request")
+        self.cancel_btn.setEnabled(True)
+
+        if result.get("success"):
+            success_msg = result.get("message") or "Missed punch request submitted successfully."
+            self._show_message(f"✅ {success_msg}", is_error=False)
+            self.submit_btn.setEnabled(False)
+            self.punch_submitted.emit(result)
+            # Accept dialog after a brief moment or on close
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1200, self.accept)
+        else:
+            err_msg = result.get("message") or result.get("error") or "Failed to submit request."
+            self._show_message(f"⚠️ {err_msg}", is_error=True)

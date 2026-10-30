@@ -751,6 +751,28 @@ class ApiConfig:
             or self.endpoint("leave/leave_quota")
         )
 
+    @property
+    def mispunch_url(self) -> str:
+        """Configurable missed punch endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_MISPUNCH_API_URL")
+            or self._details.get("mispunch_url")
+            or self._details.get("mis_punch_url")
+            or self._details.get("missed_punch_url")
+            or self.endpoint("Punch/mispunch")
+        )
+
+    @property
+    def apply_leave_url(self) -> str:
+        """Configurable leave apply endpoint URL from AppController, environment, or default endpoint."""
+        return (
+            os.environ.get("IHRMS_APPLY_LEAVE_API_URL")
+            or self._details.get("apply_leave_url")
+            or self._details.get("apply_leave_v2_url")
+            or self._details.get("leave_apply_url")
+            or self.endpoint("leave/apply_leave_v2")
+        )
+
 
     def endpoint(
         self,

@@ -898,6 +898,29 @@ class AttendancePage(QWidget):
         self.leave_balance_button.clicked.connect(self._open_leave_balance_modal)
         top_bar.addWidget(self.leave_balance_button)
 
+        self.missed_punch_button = QPushButton("⏰ Apply Missed Punch", self)
+        self.missed_punch_button.setObjectName("SecondaryButton")
+        self.missed_punch_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.missed_punch_button.setMinimumHeight(34)
+        self.missed_punch_button.setStyleSheet(
+            """
+            QPushButton {
+                border-radius: 6px; font-weight: 600; font-size: 12px;
+                border: 1px solid #D9E1EC; background: #FFFFFF;
+                color: #334155; padding: 6px 14px;
+            }
+            QPushButton:hover {
+                border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
+            }
+            QPushButton:focus {
+                border: 2px solid #4F46E5; outline: none; background: #EEF2FF;
+            }
+            """
+        )
+        self.missed_punch_button.setToolTip("Submit missed punch regularization request")
+        self.missed_punch_button.clicked.connect(lambda: self._open_missed_punch_modal())
+        top_bar.addWidget(self.missed_punch_button)
+
         self.root_layout.addLayout(top_bar)
 
         # Error banner ─────────────────────────────────────────────────
@@ -2101,6 +2124,23 @@ class AttendancePage(QWidget):
         except Exception:
             pass
 
+        btn_mispunch = QPushButton("⏰ Apply Missed Punch")
+        btn_mispunch.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_mispunch.setStyleSheet(
+            """
+            QPushButton {
+                background: #F8FAFC; border: 1px solid #CBD5E1;
+                color: #334155; border-radius: 8px;
+                padding: 6px 14px; font-weight: 600; font-size: 12px;
+            }
+            QPushButton:hover {
+                border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
+            }
+            """
+        )
+        btn_mispunch.clicked.connect(lambda: self._open_missed_punch_modal(prefill_date=date_str, atten_id=str(day_info.get("atten_id") or day_info.get("id") or "")))
+        btn_row.addWidget(btn_mispunch)
+
         btn_close = QPushButton("Close")
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_close.setStyleSheet(
@@ -2139,3 +2179,12 @@ class AttendancePage(QWidget):
             dialog.exec()
         except Exception as err:
             logger.error("Failed to open leave balance dialog: %s", err)
+
+    def _open_missed_punch_modal(self, prefill_date: Any = None, atten_id: str = "") -> None:
+        """Open modal dialog to apply for missed punch regularization."""
+        try:
+            from ui.missed_punch_dialog import MissedPunchDialog
+            dialog = MissedPunchDialog(service=self._service, parent=self, prefill_date=prefill_date, atten_id=atten_id)
+            dialog.exec()
+        except Exception as err:
+            logger.error("Failed to open missed punch dialog: %s", err)

@@ -754,6 +754,7 @@ class LeaveBalanceDialog(QDialog):
         self._service = service or AttendanceService()
         self._is_loading = False
         self._cards: list[LeaveSummaryCard] = []
+        self._current_items: list[dict] = []
 
         from services.network_monitor import NetworkReachabilityMonitor
         self._monitor = NetworkReachabilityMonitor()
@@ -926,6 +927,26 @@ class LeaveBalanceDialog(QDialog):
         # 4. Footer Bar
         # --------------------------------------------------------------
         footer = QHBoxLayout()
+
+        self.apply_leave_btn = QPushButton("✈️ Apply Leave", self)
+        self.apply_leave_btn.setObjectName("PrimaryButton")
+        self.apply_leave_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_leave_btn.setFixedHeight(30)
+        self.apply_leave_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4F46E5; color: #FFFFFF; font-size: 11px; font-weight: 600;
+                border-radius: 4px; padding: 4px 14px; border: 1px solid #4338CA;
+            }
+            QPushButton:hover {
+                background-color: #4338CA;
+            }
+            """
+        )
+        self.apply_leave_btn.setToolTip("Apply for employee leave")
+        self.apply_leave_btn.clicked.connect(self._open_apply_leave_dialog)
+        footer.addWidget(self.apply_leave_btn)
+
         footer.addStretch(1)
 
         self.close_btn = QPushButton("Close")
@@ -936,6 +957,20 @@ class LeaveBalanceDialog(QDialog):
         footer.addWidget(self.close_btn)
 
         main_layout.addLayout(footer)
+
+    def _open_apply_leave_dialog(self) -> None:
+        """Open modal dialog to apply for leave."""
+        try:
+            from ui.apply_leave_dialog import ApplyLeaveDialog
+            dialog = ApplyLeaveDialog(
+                service=self._service,
+                parent=self,
+                quota_items=getattr(self, "_current_items", []),
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.refresh(force=True)
+        except Exception as err:
+            logger.error("Failed to open apply leave dialog: %s", err)
 
     def _show_chart_view(self) -> None:
         """Switch to Bar Chart View (Default)."""
@@ -1336,6 +1371,7 @@ class LeaveBalanceDialog(QDialog):
         self._cards = [LeaveSummaryCard(item=item) for item in final_items]
 
         # Update Bar Chart View and Table View with dynamic API data
+        self._current_items = final_items
         self.chart_view.set_data(final_items)
         self.table_view.set_data(final_items)
 
