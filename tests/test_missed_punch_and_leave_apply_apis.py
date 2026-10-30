@@ -15,10 +15,12 @@ if app is None:
 
 from config.api_config import ApiConfig
 from services.attendance_service import AttendanceService
+from services.session_service import SessionService, UserSession
 from ui.apply_leave_dialog import ApplyLeaveDialog, DEFAULT_LEAVE_TYPES, DURATION_OPTIONS
 from ui.attendance_page import AttendancePage
 from ui.leave_balance_dialog import LeaveBalanceDialog
 from services.session_service import SessionService, UserSession
+from ui.leave_balance_dialog import LeaveBalanceDialog
 from ui.missed_punch_dialog import MissedPunchDialog
 
 
@@ -261,7 +263,7 @@ class TestAttendanceServiceApplyLeave(unittest.TestCase):
 
 
 class TestDialogUI(unittest.TestCase):
-    """Verify MissedPunchDialog and ApplyLeaveDialog UI components."""
+    """Verify MissedPunchDialog, ApplyLeaveDialog, and button placements."""
 
     def test_missed_punch_dialog_initialization_and_prefill(self):
         dialog = MissedPunchDialog(prefill_date="2025-07-09", atten_id="ATT-888")
@@ -271,6 +273,55 @@ class TestDialogUI(unittest.TestCase):
         self.assertTrue(dialog.out_time_cb.isChecked())
         self.assertTrue(dialog.submit_btn.isEnabled())
         self.assertTrue(dialog.close_btn.isEnabled())
+        self.assertTrue(dialog.close_icon_btn.isEnabled())
+        self.assertEqual(dialog.close_icon_btn.text(), "✕")
+        self.assertTrue(dialog.date_edit.calendarPopup())
+        self.assertEqual(dialog.date_edit.displayFormat(), "dd-MM-yyyy")
+        dialog.close()
+
+    def test_missed_punch_dialog_close_icon_and_cancel_buttons_reject_cleanly(self):
+        # 1. Header Close (✕) button cleanly rejects dialog without submitting
+        dialog = MissedPunchDialog(prefill_date="2025-07-09")
+        dialog.show()
+        rejected_called = []
+        dialog.rejected.connect(lambda: rejected_called.append(True))
+        dialog.close_icon_btn.click()
+        self.assertEqual(len(rejected_called), 1)
+        self.assertIsNone(dialog._last_api_result)
+        dialog.close()
+
+        # 2. Bottom Cancel/Close button cleanly rejects dialog without submitting
+        dialog2 = MissedPunchDialog(prefill_date="2025-07-09")
+        dialog2.show()
+        rejected_called2 = []
+        dialog2.rejected.connect(lambda: rejected_called2.append(True))
+        dialog2.close_btn.click()
+        self.assertEqual(len(rejected_called2), 1)
+        self.assertIsNone(dialog2._last_api_result)
+        dialog2.close()
+
+    def test_missed_punch_dialog_multiline_comments_and_validation(self):
+        dialog = MissedPunchDialog(prefill_date="2025-07-09")
+        dialog.show()
+        # Empty comments validation
+        dialog.comments_edit.setPlainText("")
+        dialog._handle_submit()
+        self.assertFalse(dialog.feedback_label.isHidden())
+        self.assertIn("reason/comment", dialog.feedback_label.text().lower())
+        self.assertIsNone(dialog._worker_thread)
+
+        # Multiline comments entry
+        multiline_reason = "Line 1: Arrived at office on time.\nLine 2: Biometric machine was updating firmware."
+        dialog.comments_edit.setPlainText(multiline_reason)
+        self.assertEqual(dialog.comments_edit.toPlainText(), multiline_reason)
+
+        # Uncheck both punch in and out validation
+        dialog.in_time_cb.setChecked(False)
+        dialog.out_time_cb.setChecked(False)
+        dialog._handle_submit()
+        self.assertFalse(dialog.feedback_label.isHidden())
+        self.assertIn("at least one punch timing", dialog.feedback_label.text().lower())
+        self.assertIsNone(dialog._worker_thread)
         dialog.close()
 
     def test_missed_punch_dialog_displays_api_response_output(self):
@@ -311,6 +362,28 @@ class TestDialogUI(unittest.TestCase):
         self.assertEqual(page.today_btn.nextInFocusChain(), page.missed_punch_btn)
         page.close()
 
+    def test_apply_leave_button_beside_leave_balance_in_attendance_page(self):
+        page = AttendancePage()
+        # Verify Leave Balance button exists
+        self.assertTrue(hasattr(page, "leave_balance_button"))
+        self.assertEqual(page.leave_balance_button.text(), "Leave Balance")
+
+        # Verify Apply Leave button exists immediately beside Leave Balance
+        self.assertTrue(hasattr(page, "apply_leave_button"))
+        self.assertIn("Apply Leave", page.apply_leave_button.text())
+        page.close()
+
+    def test_apply_leave_header_button_in_leave_balance_dialog(self):
+        dialog = LeaveBalanceDialog()
+        # Verify Leave Balance heading label exists
+        self.assertTrue(hasattr(dialog, "title_label"))
+        self.assertEqual(dialog.title_label.text(), "Leave Balance")
+
+        # Verify Apply Leave button exists immediately beside Leave Balance heading
+        self.assertTrue(hasattr(dialog, "apply_leave_header_btn"))
+        self.assertIn("Apply Leave", dialog.apply_leave_header_btn.text())
+        dialog.close()
+
     def test_apply_leave_dialog_initialization_and_quota_binding(self):
         mock_quota_items = [
             {"leave_type_id": "4", "code": "OD", "name": "Business Trip", "available": 5.0},
@@ -327,6 +400,28 @@ class TestDialogUI(unittest.TestCase):
 
         # Test duration options
         self.assertEqual(dialog.duration_combo.count(), len(DURATION_OPTIONS))
+        dialog.close()
+
+    def test_apply_leave_dialog_displays_api_response_output(self):
+        dialog = ApplyLeaveDialog(prefill_date="2026-06-11")
+        dialog.show()
+        mock_result = {
+            "success": True,
+            "status": 200,
+            "message": "Leave application submitted successfully.",
+            "data": {
+                "response": "Success",
+                "application_id": "LV-12345",
+            },
+        }
+        dialog._on_submit_finished(mock_result)
+
+        self.assertFalse(dialog.api_output_group.isHidden())
+        self.assertIn("Success", dialog.api_status_badge.text())
+        self.assertEqual(dialog.api_message_label.text(), "Leave application submitted successfully.")
+        self.assertIn("leave/apply_leave_v2", dialog.api_details_text.toPlainText())
+        self.assertIn("LV-12345", dialog.api_details_text.toPlainText())
+        self.assertTrue(dialog.close_btn.isEnabled())
         dialog.close()
 
     def test_apply_leave_dialog_half_day_locks_to_date(self):
@@ -382,6 +477,70 @@ class TestDialogUI(unittest.TestCase):
         self.assertIn("LV-12345", dialog.api_details_text.toPlainText())
         self.assertTrue(dialog.close_btn.isEnabled())
         dialog.close()
+
+
+class TestMultiCompanyAndEmployeeIsolation(unittest.TestCase):
+    """Verify dynamic multi-company and multi-employee context isolation."""
+
+    def setUp(self):
+        self.service = AttendanceService()
+        self.session_service = SessionService()
+
+    @patch("requests.post")
+    def test_switching_companies_and_employees_updates_context_dynamically(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "Success", "status": 200}
+        mock_resp.content = b'{"response":"Success"}'
+        mock_post.return_value = mock_resp
+
+        # 1. Company Alpha - Employee 1
+        user_a = UserSession(
+            username="emp1@alpha.com",
+            role="Employee",
+            indo_code="EMP-ALPHA-01",
+            api_key="token_alpha_01",
+            company_code="ALPHA",
+            base_url="https://alpha.api.ihrms.com/v1",
+        )
+        self.session_service._current_user = user_a
+
+        self.service.submit_missed_punch(
+            date="10-10-2026",
+            in_time="09:00:00",
+            comments="Alpha meeting",
+        )
+        call_alpha = mock_post.call_args
+        self.assertEqual(call_alpha[0][0], "https://alpha.api.ihrms.com/v1/Punch/mispunch")
+        self.assertEqual(call_alpha[1]["data"]["indo_code"], "EMP-ALPHA-01")
+        self.assertEqual(call_alpha[1]["data"]["key"], "token_alpha_01")
+
+        # 2. Company Beta - Employee 2 (Different company, different employee)
+        user_b = UserSession(
+            username="emp2@beta.com",
+            role="Employee",
+            indo_code="EMP-BETA-02",
+            api_key="token_beta_02",
+            company_code="BETA",
+            base_url="https://beta.api.ihrms.com/v2",
+        )
+        self.session_service._current_user = user_b
+
+        self.service.apply_leave(
+            from_date="15-10-2026",
+            to_date="16-10-2026",
+            leave_type_id="2",
+            duration_id="6",
+            comments="Beta sick leave",
+        )
+        call_beta = mock_post.call_args
+        self.assertEqual(call_beta[0][0], "https://beta.api.ihrms.com/v2/leave/apply_leave_v2")
+        self.assertEqual(call_beta[1]["data"]["indo_code"], "EMP-BETA-02")
+        self.assertEqual(call_beta[1]["data"]["key"], "token_beta_02")
+        self.assertEqual(call_beta[1]["data"]["leave_type_id"], "2")
+
+        # Reset session
+        self.session_service._current_user = None
 
 
 class TestMultiCompanyAndEmployeeIsolation(unittest.TestCase):

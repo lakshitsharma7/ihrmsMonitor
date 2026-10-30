@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QTimeEdit,
     QVBoxLayout,
@@ -97,8 +98,12 @@ class MissedPunchDialog(QDialog):
         self._last_api_result: dict[str, Any] | None = None
 
         self.setWindowTitle("Missed Punch — Attendance Regularization")
-        self.setFixedSize(540, 680)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.resize(500, 480)
+        self.setMinimumSize(460, 420)
+        self.setWindowFlags(
+            (self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+            | Qt.WindowType.WindowCloseButtonHint
+        )
 
         self._init_ui(prefill_date)
 
@@ -117,50 +122,98 @@ class MissedPunchDialog(QDialog):
         )
 
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(20, 18, 20, 18)
+        root_layout.setContentsMargins(20, 16, 20, 16)
         root_layout.setSpacing(10)
 
-        # Header Section
-        header_layout = QVBoxLayout()
-        header_layout.setSpacing(3)
+        # --------------------------------------------------------------
+        # 1. Header Row with Title, Subtitle, and prominent Close (✕) button
+        # --------------------------------------------------------------
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(8)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
 
         title = QLabel("⏰ Missed Punch Regularization", self)
-        title.setStyleSheet("font-size: 17px; font-weight: 700; color: #0F172A;")
-        header_layout.addWidget(title)
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #0F172A;")
+        title_col.addWidget(title)
 
         subtitle = QLabel("Submit missing punch timings directly via the official Missed Punch API.", self)
-        subtitle.setStyleSheet("font-size: 12px; color: #64748B;")
-        header_layout.addWidget(subtitle)
+        subtitle.setStyleSheet("font-size: 11.5px; color: #64748B;")
+        title_col.addWidget(subtitle)
 
-        root_layout.addLayout(header_layout)
+        header_row.addLayout(title_col, 1)
 
-        # Scrollable container for form and dynamic API response
+        self.close_icon_btn = QPushButton("✕", self)
+        self.close_icon_btn.setObjectName("HeaderCloseButton")
+        self.close_icon_btn.setToolTip("Close")
+        self.close_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_icon_btn.setFixedSize(28, 28)
+        self.close_icon_btn.setStyleSheet(
+            """
+            QPushButton#HeaderCloseButton {
+                background: #F1F5F9;
+                color: #64748B;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton#HeaderCloseButton:hover {
+                background: #FEE2E2;
+                color: #DC2626;
+                border-color: #FECACA;
+            }
+            QPushButton#HeaderCloseButton:pressed {
+                background: #FCA5A5;
+                color: #991B1B;
+            }
+            QPushButton#HeaderCloseButton:disabled {
+                background: #F8FAFC;
+                color: #CBD5E1;
+                border-color: #F1F5F9;
+            }
+            """
+        )
+        self.close_icon_btn.clicked.connect(self.reject)
+        header_row.addWidget(self.close_icon_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        root_layout.addLayout(header_row)
+
+        # --------------------------------------------------------------
+        # 2. Scrollable container for form and dynamic API response
+        # --------------------------------------------------------------
         scroll_area = QScrollArea(self)
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(12)
 
-        # Employee Info Card
+        # Employee & Company Info Card
         emp_card = QFrame(scroll_content)
         emp_card.setStyleSheet(
             "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         emp_layout = QHBoxLayout(emp_card)
-        emp_layout.setContentsMargins(12, 9, 12, 9)
+        emp_layout.setContentsMargins(12, 8, 12, 8)
+        emp_layout.setSpacing(8)
 
         emp_code = self._service._get_active_employee_id() or "Employee"
         emp_label = QLabel(f"<b>Employee:</b> {emp_code}", emp_card)
         emp_label.setStyleSheet("font-size: 12px; color: #334155;")
         emp_layout.addWidget(emp_label)
 
+        emp_layout.addStretch(1)
+
         api_ep_label = QLabel("<b>API:</b> Punch/mispunch", emp_card)
         api_ep_label.setStyleSheet("font-size: 11px; color: #64748B;")
-        emp_layout.addStretch(1)
         emp_layout.addWidget(api_ep_label)
 
         if self._atten_id:
@@ -170,30 +223,45 @@ class MissedPunchDialog(QDialog):
 
         scroll_layout.addWidget(emp_card)
 
-        # Form Fields Box
+        # --------------------------------------------------------------
+        # 3. Form Fields Box (compact, clean layout with direct label placement)
+        # --------------------------------------------------------------
         self.form_box = QFrame(scroll_content)
         self.form_box.setStyleSheet("QFrame { background: transparent; }")
         form_layout = QVBoxLayout(self.form_box)
         form_layout.setContentsMargins(0, 0, 0, 0)
-        form_layout.setSpacing(10)
+        form_layout.setSpacing(12)
 
-        # 1. Date Field
+        # 3.1 Date Field
+        date_section = QVBoxLayout()
+        date_section.setSpacing(4)
         date_lbl = QLabel("Date *", self.form_box)
         date_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
-        form_layout.addWidget(date_lbl)
+        date_section.addWidget(date_lbl)
 
         self.date_edit = QDateEdit(self.form_box)
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("dd-MM-yyyy")
         self.date_edit.setMaximumDate(QDate.currentDate())
+        self.date_edit.setFixedHeight(34)
+        self.date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.date_edit.setStyleSheet(
             """
             QDateEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
             }
             QDateEdit:focus {
                 border-color: #4F46E5;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid #E2E8F0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background: #F8FAFC;
             }
             """
         )
@@ -215,28 +283,35 @@ class MissedPunchDialog(QDialog):
                     except Exception:
                         pass
         self.date_edit.setDate(initial_date)
-        form_layout.addWidget(self.date_edit)
+        date_section.addWidget(self.date_edit)
+        form_layout.addLayout(date_section)
 
-        # 2. Timing Fields (In-Time & Out-Time)
+        # 3.2 Timing Fields (Punch In & Punch Out)
         time_row = QHBoxLayout()
-        time_row.setSpacing(12)
+        time_row.setSpacing(14)
 
         # In-Time column
         in_col = QVBoxLayout()
         in_col.setSpacing(4)
         self.in_time_cb = QCheckBox("Punch In Time", self.form_box)
         self.in_time_cb.setChecked(True)
+        self.in_time_cb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.in_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         in_col.addWidget(self.in_time_cb)
 
         self.in_time_edit = QTimeEdit(self.form_box)
         self.in_time_edit.setDisplayFormat("HH:mm:ss")
         self.in_time_edit.setTime(QTime(9, 30, 0))
+        self.in_time_edit.setFixedHeight(34)
+        self.in_time_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.in_time_edit.setStyleSheet(
             """
             QTimeEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+            }
+            QTimeEdit:focus {
+                border-color: #4F46E5;
             }
             QTimeEdit:disabled {
                 background: #F1F5F9; color: #94A3B8;
@@ -252,17 +327,23 @@ class MissedPunchDialog(QDialog):
         out_col.setSpacing(4)
         self.out_time_cb = QCheckBox("Punch Out Time", self.form_box)
         self.out_time_cb.setChecked(True)
+        self.out_time_cb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.out_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         out_col.addWidget(self.out_time_cb)
 
         self.out_time_edit = QTimeEdit(self.form_box)
         self.out_time_edit.setDisplayFormat("HH:mm:ss")
         self.out_time_edit.setTime(QTime(18, 30, 0))
+        self.out_time_edit.setFixedHeight(34)
+        self.out_time_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.out_time_edit.setStyleSheet(
             """
             QTimeEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+            }
+            QTimeEdit:focus {
+                border-color: #4F46E5;
             }
             QTimeEdit:disabled {
                 background: #F1F5F9; color: #94A3B8;
@@ -275,37 +356,43 @@ class MissedPunchDialog(QDialog):
 
         form_layout.addLayout(time_row)
 
-        # 3. Comments / Reason Field
+        # 3.3 Reason / Comments Section
+        comments_section = QVBoxLayout()
+        comments_section.setSpacing(4)
         comments_lbl = QLabel("Reason / Comments *", self.form_box)
         comments_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
-        form_layout.addWidget(comments_lbl)
+        comments_section.addWidget(comments_lbl)
 
         self.comments_edit = QTextEdit(self.form_box)
         self.comments_edit.setPlaceholderText("Please explain why punch was missed (required)...")
-        self.comments_edit.setMaximumHeight(75)
+        self.comments_edit.setFixedHeight(72)
+        self.comments_edit.setAcceptRichText(False)
         self.comments_edit.setStyleSheet(
             """
             QTextEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 8px 10px; font-size: 12px; color: #0F172A; background: #FFFFFF;
+                padding: 6px 10px; font-size: 12.5px; color: #0F172A; background: #FFFFFF;
             }
             QTextEdit:focus {
                 border-color: #4F46E5;
             }
             """
         )
-        form_layout.addWidget(self.comments_edit)
+        comments_section.addWidget(self.comments_edit)
+        form_layout.addLayout(comments_section)
 
         scroll_layout.addWidget(self.form_box)
 
-        # Status / Feedback Banner
+        # --------------------------------------------------------------
+        # 4. Status / Feedback Banner
+        # --------------------------------------------------------------
         self.feedback_label = QLabel("", scroll_content)
         self.feedback_label.setWordWrap(True)
         self.feedback_label.setVisible(False)
         scroll_layout.addWidget(self.feedback_label)
 
         # --------------------------------------------------------------
-        # Dynamic API Output Display Box
+        # 5. Dynamic API Output Display Box
         # --------------------------------------------------------------
         self.api_output_group = QGroupBox("Missed Punch API Response", scroll_content)
         self.api_output_group.setStyleSheet(
@@ -313,7 +400,7 @@ class MissedPunchDialog(QDialog):
             QGroupBox {
                 border: 1px solid #CBD5E1; border-radius: 8px;
                 font-size: 12px; font-weight: 700; color: #1E293B;
-                margin-top: 10px; padding: 12px; background: #F8FAFC;
+                margin-top: 6px; padding: 12px; background: #F8FAFC;
             }
             QGroupBox::title {
                 subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #4338CA;
@@ -344,7 +431,7 @@ class MissedPunchDialog(QDialog):
         # API Details text / payload view
         self.api_details_text = QTextEdit(self.api_output_group)
         self.api_details_text.setReadOnly(True)
-        self.api_details_text.setMaximumHeight(130)
+        self.api_details_text.setFixedHeight(120)
         self.api_details_text.setStyleSheet(
             """
             QTextEdit {
@@ -359,14 +446,20 @@ class MissedPunchDialog(QDialog):
         self.api_output_group.setVisible(False)
         scroll_layout.addWidget(self.api_output_group)
 
+        # Absorbs vertical space to keep form elements tightly stacked at the top
+        scroll_layout.addStretch(1)
+
         scroll_area.setWidget(scroll_content)
         root_layout.addWidget(scroll_area, 1)
 
-        # Button Row
+        # --------------------------------------------------------------
+        # 6. Action Button Row (Cancel / Close & Submit)
+        # --------------------------------------------------------------
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        self.close_btn = QPushButton("Close", self)
+        self.close_btn = QPushButton("Cancel", self)
+        self.close_btn.setObjectName("SecondaryButton")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.setFixedSize(90, 34)
         self.close_btn.setStyleSheet(
@@ -379,14 +472,19 @@ class MissedPunchDialog(QDialog):
             QPushButton:hover {
                 background: #E2E8F0; color: #0F172A;
             }
+            QPushButton:disabled {
+                background: #F8FAFC; color: #94A3B8; border-color: #E2E8F0;
+            }
             """
         )
-        self.close_btn.clicked.connect(self.accept)
+        self.close_btn.clicked.connect(self.reject)
+        self.cancel_btn = self.close_btn
         btn_layout.addWidget(self.close_btn)
 
         btn_layout.addStretch(1)
 
         self.submit_btn = QPushButton("Submit Missed Punch", self)
+        self.submit_btn.setObjectName("PrimaryButton")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.submit_btn.setMinimumWidth(160)
         self.submit_btn.setFixedHeight(34)
@@ -451,6 +549,7 @@ class MissedPunchDialog(QDialog):
         self.submit_btn.setEnabled(False)
         self.submit_btn.setText("Submitting to API...")
         self.close_btn.setEnabled(False)
+        self.close_icon_btn.setEnabled(False)
 
         # 3. Launch Worker
         self._worker_thread = QThread(self)
@@ -477,6 +576,7 @@ class MissedPunchDialog(QDialog):
         self.submit_btn.setEnabled(True)
         self.submit_btn.setText("Submit Missed Punch")
         self.close_btn.setEnabled(True)
+        self.close_icon_btn.setEnabled(True)
 
         is_success = bool(result.get("success"))
         status_code = result.get("status", 200 if is_success else 400)
@@ -489,6 +589,7 @@ class MissedPunchDialog(QDialog):
             self._show_message(f"✅ {message}", is_error=False)
             self.submit_btn.setText("Submitted ✓")
             self.submit_btn.setEnabled(False)
+            self.close_btn.setText("Close")
             self.punch_submitted.emit(result)
         else:
             err_msg = result.get("error") or message
@@ -531,3 +632,23 @@ class MissedPunchDialog(QDialog):
             self.api_details_text.setPlainText(formatted_json)
         except Exception:
             self.api_details_text.setPlainText(str(details_info))
+
+    def reject(self) -> None:
+        """Dismiss the dialog cleanly without submitting or triggering any network request."""
+        self._cleanup_worker()
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        """Safely clean up any worker thread when window close is triggered."""
+        self._cleanup_worker()
+        event.accept()
+        super().closeEvent(event)
+
+    def _cleanup_worker(self) -> None:
+        """Stop running worker thread if dialog is dismissed while active."""
+        if self._worker_thread and self._worker_thread.isRunning():
+            try:
+                self._worker_thread.quit()
+                self._worker_thread.wait(500)
+            except Exception as exc:
+                logger.debug("Error stopping missed punch worker: %s", exc)
