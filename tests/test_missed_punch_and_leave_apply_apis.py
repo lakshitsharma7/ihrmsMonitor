@@ -440,6 +440,61 @@ class TestDialogUI(unittest.TestCase):
         self.assertTrue(dialog.to_date_edit.isEnabled())
         dialog.close()
 
+    def test_apply_leave_dialog_close_icon_and_cancel_buttons_reject_cleanly(self):
+        # 1. Header Close (✕) button cleanly rejects dialog without submitting
+        dialog = ApplyLeaveDialog(prefill_date="2026-06-11")
+        dialog.show()
+        rejected_called = []
+        dialog.rejected.connect(lambda: rejected_called.append(True))
+        self.assertTrue(hasattr(dialog, "close_icon_btn"))
+        self.assertEqual(dialog.close_icon_btn.text(), "✕")
+        dialog.close_icon_btn.click()
+        self.assertEqual(len(rejected_called), 1)
+        self.assertIsNone(dialog._last_api_result)
+        dialog.close()
+
+        # 2. Bottom Cancel/Close button cleanly rejects dialog without submitting
+        dialog2 = ApplyLeaveDialog(prefill_date="2026-06-11")
+        dialog2.show()
+        rejected_called2 = []
+        dialog2.rejected.connect(lambda: rejected_called2.append(True))
+        self.assertTrue(hasattr(dialog2, "close_btn"))
+        dialog2.close_btn.click()
+        self.assertEqual(len(rejected_called2), 1)
+        self.assertIsNone(dialog2._last_api_result)
+        dialog2.close()
+
+    def test_apply_leave_dialog_multiline_comments_and_validation(self):
+        dialog = ApplyLeaveDialog(prefill_date="2026-06-11")
+        dialog.show()
+
+        # Date pickers configuration
+        self.assertTrue(dialog.from_date_edit.calendarPopup())
+        self.assertTrue(dialog.to_date_edit.calendarPopup())
+        self.assertEqual(dialog.from_date_edit.displayFormat(), "dd-MM-yyyy")
+        self.assertEqual(dialog.to_date_edit.displayFormat(), "dd-MM-yyyy")
+
+        # Empty comments validation
+        dialog.comments_edit.setPlainText("")
+        dialog._handle_submit()
+        self.assertFalse(dialog.feedback_label.isHidden())
+        self.assertIn("reason/comment", dialog.feedback_label.text().lower())
+        self.assertIsNone(dialog._worker_thread)
+
+        # Multiline comments entry
+        multiline_reason = "Attending family function.\nWill be available on phone if urgent."
+        dialog.comments_edit.setPlainText(multiline_reason)
+        self.assertEqual(dialog.comments_edit.toPlainText(), multiline_reason)
+
+        # Invalid date range validation (To Date < From Date)
+        dialog.from_date_edit.setDate(QDate(2026, 6, 15))
+        dialog.to_date_edit.setDate(QDate(2026, 6, 10))
+        dialog._handle_submit()
+        self.assertFalse(dialog.feedback_label.isHidden())
+        self.assertIn("cannot be earlier", dialog.feedback_label.text().lower())
+        self.assertIsNone(dialog._worker_thread)
+        dialog.close()
+
 
     def test_apply_leave_button_beside_leave_balance_in_attendance_page(self):
         page = AttendancePage()

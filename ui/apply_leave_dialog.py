@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -122,8 +123,12 @@ class ApplyLeaveDialog(QDialog):
                 logger.debug("Could not pre-load leave quota items: %s", quota_err)
 
         self.setWindowTitle("Apply Leave — Employee Request")
-        self.setFixedSize(540, 680)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.resize(500, 520)
+        self.setMinimumSize(460, 440)
+        self.setWindowFlags(
+            (self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+            | Qt.WindowType.WindowCloseButtonHint
+        )
 
         self._init_ui(prefill_date)
 
@@ -142,30 +147,76 @@ class ApplyLeaveDialog(QDialog):
         )
 
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(20, 18, 20, 18)
+        root_layout.setContentsMargins(20, 16, 20, 16)
         root_layout.setSpacing(10)
 
-        # Header Section
-        header_layout = QVBoxLayout()
-        header_layout.setSpacing(3)
+        # --------------------------------------------------------------
+        # 1. Header Row with Title, Subtitle, and prominent Close (✕) button
+        # --------------------------------------------------------------
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(8)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
 
         title = QLabel("✈️ Apply for Leave", self)
-        title.setStyleSheet("font-size: 17px; font-weight: 700; color: #0F172A;")
-        header_layout.addWidget(title)
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #0F172A;")
+        title_col.addWidget(title)
 
         subtitle = QLabel("Submit your leave application for supervisor approval via the Leave Apply API.", self)
-        subtitle.setStyleSheet("font-size: 12px; color: #64748B;")
-        header_layout.addWidget(subtitle)
+        subtitle.setStyleSheet("font-size: 11.5px; color: #64748B;")
+        title_col.addWidget(subtitle)
 
-        root_layout.addLayout(header_layout)
+        header_row.addLayout(title_col, 1)
 
-        # Scrollable container
+        self.close_icon_btn = QPushButton("✕", self)
+        self.close_icon_btn.setObjectName("HeaderCloseButton")
+        self.close_icon_btn.setToolTip("Close")
+        self.close_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_icon_btn.setFixedSize(28, 28)
+        self.close_icon_btn.setStyleSheet(
+            """
+            QPushButton#HeaderCloseButton {
+                background: #F1F5F9;
+                color: #64748B;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton#HeaderCloseButton:hover {
+                background: #FEE2E2;
+                color: #DC2626;
+                border-color: #FECACA;
+            }
+            QPushButton#HeaderCloseButton:pressed {
+                background: #FCA5A5;
+                color: #991B1B;
+            }
+            QPushButton#HeaderCloseButton:disabled {
+                background: #F8FAFC;
+                color: #CBD5E1;
+                border-color: #F1F5F9;
+            }
+            """
+        )
+        self.close_icon_btn.clicked.connect(self.reject)
+        header_row.addWidget(self.close_icon_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        root_layout.addLayout(header_row)
+
+        # --------------------------------------------------------------
+        # 2. Scrollable container for form and dynamic API response
+        # --------------------------------------------------------------
         scroll_area = QScrollArea(self)
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(12)
@@ -176,7 +227,8 @@ class ApplyLeaveDialog(QDialog):
             "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         emp_layout = QHBoxLayout(emp_card)
-        emp_layout.setContentsMargins(12, 9, 12, 9)
+        emp_layout.setContentsMargins(12, 8, 12, 8)
+        emp_layout.setSpacing(8)
 
         emp_code = self._service._get_active_employee_id() or "Employee"
         emp_name = ""
@@ -212,58 +264,88 @@ class ApplyLeaveDialog(QDialog):
 
         scroll_layout.addWidget(emp_card)
 
-        # Form Fields Box
+        # --------------------------------------------------------------
+        # 3. Form Fields Box (compact, clean layout with direct label placement)
+        # --------------------------------------------------------------
         self.form_box = QFrame(scroll_content)
         self.form_box.setStyleSheet("QFrame { background: transparent; }")
         form_layout = QVBoxLayout(self.form_box)
         form_layout.setContentsMargins(0, 0, 0, 0)
-        form_layout.setSpacing(10)
+        form_layout.setSpacing(12)
 
-        # 1. Leave Type Selector
+        # 3.1 Leave Type Selector
+        lt_section = QVBoxLayout()
+        lt_section.setSpacing(4)
         lt_lbl = QLabel("Leave Type *", self.form_box)
         lt_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
-        form_layout.addWidget(lt_lbl)
+        lt_section.addWidget(lt_lbl)
 
         self.leave_type_combo = QComboBox(self.form_box)
+        self.leave_type_combo.setFixedHeight(34)
+        self.leave_type_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.leave_type_combo.setStyleSheet(
             """
             QComboBox {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
             }
             QComboBox:focus {
                 border-color: #4F46E5;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid #E2E8F0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background: #F8FAFC;
             }
             """
         )
         self._populate_leave_types()
-        form_layout.addWidget(self.leave_type_combo)
+        lt_section.addWidget(self.leave_type_combo)
+        form_layout.addLayout(lt_section)
 
-        # 2. Duration Selector
+        # 3.2 Duration Selector
+        dur_section = QVBoxLayout()
+        dur_section.setSpacing(4)
         dur_lbl = QLabel("Duration *", self.form_box)
         dur_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
-        form_layout.addWidget(dur_lbl)
+        dur_section.addWidget(dur_lbl)
 
         self.duration_combo = QComboBox(self.form_box)
+        self.duration_combo.setFixedHeight(34)
+        self.duration_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.duration_combo.setStyleSheet(
             """
             QComboBox {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
             }
             QComboBox:focus {
                 border-color: #4F46E5;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid #E2E8F0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background: #F8FAFC;
             }
             """
         )
         for opt in DURATION_OPTIONS:
             self.duration_combo.addItem(opt["name"], opt["id"])
         self.duration_combo.currentIndexChanged.connect(self._on_duration_changed)
-        form_layout.addWidget(self.duration_combo)
+        dur_section.addWidget(self.duration_combo)
+        form_layout.addLayout(dur_section)
 
-        # 3. Date Range Row (From Date & To Date)
+        # 3.3 Date Range Row (From Date & To Date side by side with equal widths)
         date_row = QHBoxLayout()
-        date_row.setSpacing(12)
+        date_row.setSpacing(14)
 
         # From Date Column
         from_col = QVBoxLayout()
@@ -275,19 +357,30 @@ class ApplyLeaveDialog(QDialog):
         self.from_date_edit = QDateEdit(self.form_box)
         self.from_date_edit.setCalendarPopup(True)
         self.from_date_edit.setDisplayFormat("dd-MM-yyyy")
+        self.from_date_edit.setFixedHeight(34)
+        self.from_date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.from_date_edit.setStyleSheet(
             """
             QDateEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
             }
             QDateEdit:focus {
                 border-color: #4F46E5;
             }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid #E2E8F0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background: #F8FAFC;
+            }
             """
         )
         from_col.addWidget(self.from_date_edit)
-        date_row.addLayout(from_col)
+        date_row.addLayout(from_col, 1)
 
         # To Date Column
         to_col = QVBoxLayout()
@@ -299,11 +392,13 @@ class ApplyLeaveDialog(QDialog):
         self.to_date_edit = QDateEdit(self.form_box)
         self.to_date_edit.setCalendarPopup(True)
         self.to_date_edit.setDisplayFormat("dd-MM-yyyy")
+        self.to_date_edit.setFixedHeight(34)
+        self.to_date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.to_date_edit.setStyleSheet(
             """
             QDateEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 6px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
+                padding: 5px 10px; font-size: 13px; color: #0F172A; background: #FFFFFF;
             }
             QDateEdit:focus {
                 border-color: #4F46E5;
@@ -311,10 +406,19 @@ class ApplyLeaveDialog(QDialog):
             QDateEdit:disabled {
                 background: #F1F5F9; color: #94A3B8;
             }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid #E2E8F0;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background: #F8FAFC;
+            }
             """
         )
         to_col.addWidget(self.to_date_edit)
-        date_row.addLayout(to_col)
+        date_row.addLayout(to_col, 1)
 
         # Set initial dates
         initial_date = QDate.currentDate()
@@ -339,37 +443,43 @@ class ApplyLeaveDialog(QDialog):
 
         form_layout.addLayout(date_row)
 
-        # 4. Comments / Reason Field
+        # 3.4 Reason / Comments Section
+        comments_section = QVBoxLayout()
+        comments_section.setSpacing(4)
         comments_lbl = QLabel("Reason / Comments *", self.form_box)
         comments_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
-        form_layout.addWidget(comments_lbl)
+        comments_section.addWidget(comments_lbl)
 
         self.comments_edit = QTextEdit(self.form_box)
         self.comments_edit.setPlaceholderText("Please explain reason for taking leave (required)...")
-        self.comments_edit.setMaximumHeight(75)
+        self.comments_edit.setFixedHeight(72)
+        self.comments_edit.setAcceptRichText(False)
         self.comments_edit.setStyleSheet(
             """
             QTextEdit {
                 border: 1px solid #CBD5E1; border-radius: 6px;
-                padding: 8px 10px; font-size: 12px; color: #0F172A; background: #FFFFFF;
+                padding: 6px 10px; font-size: 12.5px; color: #0F172A; background: #FFFFFF;
             }
             QTextEdit:focus {
                 border-color: #4F46E5;
             }
             """
         )
-        form_layout.addWidget(self.comments_edit)
+        comments_section.addWidget(self.comments_edit)
+        form_layout.addLayout(comments_section)
 
         scroll_layout.addWidget(self.form_box)
 
-        # Status / Feedback Banner
+        # --------------------------------------------------------------
+        # 4. Status / Feedback Banner
+        # --------------------------------------------------------------
         self.feedback_label = QLabel("", scroll_content)
         self.feedback_label.setWordWrap(True)
         self.feedback_label.setVisible(False)
         scroll_layout.addWidget(self.feedback_label)
 
         # --------------------------------------------------------------
-        # Dynamic API Output Display Box
+        # 5. Dynamic API Output Display Box
         # --------------------------------------------------------------
         self.api_output_group = QGroupBox("Leave Application API Response", scroll_content)
         self.api_output_group.setStyleSheet(
@@ -377,7 +487,7 @@ class ApplyLeaveDialog(QDialog):
             QGroupBox {
                 border: 1px solid #CBD5E1; border-radius: 8px;
                 font-size: 12px; font-weight: 700; color: #1E293B;
-                margin-top: 10px; padding: 12px; background: #F8FAFC;
+                margin-top: 6px; padding: 12px; background: #F8FAFC;
             }
             QGroupBox::title {
                 subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #4338CA;
@@ -408,7 +518,7 @@ class ApplyLeaveDialog(QDialog):
         # API Details text / payload view
         self.api_details_text = QTextEdit(self.api_output_group)
         self.api_details_text.setReadOnly(True)
-        self.api_details_text.setMaximumHeight(130)
+        self.api_details_text.setFixedHeight(120)
         self.api_details_text.setStyleSheet(
             """
             QTextEdit {
@@ -423,14 +533,20 @@ class ApplyLeaveDialog(QDialog):
         self.api_output_group.setVisible(False)
         scroll_layout.addWidget(self.api_output_group)
 
+        # Absorbs vertical space to keep form elements tightly stacked at the top
+        scroll_layout.addStretch(1)
+
         scroll_area.setWidget(scroll_content)
         root_layout.addWidget(scroll_area, 1)
 
-        # Button Row
+        # --------------------------------------------------------------
+        # 6. Action Button Row (Cancel / Close & Submit)
+        # --------------------------------------------------------------
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        self.close_btn = QPushButton("Close", self)
+        self.close_btn = QPushButton("Cancel", self)
+        self.close_btn.setObjectName("SecondaryButton")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.setFixedSize(90, 34)
         self.close_btn.setStyleSheet(
@@ -443,16 +559,21 @@ class ApplyLeaveDialog(QDialog):
             QPushButton:hover {
                 background: #E2E8F0; color: #0F172A;
             }
+            QPushButton:disabled {
+                background: #F8FAFC; color: #94A3B8; border-color: #E2E8F0;
+            }
             """
         )
-        self.close_btn.clicked.connect(self.accept)
+        self.close_btn.clicked.connect(self.reject)
+        self.cancel_btn = self.close_btn
         btn_layout.addWidget(self.close_btn)
 
         btn_layout.addStretch(1)
 
         self.submit_btn = QPushButton("Submit Application", self)
+        self.submit_btn.setObjectName("PrimaryButton")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_btn.setMinimumWidth(150)
+        self.submit_btn.setMinimumWidth(160)
         self.submit_btn.setFixedHeight(34)
         self.submit_btn.setStyleSheet(
             """
@@ -558,6 +679,7 @@ class ApplyLeaveDialog(QDialog):
         self.submit_btn.setEnabled(False)
         self.submit_btn.setText("Submitting to API...")
         self.close_btn.setEnabled(False)
+        self.close_icon_btn.setEnabled(False)
 
         # 3. Launch Worker
         self._worker_thread = QThread(self)
@@ -584,6 +706,7 @@ class ApplyLeaveDialog(QDialog):
         self.submit_btn.setEnabled(True)
         self.submit_btn.setText("Submit Application")
         self.close_btn.setEnabled(True)
+        self.close_icon_btn.setEnabled(True)
 
         is_success = bool(result.get("success"))
         status_code = result.get("status", 200 if is_success else 400)
@@ -596,6 +719,7 @@ class ApplyLeaveDialog(QDialog):
             self._show_message(f"✅ {message}", is_error=False)
             self.submit_btn.setText("Submitted ✓")
             self.submit_btn.setEnabled(False)
+            self.close_btn.setText("Close")
             self.leave_applied.emit(result)
         else:
             err_msg = result.get("error") or message
@@ -638,3 +762,23 @@ class ApplyLeaveDialog(QDialog):
             self.api_details_text.setPlainText(formatted_json)
         except Exception:
             self.api_details_text.setPlainText(str(details_info))
+
+    def reject(self) -> None:
+        """Dismiss the dialog cleanly without submitting or triggering any network request."""
+        self._cleanup_worker()
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        """Safely clean up any worker thread when window close is triggered."""
+        self._cleanup_worker()
+        event.accept()
+        super().closeEvent(event)
+
+    def _cleanup_worker(self) -> None:
+        """Stop running worker thread if dialog is dismissed while active."""
+        if self._worker_thread and self._worker_thread.isRunning():
+            try:
+                self._worker_thread.quit()
+                self._worker_thread.wait(500)
+            except Exception as exc:
+                logger.debug("Error stopping apply leave worker: %s", exc)
