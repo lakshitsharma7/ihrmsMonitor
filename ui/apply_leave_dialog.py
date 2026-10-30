@@ -1,4 +1,4 @@
-"""Modal dialog for applying employee leave requests.
+"""Modal dialog for applying employee leave requests and viewing API response output.
 
 Sends leave application to:
     Endpoint: leave/apply_leave_v2
@@ -8,6 +8,7 @@ Sends leave application to:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 from PySide6.QtCore import QDate, QObject, QThread, Qt, Signal
@@ -16,9 +17,11 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -84,13 +87,15 @@ class _ApplyLeaveWorker(QObject):
             self.finished.emit({
                 "success": False,
                 "status": 500,
-                "message": f"Unexpected error: {str(exc)}",
+                "message": f"Network / server error: {str(exc)}",
+                "data": None,
+                "raw_data": None,
                 "error": str(exc),
             })
 
 
 class ApplyLeaveDialog(QDialog):
-    """Dialog allowing employees to apply for leave with leave type and duration selection."""
+    """Dialog allowing employees to apply for leave with leave type and duration selection and view API output."""
 
     leave_applied = Signal(dict)
 
@@ -105,9 +110,19 @@ class ApplyLeaveDialog(QDialog):
         self._service = service or AttendanceService()
         self._quota_items = quota_items or []
         self._worker_thread: QThread | None = None
+        self._last_api_result: dict[str, Any] | None = None
 
-        self.setWindowTitle("Apply Leave")
-        self.setFixedSize(500, 600)
+        # Pre-load dynamic quota items if not provided
+        if not self._quota_items:
+            try:
+                quota_res = self._service.get_leave_quota()
+                if isinstance(quota_res, dict) and quota_res.get("items"):
+                    self._quota_items = quota_res.get("items", [])
+            except Exception as quota_err:
+                logger.debug("Could not pre-load leave quota items: %s", quota_err)
+
+        self.setWindowTitle("Apply Leave — Employee Request")
+        self.setFixedSize(540, 680)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._init_ui(prefill_date)
@@ -126,52 +141,90 @@ class ApplyLeaveDialog(QDialog):
             """
         )
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 20, 24, 20)
-        main_layout.setSpacing(14)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 18, 20, 18)
+        root_layout.setSpacing(10)
 
         # Header Section
         header_layout = QVBoxLayout()
-        header_layout.setSpacing(4)
+        header_layout.setSpacing(3)
 
-        title = QLabel("Apply for Leave", self)
+        title = QLabel("✈️ Apply for Leave", self)
         title.setStyleSheet("font-size: 17px; font-weight: 700; color: #0F172A;")
         header_layout.addWidget(title)
 
-        subtitle = QLabel("Submit your leave application for supervisor approval.", self)
+        subtitle = QLabel("Submit your leave application for supervisor approval via the Leave Apply API.", self)
         subtitle.setStyleSheet("font-size: 12px; color: #64748B;")
         header_layout.addWidget(subtitle)
 
-        main_layout.addLayout(header_layout)
+        root_layout.addLayout(header_layout)
 
-        # Employee Info Card
-        emp_card = QFrame(self)
+        # Scrollable container
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(12)
+
+        # Dynamic Employee & Company Info Card
+        emp_card = QFrame(scroll_content)
         emp_card.setStyleSheet(
             "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         emp_layout = QHBoxLayout(emp_card)
-        emp_layout.setContentsMargins(12, 10, 12, 10)
+        emp_layout.setContentsMargins(12, 9, 12, 9)
 
         emp_code = self._service._get_active_employee_id() or "Employee"
-        emp_label = QLabel(f"<b>Employee:</b> {emp_code}", emp_card)
+        emp_name = ""
+        comp_code = ""
+        try:
+            from services.session_service import SessionService
+            u = SessionService().current_user
+            if u:
+                emp_name = u.display_name or ""
+                comp_code = u.company_code or ""
+        except Exception:
+            pass
+        if not comp_code:
+            try:
+                from config.api_config import ApiConfig
+                comp_code = ApiConfig().company_code or ""
+            except Exception:
+                pass
+
+        emp_text = f"<b>Employee:</b> {emp_code}"
+        if emp_name and emp_name.lower() != "employee":
+            emp_text += f" ({emp_name})"
+        emp_label = QLabel(emp_text, emp_card)
         emp_label.setStyleSheet("font-size: 12px; color: #334155;")
         emp_layout.addWidget(emp_label)
 
-        main_layout.addWidget(emp_card)
+        emp_layout.addStretch(1)
 
-        # Form Fields Container
-        form_frame = QFrame(self)
-        form_frame.setStyleSheet("QFrame { background: transparent; }")
-        form_layout = QVBoxLayout(form_frame)
+        comp_text = f"<b>Company:</b> {comp_code}" if comp_code else "<b>API:</b> leave/apply_leave_v2"
+        comp_label = QLabel(comp_text, emp_card)
+        comp_label.setStyleSheet("font-size: 11px; color: #64748B;")
+        emp_layout.addWidget(comp_label)
+
+        scroll_layout.addWidget(emp_card)
+
+        # Form Fields Box
+        self.form_box = QFrame(scroll_content)
+        self.form_box.setStyleSheet("QFrame { background: transparent; }")
+        form_layout = QVBoxLayout(self.form_box)
         form_layout.setContentsMargins(0, 0, 0, 0)
         form_layout.setSpacing(10)
 
         # 1. Leave Type Selector
-        lt_lbl = QLabel("Leave Type *", self)
+        lt_lbl = QLabel("Leave Type *", self.form_box)
         lt_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         form_layout.addWidget(lt_lbl)
 
-        self.leave_type_combo = QComboBox(self)
+        self.leave_type_combo = QComboBox(self.form_box)
         self.leave_type_combo.setStyleSheet(
             """
             QComboBox {
@@ -187,11 +240,11 @@ class ApplyLeaveDialog(QDialog):
         form_layout.addWidget(self.leave_type_combo)
 
         # 2. Duration Selector
-        dur_lbl = QLabel("Duration *", self)
+        dur_lbl = QLabel("Duration *", self.form_box)
         dur_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         form_layout.addWidget(dur_lbl)
 
-        self.duration_combo = QComboBox(self)
+        self.duration_combo = QComboBox(self.form_box)
         self.duration_combo.setStyleSheet(
             """
             QComboBox {
@@ -215,11 +268,11 @@ class ApplyLeaveDialog(QDialog):
         # From Date Column
         from_col = QVBoxLayout()
         from_col.setSpacing(4)
-        from_lbl = QLabel("From Date *", self)
+        from_lbl = QLabel("From Date *", self.form_box)
         from_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         from_col.addWidget(from_lbl)
 
-        self.from_date_edit = QDateEdit(self)
+        self.from_date_edit = QDateEdit(self.form_box)
         self.from_date_edit.setCalendarPopup(True)
         self.from_date_edit.setDisplayFormat("dd-MM-yyyy")
         self.from_date_edit.setStyleSheet(
@@ -239,11 +292,11 @@ class ApplyLeaveDialog(QDialog):
         # To Date Column
         to_col = QVBoxLayout()
         to_col.setSpacing(4)
-        to_lbl = QLabel("To Date *", self)
+        to_lbl = QLabel("To Date *", self.form_box)
         to_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         to_col.addWidget(to_lbl)
 
-        self.to_date_edit = QDateEdit(self)
+        self.to_date_edit = QDateEdit(self.form_box)
         self.to_date_edit.setCalendarPopup(True)
         self.to_date_edit.setDisplayFormat("dd-MM-yyyy")
         self.to_date_edit.setStyleSheet(
@@ -287,13 +340,13 @@ class ApplyLeaveDialog(QDialog):
         form_layout.addLayout(date_row)
 
         # 4. Comments / Reason Field
-        comments_lbl = QLabel("Reason / Comments *", self)
+        comments_lbl = QLabel("Reason / Comments *", self.form_box)
         comments_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         form_layout.addWidget(comments_lbl)
 
-        self.comments_edit = QTextEdit(self)
-        self.comments_edit.setPlaceholderText("Please explain reason for taking leave (e.g. medical appointment, annual family leave, personal work)...")
-        self.comments_edit.setMaximumHeight(85)
+        self.comments_edit = QTextEdit(self.form_box)
+        self.comments_edit.setPlaceholderText("Please explain reason for taking leave (required)...")
+        self.comments_edit.setMaximumHeight(75)
         self.comments_edit.setStyleSheet(
             """
             QTextEdit {
@@ -307,27 +360,83 @@ class ApplyLeaveDialog(QDialog):
         )
         form_layout.addWidget(self.comments_edit)
 
-        main_layout.addWidget(form_frame)
+        scroll_layout.addWidget(self.form_box)
 
-        # Feedback / Status Message Box
-        self.feedback_label = QLabel("", self)
+        # Status / Feedback Banner
+        self.feedback_label = QLabel("", scroll_content)
         self.feedback_label.setWordWrap(True)
         self.feedback_label.setVisible(False)
-        main_layout.addWidget(self.feedback_label)
+        scroll_layout.addWidget(self.feedback_label)
 
-        main_layout.addStretch(1)
+        # --------------------------------------------------------------
+        # Dynamic API Output Display Box
+        # --------------------------------------------------------------
+        self.api_output_group = QGroupBox("Leave Application API Response", scroll_content)
+        self.api_output_group.setStyleSheet(
+            """
+            QGroupBox {
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                font-size: 12px; font-weight: 700; color: #1E293B;
+                margin-top: 10px; padding: 12px; background: #F8FAFC;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #4338CA;
+            }
+            """
+        )
+        api_output_layout = QVBoxLayout(self.api_output_group)
+        api_output_layout.setSpacing(8)
+
+        # Status row
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.api_status_badge = QLabel("● Ready", self.api_output_group)
+        self.api_status_badge.setStyleSheet(
+            "background-color: #EEF2FF; color: #4F46E5; font-size: 11.5px; font-weight: 700; "
+            "padding: 3px 8px; border-radius: 6px; border: 1px solid #C7D2FE;"
+        )
+        status_row.addWidget(self.api_status_badge)
+        status_row.addStretch(1)
+        api_output_layout.addLayout(status_row)
+
+        # Server message
+        self.api_message_label = QLabel("No application submitted yet.", self.api_output_group)
+        self.api_message_label.setStyleSheet("font-size: 12px; color: #334155; font-weight: 600;")
+        self.api_message_label.setWordWrap(True)
+        api_output_layout.addWidget(self.api_message_label)
+
+        # API Details text / payload view
+        self.api_details_text = QTextEdit(self.api_output_group)
+        self.api_details_text.setReadOnly(True)
+        self.api_details_text.setMaximumHeight(130)
+        self.api_details_text.setStyleSheet(
+            """
+            QTextEdit {
+                background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px;
+                padding: 6px; font-family: monospace; font-size: 11px; color: #1E293B;
+            }
+            """
+        )
+        self.api_details_text.setPlaceholderText("API response JSON payload will appear here...")
+        api_output_layout.addWidget(self.api_details_text)
+
+        self.api_output_group.setVisible(False)
+        scroll_layout.addWidget(self.api_output_group)
+
+        scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(scroll_area, 1)
 
         # Button Row
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        self.cancel_btn = QPushButton("Cancel", self)
-        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cancel_btn.setFixedSize(90, 34)
-        self.cancel_btn.setStyleSheet(
+        self.close_btn = QPushButton("Close", self)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.setFixedSize(90, 34)
+        self.close_btn.setStyleSheet(
             """
             QPushButton {
-                background: #F1F5F9; border: 1px solid #E2E8F0;
+                background: #F1F5F9; border: 1px solid #CBD5E1;
                 color: #334155; border-radius: 6px;
                 font-weight: 600; font-size: 12px;
             }
@@ -336,14 +445,14 @@ class ApplyLeaveDialog(QDialog):
             }
             """
         )
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(self.cancel_btn)
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
 
         btn_layout.addStretch(1)
 
         self.submit_btn = QPushButton("Submit Application", self)
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_btn.setMinimumWidth(140)
+        self.submit_btn.setMinimumWidth(150)
         self.submit_btn.setFixedHeight(34)
         self.submit_btn.setStyleSheet(
             """
@@ -363,7 +472,7 @@ class ApplyLeaveDialog(QDialog):
         self.submit_btn.clicked.connect(self._handle_submit)
         btn_layout.addWidget(self.submit_btn)
 
-        main_layout.addLayout(btn_layout)
+        root_layout.addLayout(btn_layout)
 
     def _populate_leave_types(self) -> None:
         """Populate leave types combo box with available quotas or fallback types."""
@@ -447,8 +556,8 @@ class ApplyLeaveDialog(QDialog):
         # 2. UI Loading State
         self.feedback_label.setVisible(False)
         self.submit_btn.setEnabled(False)
-        self.submit_btn.setText("Submitting...")
-        self.cancel_btn.setEnabled(False)
+        self.submit_btn.setText("Submitting to API...")
+        self.close_btn.setEnabled(False)
 
         # 3. Launch Worker
         self._worker_thread = QThread(self)
@@ -466,22 +575,66 @@ class ApplyLeaveDialog(QDialog):
         self._worker_thread.start()
 
     def _on_submit_finished(self, result: dict) -> None:
-        """Handle response from background worker."""
+        """Handle response from background worker and display API output."""
         if self._worker_thread and self._worker_thread.isRunning():
             self._worker_thread.quit()
             self._worker_thread.wait()
 
+        self._last_api_result = result
         self.submit_btn.setEnabled(True)
         self.submit_btn.setText("Submit Application")
-        self.cancel_btn.setEnabled(True)
+        self.close_btn.setEnabled(True)
 
-        if result.get("success"):
-            success_msg = result.get("message") or "Leave application submitted successfully."
-            self._show_message(f"✅ {success_msg}", is_error=False)
+        is_success = bool(result.get("success"))
+        status_code = result.get("status", 200 if is_success else 400)
+        message = result.get("message") or (
+            "Leave application submitted successfully." if is_success else "Failed to submit leave application."
+        )
+
+        # 1. Update Feedback Banner
+        if is_success:
+            self._show_message(f"✅ {message}", is_error=False)
+            self.submit_btn.setText("Submitted ✓")
             self.submit_btn.setEnabled(False)
             self.leave_applied.emit(result)
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(1200, self.accept)
         else:
-            err_msg = result.get("message") or result.get("error") or "Failed to submit leave application."
+            err_msg = result.get("error") or message
             self._show_message(f"⚠️ {err_msg}", is_error=True)
+
+        # 2. Render Dynamic API Response Output Box
+        self.api_output_group.setVisible(True)
+
+        if is_success:
+            self.api_status_badge.setText(f"● Success (HTTP {status_code})")
+            self.api_status_badge.setStyleSheet(
+                "background-color: #DCFCE7; color: #16A34A; font-size: 11.5px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 6px; border: 1px solid #BBF7D0;"
+            )
+        else:
+            self.api_status_badge.setText(f"● Error (HTTP {status_code})")
+            self.api_status_badge.setStyleSheet(
+                "background-color: #FEE2E2; color: #DC2626; font-size: 11.5px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 6px; border: 1px solid #FECACA;"
+            )
+
+        self.api_message_label.setText(str(message))
+
+        # Format details view
+        details_info: dict[str, Any] = {
+            "endpoint": "leave/apply_leave_v2",
+            "status": status_code,
+            "success": is_success,
+            "message": message,
+        }
+        if result.get("data") is not None:
+            details_info["response_data"] = result.get("data")
+        elif result.get("raw_data") is not None:
+            details_info["raw_data"] = result.get("raw_data")
+        if result.get("error"):
+            details_info["error"] = result.get("error")
+
+        try:
+            formatted_json = json.dumps(details_info, indent=2)
+            self.api_details_text.setPlainText(formatted_json)
+        except Exception:
+            self.api_details_text.setPlainText(str(details_info))

@@ -17,6 +17,8 @@ from config.api_config import ApiConfig
 from services.attendance_service import AttendanceService
 from ui.apply_leave_dialog import ApplyLeaveDialog, DEFAULT_LEAVE_TYPES, DURATION_OPTIONS
 from ui.attendance_page import AttendancePage
+from ui.leave_balance_dialog import LeaveBalanceDialog
+from services.session_service import SessionService, UserSession
 from ui.missed_punch_dialog import MissedPunchDialog
 
 
@@ -342,6 +344,108 @@ class TestDialogUI(unittest.TestCase):
         dialog.duration_combo.setCurrentIndex(idx_full)
         self.assertTrue(dialog.to_date_edit.isEnabled())
         dialog.close()
+
+
+    def test_apply_leave_button_beside_leave_balance_in_attendance_page(self):
+        page = AttendancePage()
+        self.assertTrue(hasattr(page, "leave_balance_button"))
+        self.assertEqual(page.leave_balance_button.text(), "Leave Balance")
+        self.assertTrue(hasattr(page, "apply_leave_button"))
+        self.assertIn("Apply Leave", page.apply_leave_button.text())
+        page.close()
+
+    def test_apply_leave_header_button_in_leave_balance_dialog(self):
+        dialog = LeaveBalanceDialog()
+        self.assertTrue(hasattr(dialog, "title_label"))
+        self.assertEqual(dialog.title_label.text(), "Leave Balance")
+        self.assertTrue(hasattr(dialog, "apply_leave_header_btn"))
+        self.assertIn("Apply Leave", dialog.apply_leave_header_btn.text())
+        dialog.close()
+
+    def test_apply_leave_dialog_displays_api_response_output(self):
+        dialog = ApplyLeaveDialog(prefill_date="2026-06-11")
+        dialog.show()
+        mock_result = {
+            "success": True,
+            "status": 200,
+            "message": "Leave application submitted successfully.",
+            "data": {
+                "response": "Success",
+                "application_id": "LV-12345",
+            },
+        }
+        dialog._on_submit_finished(mock_result)
+        self.assertFalse(dialog.api_output_group.isHidden())
+        self.assertIn("Success", dialog.api_status_badge.text())
+        self.assertEqual(dialog.api_message_label.text(), "Leave application submitted successfully.")
+        self.assertIn("leave/apply_leave_v2", dialog.api_details_text.toPlainText())
+        self.assertIn("LV-12345", dialog.api_details_text.toPlainText())
+        self.assertTrue(dialog.close_btn.isEnabled())
+        dialog.close()
+
+
+class TestMultiCompanyAndEmployeeIsolation(unittest.TestCase):
+    """Verify dynamic multi-company and multi-employee context isolation."""
+
+    def setUp(self):
+        self.service = AttendanceService()
+        self.session_service = SessionService()
+
+    @patch("requests.post")
+    def test_switching_companies_and_employees_updates_context_dynamically(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "Success", "status": 200}
+        mock_resp.content = b'{"response":"Success"}'
+        mock_post.return_value = mock_resp
+
+        # 1. Company Alpha - Employee 1
+        user_a = UserSession(
+            username="emp1@alpha.com",
+            role="Employee",
+            indo_code="EMP-ALPHA-01",
+            api_key="token_alpha_01",
+            company_code="ALPHA",
+            base_url="https://alpha.api.ihrms.com/v1",
+        )
+        self.session_service._current_user = user_a
+
+        self.service.submit_missed_punch(
+            date="10-10-2026",
+            in_time="09:00:00",
+            comments="Alpha meeting",
+        )
+        call_alpha = mock_post.call_args
+        self.assertEqual(call_alpha[0][0], "https://alpha.api.ihrms.com/v1/Punch/mispunch")
+        self.assertEqual(call_alpha[1]["data"]["indo_code"], "EMP-ALPHA-01")
+        self.assertEqual(call_alpha[1]["data"]["key"], "token_alpha_01")
+
+        # 2. Company Beta - Employee 2 (Different company, different employee)
+        user_b = UserSession(
+            username="emp2@beta.com",
+            role="Employee",
+            indo_code="EMP-BETA-02",
+            api_key="token_beta_02",
+            company_code="BETA",
+            base_url="https://beta.api.ihrms.com/v2",
+        )
+        self.session_service._current_user = user_b
+
+        self.service.apply_leave(
+            from_date="15-10-2026",
+            to_date="16-10-2026",
+            leave_type_id="2",
+            duration_id="6",
+            comments="Beta sick leave",
+        )
+        call_beta = mock_post.call_args
+        self.assertEqual(call_beta[0][0], "https://beta.api.ihrms.com/v2/leave/apply_leave_v2")
+        self.assertEqual(call_beta[1]["data"]["indo_code"], "EMP-BETA-02")
+        self.assertEqual(call_beta[1]["data"]["key"], "token_beta_02")
+        self.assertEqual(call_beta[1]["data"]["leave_type_id"], "2")
+
+        # Reset session
+        self.session_service._current_user = None
 
 
 if __name__ == "__main__":

@@ -898,6 +898,28 @@ class AttendancePage(QWidget):
         self.leave_balance_button.clicked.connect(self._open_leave_balance_modal)
         top_bar.addWidget(self.leave_balance_button)
 
+        self.apply_leave_button = QPushButton("✈️ Apply Leave", self)
+        self.apply_leave_button.setObjectName("PrimaryButton")
+        self.apply_leave_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_leave_button.setMinimumHeight(34)
+        self.apply_leave_button.setStyleSheet(
+            """
+            QPushButton {
+                background: #4F46E5; border: 1px solid #4338CA; border-radius: 6px;
+                color: #FFFFFF; font-weight: 600; font-size: 12px; padding: 6px 14px;
+            }
+            QPushButton:hover {
+                background: #4338CA;
+            }
+            QPushButton:focus {
+                border: 2px solid #818CF8; outline: none;
+            }
+            """
+        )
+        self.apply_leave_button.setToolTip("Submit employee leave application")
+        self.apply_leave_button.clicked.connect(self._open_apply_leave_modal)
+        top_bar.addWidget(self.apply_leave_button)
+
         self.root_layout.addLayout(top_bar)
 
         # Error banner ─────────────────────────────────────────────────
@@ -2180,6 +2202,15 @@ class AttendancePage(QWidget):
             dialog.exec()
         except Exception as err:
             logger.error("Failed to open leave balance dialog: %s", err)
+
+    def _open_apply_leave_modal(self) -> None:
+        """Open modal dialog to apply for leave."""
+        try:
+            from ui.apply_leave_dialog import ApplyLeaveDialog
+            dialog = ApplyLeaveDialog(service=self._service, parent=self)
+            dialog.exec()
+        except Exception as err:
+            logger.error("Failed to open apply leave dialog: %s", err)
 
     def _open_missed_punch_modal(self, prefill_date: Any = None, atten_id: str = "") -> None:
         """Open modal dialog to apply for missed punch regularization."""

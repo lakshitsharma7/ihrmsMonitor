@@ -798,14 +798,40 @@ class LeaveBalanceDialog(QDialog):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+        title_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
         self.title_label = QLabel("Leave Balance")
         self.title_label.setObjectName("LeaveBalanceTitle")
         self.title_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
+        title_row.addWidget(self.title_label)
+
+        self.apply_leave_header_btn = QPushButton("✈️ Apply Leave", self)
+        self.apply_leave_header_btn.setObjectName("PrimaryButton")
+        self.apply_leave_header_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_leave_header_btn.setFixedHeight(28)
+        self.apply_leave_header_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4F46E5; color: #FFFFFF; font-size: 11px; font-weight: 600;
+                border-radius: 6px; padding: 4px 12px; border: 1px solid #4338CA;
+            }
+            QPushButton:hover {
+                background-color: #4338CA;
+            }
+            """
+        )
+        self.apply_leave_header_btn.setToolTip("Submit employee leave application")
+        self.apply_leave_header_btn.clicked.connect(self._open_apply_leave_dialog)
+        title_row.addWidget(self.apply_leave_header_btn)
+        self.apply_leave_btn = self.apply_leave_header_btn
 
         self.subtitle_label = QLabel("Employee Leave Quotas & Current Balance Breakdown")
         self.subtitle_label.setStyleSheet("font-size: 11.5px; color: #64748B;")
 
-        title_col.addWidget(self.title_label)
+        title_col.addLayout(title_row)
         title_col.addWidget(self.subtitle_label)
         header_layout.addLayout(title_col)
 
