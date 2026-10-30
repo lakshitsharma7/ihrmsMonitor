@@ -898,29 +898,6 @@ class AttendancePage(QWidget):
         self.leave_balance_button.clicked.connect(self._open_leave_balance_modal)
         top_bar.addWidget(self.leave_balance_button)
 
-        self.missed_punch_button = QPushButton("⏰ Apply Missed Punch", self)
-        self.missed_punch_button.setObjectName("SecondaryButton")
-        self.missed_punch_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.missed_punch_button.setMinimumHeight(34)
-        self.missed_punch_button.setStyleSheet(
-            """
-            QPushButton {
-                border-radius: 6px; font-weight: 600; font-size: 12px;
-                border: 1px solid #D9E1EC; background: #FFFFFF;
-                color: #334155; padding: 6px 14px;
-            }
-            QPushButton:hover {
-                border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
-            }
-            QPushButton:focus {
-                border: 2px solid #4F46E5; outline: none; background: #EEF2FF;
-            }
-            """
-        )
-        self.missed_punch_button.setToolTip("Submit missed punch regularization request")
-        self.missed_punch_button.clicked.connect(lambda: self._open_missed_punch_modal())
-        top_bar.addWidget(self.missed_punch_button)
-
         self.root_layout.addLayout(top_bar)
 
         # Error banner ─────────────────────────────────────────────────
@@ -976,6 +953,29 @@ class AttendancePage(QWidget):
         )
         self.today_btn.clicked.connect(self._on_today)
         nav_toolbar.addWidget(self.today_btn)
+
+        self.missed_punch_btn = QPushButton("Missed Punch", self)
+        self.missed_punch_btn.setObjectName("SecondaryButton")
+        self.missed_punch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.missed_punch_btn.setMinimumHeight(32)
+        self.missed_punch_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 8px;
+                color: #334155; font-weight: 700; font-size: 12px; padding: 5px 14px;
+            }
+            QPushButton:hover {
+                border-color: #818CF8; color: #4F46E5; background: #EEF2FF;
+            }
+            QPushButton:focus {
+                border: 2px solid #4F46E5; outline: none; background: #EEF2FF;
+            }
+            """
+        )
+        self.missed_punch_btn.setToolTip("Submit missed punch regularization request")
+        self.missed_punch_btn.clicked.connect(lambda: self._open_missed_punch_modal())
+        nav_toolbar.addWidget(self.missed_punch_btn)
+        self.missed_punch_button = self.missed_punch_btn
 
         nav_toolbar.addStretch(1)
 
@@ -1205,7 +1205,8 @@ class AttendancePage(QWidget):
         QWidget.setTabOrder(self.back_button, self.leave_balance_button)
         QWidget.setTabOrder(self.leave_balance_button, self.prev_month_btn)
         QWidget.setTabOrder(self.prev_month_btn, self.today_btn)
-        QWidget.setTabOrder(self.today_btn, self.cal_side_year_prev)
+        QWidget.setTabOrder(self.today_btn, self.missed_punch_btn)
+        QWidget.setTabOrder(self.missed_punch_btn, self.cal_side_year_prev)
         QWidget.setTabOrder(self.cal_side_year_prev, self.cal_side_year_next)
         QWidget.setTabOrder(self.cal_side_year_next, self.cal_prev_btn)
         QWidget.setTabOrder(self.cal_prev_btn, self.cal_next_btn)

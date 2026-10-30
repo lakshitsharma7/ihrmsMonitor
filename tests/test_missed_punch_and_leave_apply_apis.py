@@ -16,6 +16,7 @@ if app is None:
 from config.api_config import ApiConfig
 from services.attendance_service import AttendanceService
 from ui.apply_leave_dialog import ApplyLeaveDialog, DEFAULT_LEAVE_TYPES, DURATION_OPTIONS
+from ui.attendance_page import AttendancePage
 from ui.missed_punch_dialog import MissedPunchDialog
 
 
@@ -267,7 +268,46 @@ class TestDialogUI(unittest.TestCase):
         self.assertTrue(dialog.in_time_cb.isChecked())
         self.assertTrue(dialog.out_time_cb.isChecked())
         self.assertTrue(dialog.submit_btn.isEnabled())
+        self.assertTrue(dialog.close_btn.isEnabled())
         dialog.close()
+
+    def test_missed_punch_dialog_displays_api_response_output(self):
+        dialog = MissedPunchDialog(prefill_date="2025-07-09")
+        dialog.show()
+        # Simulate worker finished with actual API response
+        mock_result = {
+            "success": True,
+            "status": 200,
+            "message": "Missed punch request sent for approval.",
+            "data": {
+                "response": "Success",
+                "request_id": "REQ-9988",
+            },
+        }
+        dialog._on_submit_finished(mock_result)
+
+        # Check that the API output section is visible and contains returned information
+        self.assertFalse(dialog.api_output_group.isHidden())
+        self.assertIn("Success", dialog.api_status_badge.text())
+        self.assertEqual(dialog.api_message_label.text(), "Missed punch request sent for approval.")
+        self.assertIn("Punch/mispunch", dialog.api_details_text.toPlainText())
+        self.assertIn("REQ-9988", dialog.api_details_text.toPlainText())
+        self.assertTrue(dialog.close_btn.isEnabled())
+        dialog.close()
+
+    def test_missed_punch_button_beside_today_in_attendance_page(self):
+        page = AttendancePage()
+        # Verify Today button exists
+        self.assertTrue(hasattr(page, "today_btn"))
+        self.assertEqual(page.today_btn.text(), "Today")
+
+        # Verify Missed Punch button exists immediately beside Today
+        self.assertTrue(hasattr(page, "missed_punch_btn"))
+        self.assertEqual(page.missed_punch_btn.text(), "Missed Punch")
+
+        # Verify tab order: today_btn -> missed_punch_btn
+        self.assertEqual(page.today_btn.nextInFocusChain(), page.missed_punch_btn)
+        page.close()
 
     def test_apply_leave_dialog_initialization_and_quota_binding(self):
         mock_quota_items = [

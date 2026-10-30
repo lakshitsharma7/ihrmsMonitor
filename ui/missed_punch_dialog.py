@@ -1,4 +1,4 @@
-"""Modal dialog for applying Missed Punch attendance regularization.
+"""Modal dialog for submitting Missed Punch attendance regularization and viewing API output.
 
 Sends missed punch request to:
     Endpoint: Punch/mispunch
@@ -8,16 +8,20 @@ Sends missed punch request to:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from typing import Any
 from PySide6.QtCore import QDate, QObject, QThread, QTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
     QDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QTimeEdit,
     QVBoxLayout,
@@ -67,13 +71,15 @@ class _MissedPunchWorker(QObject):
             self.finished.emit({
                 "success": False,
                 "status": 500,
-                "message": f"Unexpected error: {str(exc)}",
+                "message": f"Network / server error: {str(exc)}",
+                "data": None,
+                "raw_data": None,
                 "error": str(exc),
             })
 
 
 class MissedPunchDialog(QDialog):
-    """Dialog allowing employees to submit a missed punch regularization request."""
+    """Dialog allowing employees to submit a missed punch regularization request and view API output."""
 
     punch_submitted = Signal(dict)
 
@@ -88,9 +94,10 @@ class MissedPunchDialog(QDialog):
         self._service = service or AttendanceService()
         self._atten_id = str(atten_id or "").strip()
         self._worker_thread: QThread | None = None
+        self._last_api_result: dict[str, Any] | None = None
 
-        self.setWindowTitle("Apply Missed Punch")
-        self.setFixedSize(480, 560)
+        self.setWindowTitle("Missed Punch — Attendance Regularization")
+        self.setFixedSize(540, 680)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._init_ui(prefill_date)
@@ -109,58 +116,73 @@ class MissedPunchDialog(QDialog):
             """
         )
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 20, 24, 20)
-        main_layout.setSpacing(14)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 18, 20, 18)
+        root_layout.setSpacing(10)
 
         # Header Section
         header_layout = QVBoxLayout()
-        header_layout.setSpacing(4)
+        header_layout.setSpacing(3)
 
-        title = QLabel("Apply Missed Punch", self)
+        title = QLabel("⏰ Missed Punch Regularization", self)
         title.setStyleSheet("font-size: 17px; font-weight: 700; color: #0F172A;")
         header_layout.addWidget(title)
 
-        subtitle = QLabel("Submit missing punch timings for manager regularization.", self)
+        subtitle = QLabel("Submit missing punch timings directly via the official Missed Punch API.", self)
         subtitle.setStyleSheet("font-size: 12px; color: #64748B;")
         header_layout.addWidget(subtitle)
 
-        main_layout.addLayout(header_layout)
+        root_layout.addLayout(header_layout)
+
+        # Scrollable container for form and dynamic API response
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(12)
 
         # Employee Info Card
-        emp_card = QFrame(self)
+        emp_card = QFrame(scroll_content)
         emp_card.setStyleSheet(
             "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         emp_layout = QHBoxLayout(emp_card)
-        emp_layout.setContentsMargins(12, 10, 12, 10)
+        emp_layout.setContentsMargins(12, 9, 12, 9)
 
         emp_code = self._service._get_active_employee_id() or "Employee"
         emp_label = QLabel(f"<b>Employee:</b> {emp_code}", emp_card)
         emp_label.setStyleSheet("font-size: 12px; color: #334155;")
         emp_layout.addWidget(emp_label)
 
+        api_ep_label = QLabel("<b>API:</b> Punch/mispunch", emp_card)
+        api_ep_label.setStyleSheet("font-size: 11px; color: #64748B;")
+        emp_layout.addStretch(1)
+        emp_layout.addWidget(api_ep_label)
+
         if self._atten_id:
-            atten_label = QLabel(f"<b>Attendance ID:</b> {self._atten_id}", emp_card)
+            atten_label = QLabel(f"<b>Atten ID:</b> {self._atten_id}", emp_card)
             atten_label.setStyleSheet("font-size: 11px; color: #64748B;")
-            emp_layout.addStretch(1)
             emp_layout.addWidget(atten_label)
 
-        main_layout.addWidget(emp_card)
+        scroll_layout.addWidget(emp_card)
 
-        # Form Fields Container
-        form_frame = QFrame(self)
-        form_frame.setStyleSheet("QFrame { background: transparent; }")
-        form_layout = QVBoxLayout(form_frame)
+        # Form Fields Box
+        self.form_box = QFrame(scroll_content)
+        self.form_box.setStyleSheet("QFrame { background: transparent; }")
+        form_layout = QVBoxLayout(self.form_box)
         form_layout.setContentsMargins(0, 0, 0, 0)
         form_layout.setSpacing(10)
 
         # 1. Date Field
-        date_lbl = QLabel("Date *", self)
+        date_lbl = QLabel("Date *", self.form_box)
         date_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         form_layout.addWidget(date_lbl)
 
-        self.date_edit = QDateEdit(self)
+        self.date_edit = QDateEdit(self.form_box)
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("dd-MM-yyyy")
         self.date_edit.setMaximumDate(QDate.currentDate())
@@ -177,28 +199,22 @@ class MissedPunchDialog(QDialog):
         )
 
         # Set initial date
+        initial_date = QDate.currentDate()
         if prefill_date:
             if isinstance(prefill_date, QDate):
-                self.date_edit.setDate(prefill_date)
+                initial_date = prefill_date
             elif isinstance(prefill_date, datetime):
-                self.date_edit.setDate(QDate(prefill_date.year, prefill_date.month, prefill_date.day))
+                initial_date = QDate(prefill_date.year, prefill_date.month, prefill_date.day)
             else:
                 s = str(prefill_date).strip()
-                parsed = None
                 for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
                     try:
                         dt = datetime.strptime(s, fmt)
-                        parsed = QDate(dt.year, dt.month, dt.day)
+                        initial_date = QDate(dt.year, dt.month, dt.day)
                         break
                     except Exception:
                         pass
-                if parsed:
-                    self.date_edit.setDate(parsed)
-                else:
-                    self.date_edit.setDate(QDate.currentDate())
-        else:
-            self.date_edit.setDate(QDate.currentDate())
-
+        self.date_edit.setDate(initial_date)
         form_layout.addWidget(self.date_edit)
 
         # 2. Timing Fields (In-Time & Out-Time)
@@ -208,12 +224,12 @@ class MissedPunchDialog(QDialog):
         # In-Time column
         in_col = QVBoxLayout()
         in_col.setSpacing(4)
-        self.in_time_cb = QCheckBox("Punch In Time", self)
+        self.in_time_cb = QCheckBox("Punch In Time", self.form_box)
         self.in_time_cb.setChecked(True)
         self.in_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         in_col.addWidget(self.in_time_cb)
 
-        self.in_time_edit = QTimeEdit(self)
+        self.in_time_edit = QTimeEdit(self.form_box)
         self.in_time_edit.setDisplayFormat("HH:mm:ss")
         self.in_time_edit.setTime(QTime(9, 30, 0))
         self.in_time_edit.setStyleSheet(
@@ -234,12 +250,12 @@ class MissedPunchDialog(QDialog):
         # Out-Time column
         out_col = QVBoxLayout()
         out_col.setSpacing(4)
-        self.out_time_cb = QCheckBox("Punch Out Time", self)
+        self.out_time_cb = QCheckBox("Punch Out Time", self.form_box)
         self.out_time_cb.setChecked(True)
         self.out_time_cb.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         out_col.addWidget(self.out_time_cb)
 
-        self.out_time_edit = QTimeEdit(self)
+        self.out_time_edit = QTimeEdit(self.form_box)
         self.out_time_edit.setDisplayFormat("HH:mm:ss")
         self.out_time_edit.setTime(QTime(18, 30, 0))
         self.out_time_edit.setStyleSheet(
@@ -260,13 +276,13 @@ class MissedPunchDialog(QDialog):
         form_layout.addLayout(time_row)
 
         # 3. Comments / Reason Field
-        comments_lbl = QLabel("Reason / Comments *", self)
+        comments_lbl = QLabel("Reason / Comments *", self.form_box)
         comments_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B;")
         form_layout.addWidget(comments_lbl)
 
-        self.comments_edit = QTextEdit(self)
-        self.comments_edit.setPlaceholderText("Please explain why punch was missed (e.g. biometric reader offline, client meeting, forgotten badge)...")
-        self.comments_edit.setMaximumHeight(85)
+        self.comments_edit = QTextEdit(self.form_box)
+        self.comments_edit.setPlaceholderText("Please explain why punch was missed (required)...")
+        self.comments_edit.setMaximumHeight(75)
         self.comments_edit.setStyleSheet(
             """
             QTextEdit {
@@ -280,27 +296,83 @@ class MissedPunchDialog(QDialog):
         )
         form_layout.addWidget(self.comments_edit)
 
-        main_layout.addWidget(form_frame)
+        scroll_layout.addWidget(self.form_box)
 
-        # Feedback / Status Message Box
-        self.feedback_label = QLabel("", self)
+        # Status / Feedback Banner
+        self.feedback_label = QLabel("", scroll_content)
         self.feedback_label.setWordWrap(True)
         self.feedback_label.setVisible(False)
-        main_layout.addWidget(self.feedback_label)
+        scroll_layout.addWidget(self.feedback_label)
 
-        main_layout.addStretch(1)
+        # --------------------------------------------------------------
+        # Dynamic API Output Display Box
+        # --------------------------------------------------------------
+        self.api_output_group = QGroupBox("Missed Punch API Response", scroll_content)
+        self.api_output_group.setStyleSheet(
+            """
+            QGroupBox {
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                font-size: 12px; font-weight: 700; color: #1E293B;
+                margin-top: 10px; padding: 12px; background: #F8FAFC;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #4338CA;
+            }
+            """
+        )
+        api_output_layout = QVBoxLayout(self.api_output_group)
+        api_output_layout.setSpacing(8)
+
+        # Status row
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.api_status_badge = QLabel("● Ready", self.api_output_group)
+        self.api_status_badge.setStyleSheet(
+            "background-color: #EEF2FF; color: #4F46E5; font-size: 11.5px; font-weight: 700; "
+            "padding: 3px 8px; border-radius: 6px; border: 1px solid #C7D2FE;"
+        )
+        status_row.addWidget(self.api_status_badge)
+        status_row.addStretch(1)
+        api_output_layout.addLayout(status_row)
+
+        # Server message
+        self.api_message_label = QLabel("No request submitted yet.", self.api_output_group)
+        self.api_message_label.setStyleSheet("font-size: 12px; color: #334155; font-weight: 600;")
+        self.api_message_label.setWordWrap(True)
+        api_output_layout.addWidget(self.api_message_label)
+
+        # API Details text / payload view
+        self.api_details_text = QTextEdit(self.api_output_group)
+        self.api_details_text.setReadOnly(True)
+        self.api_details_text.setMaximumHeight(130)
+        self.api_details_text.setStyleSheet(
+            """
+            QTextEdit {
+                background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px;
+                padding: 6px; font-family: monospace; font-size: 11px; color: #1E293B;
+            }
+            """
+        )
+        self.api_details_text.setPlaceholderText("API response JSON payload will appear here...")
+        api_output_layout.addWidget(self.api_details_text)
+
+        self.api_output_group.setVisible(False)
+        scroll_layout.addWidget(self.api_output_group)
+
+        scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(scroll_area, 1)
 
         # Button Row
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        self.cancel_btn = QPushButton("Cancel", self)
-        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cancel_btn.setFixedSize(90, 34)
-        self.cancel_btn.setStyleSheet(
+        self.close_btn = QPushButton("Close", self)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.setFixedSize(90, 34)
+        self.close_btn.setStyleSheet(
             """
             QPushButton {
-                background: #F1F5F9; border: 1px solid #E2E8F0;
+                background: #F1F5F9; border: 1px solid #CBD5E1;
                 color: #334155; border-radius: 6px;
                 font-weight: 600; font-size: 12px;
             }
@@ -309,14 +381,14 @@ class MissedPunchDialog(QDialog):
             }
             """
         )
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(self.cancel_btn)
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
 
         btn_layout.addStretch(1)
 
-        self.submit_btn = QPushButton("Submit Request", self)
+        self.submit_btn = QPushButton("Submit Missed Punch", self)
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_btn.setMinimumWidth(130)
+        self.submit_btn.setMinimumWidth(160)
         self.submit_btn.setFixedHeight(34)
         self.submit_btn.setStyleSheet(
             """
@@ -336,7 +408,7 @@ class MissedPunchDialog(QDialog):
         self.submit_btn.clicked.connect(self._handle_submit)
         btn_layout.addWidget(self.submit_btn)
 
-        main_layout.addLayout(btn_layout)
+        root_layout.addLayout(btn_layout)
 
     def _show_message(self, message: str, is_error: bool = True) -> None:
         """Display error or success banner."""
@@ -377,8 +449,8 @@ class MissedPunchDialog(QDialog):
         # 2. UI Loading State
         self.feedback_label.setVisible(False)
         self.submit_btn.setEnabled(False)
-        self.submit_btn.setText("Submitting...")
-        self.cancel_btn.setEnabled(False)
+        self.submit_btn.setText("Submitting to API...")
+        self.close_btn.setEnabled(False)
 
         # 3. Launch Worker
         self._worker_thread = QThread(self)
@@ -396,23 +468,66 @@ class MissedPunchDialog(QDialog):
         self._worker_thread.start()
 
     def _on_submit_finished(self, result: dict) -> None:
-        """Handle response from background worker."""
+        """Handle response from background worker and display API output."""
         if self._worker_thread and self._worker_thread.isRunning():
             self._worker_thread.quit()
             self._worker_thread.wait()
 
+        self._last_api_result = result
         self.submit_btn.setEnabled(True)
-        self.submit_btn.setText("Submit Request")
-        self.cancel_btn.setEnabled(True)
+        self.submit_btn.setText("Submit Missed Punch")
+        self.close_btn.setEnabled(True)
 
-        if result.get("success"):
-            success_msg = result.get("message") or "Missed punch request submitted successfully."
-            self._show_message(f"✅ {success_msg}", is_error=False)
+        is_success = bool(result.get("success"))
+        status_code = result.get("status", 200 if is_success else 400)
+        message = result.get("message") or (
+            "Missed punch request submitted successfully." if is_success else "Failed to submit request."
+        )
+
+        # 1. Update Feedback Banner
+        if is_success:
+            self._show_message(f"✅ {message}", is_error=False)
+            self.submit_btn.setText("Submitted ✓")
             self.submit_btn.setEnabled(False)
             self.punch_submitted.emit(result)
-            # Accept dialog after a brief moment or on close
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(1200, self.accept)
         else:
-            err_msg = result.get("message") or result.get("error") or "Failed to submit request."
+            err_msg = result.get("error") or message
             self._show_message(f"⚠️ {err_msg}", is_error=True)
+
+        # 2. Render Dynamic API Response Output Box
+        self.api_output_group.setVisible(True)
+
+        if is_success:
+            self.api_status_badge.setText(f"● Success (HTTP {status_code})")
+            self.api_status_badge.setStyleSheet(
+                "background-color: #DCFCE7; color: #16A34A; font-size: 11.5px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 6px; border: 1px solid #BBF7D0;"
+            )
+        else:
+            self.api_status_badge.setText(f"● Error (HTTP {status_code})")
+            self.api_status_badge.setStyleSheet(
+                "background-color: #FEE2E2; color: #DC2626; font-size: 11.5px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 6px; border: 1px solid #FECACA;"
+            )
+
+        self.api_message_label.setText(str(message))
+
+        # Format details view
+        details_info: dict[str, Any] = {
+            "endpoint": "Punch/mispunch",
+            "status": status_code,
+            "success": is_success,
+            "message": message,
+        }
+        if result.get("data") is not None:
+            details_info["response_data"] = result.get("data")
+        elif result.get("raw_data") is not None:
+            details_info["raw_data"] = result.get("raw_data")
+        if result.get("error"):
+            details_info["error"] = result.get("error")
+
+        try:
+            formatted_json = json.dumps(details_info, indent=2)
+            self.api_details_text.setPlainText(formatted_json)
+        except Exception:
+            self.api_details_text.setPlainText(str(details_info))
